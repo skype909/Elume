@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "lucide-react": "^0.571.0",
+    "react-qr-code": "^2.0.18"
+  }
+}

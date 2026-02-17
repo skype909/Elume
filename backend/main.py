@@ -1,0 +1,1339 @@
+from __future__ import annotations
+
+import json, os, uuid
+import re
+import shutil
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from sqlalchemy import and_
+
+
+import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
+import schemas
+from db import Base, SessionLocal, engine
+
+from models import (
+    ClassModel,
+    PostModel,
+    TestCategory,
+    TestItem,
+    StudentModel,
+    ClassAssessmentModel,
+    AssessmentResultModel,
+)
+
+
+# =========================================================
+# APP
+# =========================================================
+app = FastAPI()
+print("✅ LOADED main.py FROM:", __file__)
+
+# =========================================================
+# CORS
+# =========================================================
+from starlette.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# =========================================================
+# DB
+# =========================================================
+Base.metadata.create_all(bind=engine)
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# =========================================================
+# ADMIN (Students + Assessments/Results)
+# =========================================================
+
+class StudentCreate(BaseModel):
+    first_name: str
+    notes: Optional[str] = None
+
+class StudentBulkCreate(BaseModel):
+    names: List[str]
+    notes: Optional[str] = None
+
+class StudentUpdate(BaseModel):
+    first_name: Optional[str] = None
+    notes: Optional[str] = None
+    active: Optional[bool] = None
+
+class AssessmentCreate(BaseModel):
+    title: str
+    # optional YYYY-MM-DD; if omitted use today
+    assessment_date: Optional[str] = None
+
+class ResultUpsert(BaseModel):
+    student_id: int
+    score_percent: Optional[int] = None
+    absent: bool = False
+
+class BulkResultsUpdate(BaseModel):
+    results: List[ResultUpsert]
+
+# =========================================================
+# FILES / UPLOADS (ABSOLUTE + STABLE)
+# =========================================================
+BASE_DIR = Path(__file__).resolve().parent
+UPLOADS_DIR = BASE_DIR / "uploads"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Static serving: /uploads/...
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+
+
+def _rel_upload_url(stored_path: str) -> str:
+    """
+    Convert a stored_path on disk into a URL like /uploads/notes/1/123_file.pdf
+    Works whether stored_path is absolute or relative.
+    """
+    p = Path(stored_path)
+
+    # If absolute path inside UPLOADS_DIR, make it relative to uploads root
+    try:
+        rel = p.resolve().relative_to(UPLOADS_DIR.resolve()).as_posix()
+        return f"/uploads/{rel}"
+    except Exception:
+        pass
+
+    # Fallback: split on "uploads/" if someone stored a path containing it
+    s = p.as_posix()
+    if "uploads/" in s:
+        rel = s.split("uploads/")[-1]
+        return f"/uploads/{rel}"
+
+    # Last resort: just expose basename (not ideal, but avoids crashing)
+    return f"/uploads/{p.name}"
+
+
+# =========================================================
+# SEED CLASSES (optional)
+# =========================================================
+def seed_classes(db: Session):
+    defaults = [
+        ("6th Year Physics", "Physics"),
+        ("6th Year Maths", "Maths"),
+        ("5th Year Physics", "Physics"),
+        ("3rd Year Maths", "Maths"),
+    ]
+
+    for name, subject in defaults:
+        exists = db.query(ClassModel).filter(ClassModel.name == name).first()
+        if not exists:
+            db.add(ClassModel(name=name, subject=subject))
+
+    db.commit()
+
+
+@app.on_event("startup")
+def on_startup():
+    db = SessionLocal()
+    try:
+        seed_classes(db)
+    finally:
+        db.close()
+
+
+# =========================================================
+# CLASSES
+# =========================================================
+@app.get("/classes")
+def get_classes(db: Session = Depends(get_db)):
+    return db.query(ClassModel).all()
+
+
+
+
+@app.post("/classes")
+def create_class(new_class: schemas.ClassCreate, db: Session = Depends(get_db)):
+    c = ClassModel(name=new_class.name, subject=new_class.subject)
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return c
+
+@app.post("/whiteboard/save")
+async def save_whiteboard(
+    class_id: int = Form(...),
+    title: str = Form(...),
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    # Confirm class exists
+    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    os.makedirs("uploads/whiteboards", exist_ok=True)
+
+    ext = os.path.splitext(image.filename or "")[1].lower()
+    if ext not in [".png", ".jpg", ".jpeg", ".webp", ""]:
+        ext = ".png"
+
+    filename = f"whiteboard_{class_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}{ext}"
+    disk_path = os.path.join("uploads", "whiteboards", filename)
+
+    # Save file
+    contents = await image.read()
+    with open(disk_path, "wb") as f:
+        f.write(contents)
+
+    # Create a post on the class feed with a link to the saved image
+    url_path = f"/uploads/whiteboards/{filename}"
+    post = PostModel(
+        class_id=class_id,
+        author="Whiteboard",
+        content=f"Whiteboard saved: {title}",
+        links=json.dumps([url_path]),
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+
+    return {
+        "id": post.id,
+        "class_id": post.class_id,
+        "author": post.author,
+        "content": post.content,
+        "links": post.links,
+        "createdAt": getattr(post, "created_at", None),
+    }
+
+@app.get("/classes/{class_id}")
+def get_class(class_id: int, db: Session = Depends(get_db)):
+    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+    return cls
+
+@app.put("/classes/{class_id}")
+def update_class(class_id: int, payload: dict, db: Session = Depends(get_db)):
+    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
+
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    if "name" in payload and isinstance(payload["name"], str):
+        cls.name = payload["name"].strip() or cls.name
+
+    if "subject" in payload and isinstance(payload["subject"], str):
+        cls.subject = payload["subject"].strip() or cls.subject
+
+    db.commit()
+    db.refresh(cls)
+
+    return cls
+
+# =========================================================
+# POSTS (links stored as JSON string)
+# =========================================================
+def _links_to_list(v):
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [str(x) for x in v if str(x).strip()]
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return []
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed if str(x).strip()]
+        except Exception:
+            pass
+        parts = re.split(r"[\n,]+", s)
+        return [p.strip() for p in parts if p.strip()]
+    return [str(v)]
+
+
+def _links_to_storage(v):
+    return json.dumps(_links_to_list(v), ensure_ascii=False)
+
+
+@app.get("/classes/{class_id}/posts")
+def get_posts(class_id: int, db: Session = Depends(get_db)):
+    posts = (
+        db.query(PostModel)
+        .filter(PostModel.class_id == class_id)
+        .order_by(PostModel.id.desc())
+        .all()
+    )
+    out = []
+    for p in posts:
+        out.append(
+            {
+                "id": p.id,
+                "class_id": p.class_id,
+                "author": getattr(p, "author", ""),
+                "content": getattr(p, "content", ""),
+                "links": _links_to_list(getattr(p, "links", None)),
+                "createdAt": getattr(p, "created_at", None).isoformat() if getattr(p, "created_at", None) else None,
+            }
+        )
+    return out
+
+
+@app.post("/classes/{class_id}/posts")
+def add_post(class_id: int, new_post: schemas.PostCreate, db: Session = Depends(get_db)):
+    p = PostModel(
+        class_id=class_id,
+        author=new_post.author,
+        content=new_post.content,
+        links=_links_to_storage(getattr(new_post, "links", None)),
+    )
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return {
+        "id": p.id,
+        "class_id": p.class_id,
+        "author": p.author,
+        "content": p.content,
+        "links": _links_to_list(getattr(p, "links", None)),
+        "createdAt": getattr(p, "created_at", None).isoformat() if getattr(p, "created_at", None) else None,
+    }
+
+
+@app.delete("/posts/{post_id}")
+def delete_post(post_id: int, db: Session = Depends(get_db)):
+    post = db.query(PostModel).filter(PostModel.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    db.delete(post)
+    db.commit()
+    return {"message": "Post deleted"}
+
+
+# =========================================================
+# NOTES + TOPICS (Notes vs Exam Papers via prefix)
+# =========================================================
+EXAM_PREFIX = "EXAM: "
+NOTES_PREFIX = "NOTES: "
+
+
+def strip_prefix(name: str) -> str:
+    if name.startswith(EXAM_PREFIX):
+        return name[len(EXAM_PREFIX) :]
+    if name.startswith(NOTES_PREFIX):
+        return name[len(NOTES_PREFIX) :]
+    return name
+
+
+@app.get("/topics/{class_id}", response_model=List[schemas.TopicOut])
+def list_topics(class_id: int, kind: str = "notes", db: Session = Depends(get_db)):
+    q = db.query(models.Topic).filter(models.Topic.class_id == class_id)
+    if kind == "exam":
+        q = q.filter(models.Topic.name.startswith(EXAM_PREFIX))
+    else:
+        q = q.filter(~models.Topic.name.startswith(EXAM_PREFIX))
+
+    topics = q.order_by(models.Topic.name).all()
+    return [schemas.TopicOut(id=t.id, class_id=t.class_id, name=strip_prefix(t.name)) for t in topics]
+
+
+@app.post("/topics", response_model=schemas.TopicOut)
+def create_topic(payload: schemas.TopicCreate, kind: str = "notes", db: Session = Depends(get_db)):
+    prefix = EXAM_PREFIX if kind == "exam" else NOTES_PREFIX
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Topic name cannot be empty")
+
+    topic = models.Topic(class_id=payload.class_id, name=f"{prefix}{name}")
+    db.add(topic)
+    db.commit()
+    db.refresh(topic)
+    return schemas.TopicOut(id=topic.id, class_id=topic.class_id, name=name)
+
+
+@app.delete("/topics/{topic_id}")
+def delete_topic(topic_id: int, db: Session = Depends(get_db)):
+    topic = db.query(models.Topic).filter(models.Topic.id == topic_id).first()
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    # delete notes belonging to this topic
+    notes = db.query(models.Note).filter(models.Note.topic_id == topic_id).all()
+    for n in notes:
+        if n.stored_path and os.path.exists(n.stored_path):
+            try:
+                os.remove(n.stored_path)
+            except Exception:
+                pass
+
+    db.query(models.Note).filter(models.Note.topic_id == topic_id).delete()
+    db.delete(topic)
+    db.commit()
+    return {"message": "Topic deleted"}
+
+
+@app.get("/notes/{class_id}", response_model=List[schemas.NoteOut])
+def list_notes(class_id: int, kind: str = "notes", db: Session = Depends(get_db)):
+    q = (
+        db.query(models.Note, models.Topic)
+        .join(models.Topic, models.Note.topic_id == models.Topic.id)
+        .filter(models.Note.class_id == class_id)
+    )
+
+    if kind == "exam":
+        q = q.filter(models.Topic.name.startswith(EXAM_PREFIX))
+    else:
+        q = q.filter(~models.Topic.name.startswith(EXAM_PREFIX))
+
+    rows = q.order_by(models.Note.id.desc()).all()
+
+    out: List[schemas.NoteOut] = []
+    for note, topic in rows:
+        out.append(
+            schemas.NoteOut(
+                id=note.id,
+                class_id=note.class_id,
+                topic_id=note.topic_id,
+                filename=note.filename,
+                file_url=_rel_upload_url(note.stored_path),
+                uploaded_at=note.uploaded_at,
+                topic_name=strip_prefix(topic.name) if topic else "Unsorted",
+            )
+        )
+    return out
+
+
+@app.post("/notes/upload", response_model=schemas.NoteOut)
+def upload_note(
+    class_id: int = Form(...),
+    topic_id: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    topic = db.query(models.Topic).filter(models.Topic.id == topic_id).first()
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    dest_dir = UPLOADS_DIR / "notes" / str(class_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = (file.filename or "file.pdf").replace("\\", "/").split("/")[-1]
+    dest_path = dest_dir / f"{int(datetime.utcnow().timestamp())}_{safe_name}"
+
+    with dest_path.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    n = models.Note(
+        class_id=class_id,
+        topic_id=topic_id,
+        filename=safe_name,
+        stored_path=str(dest_path),
+    )
+    db.add(n)
+    db.commit()
+    db.refresh(n)
+
+    return schemas.NoteOut(
+        id=n.id,
+        class_id=n.class_id,
+        topic_id=n.topic_id,
+        filename=n.filename,
+        file_url=_rel_upload_url(n.stored_path),
+        uploaded_at=n.uploaded_at,
+        topic_name=strip_prefix(topic.name),
+    )
+
+
+@app.delete("/notes/{note_id}")
+def delete_note(note_id: int, db: Session = Depends(get_db)):
+    n = db.query(models.Note).filter(models.Note.id == note_id).first()
+    if not n:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    if n.stored_path and os.path.exists(n.stored_path):
+        try:
+            os.remove(n.stored_path)
+        except Exception:
+            pass
+
+    db.delete(n)
+    db.commit()
+    return {"message": "Note deleted"}
+
+
+# =========================================================
+# TESTS (Categories + PDF uploads)  — matches schemas.py
+# =========================================================
+@app.get("/classes/{class_id}/test-categories", response_model=List[schemas.TestCategoryOut])
+def list_test_categories(class_id: int, db: Session = Depends(get_db)):
+    cats = (
+        db.query(TestCategory)
+        .filter(TestCategory.class_id == class_id)
+        .order_by(TestCategory.id.desc())
+        .all()
+    )
+    return [
+        schemas.TestCategoryOut(
+            id=c.id,
+            class_id=c.class_id,
+            title=c.title,
+            description=c.description,
+        )
+        for c in cats
+    ]
+
+
+@app.post("/classes/{class_id}/test-categories", response_model=schemas.TestCategoryOut)
+def create_test_category(class_id: int, payload: schemas.TestCategoryCreate, db: Session = Depends(get_db)):
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Category title cannot be empty")
+
+    c = TestCategory(
+        class_id=class_id,
+        title=title,
+        description=(payload.description or "").strip() or None,
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+
+    return schemas.TestCategoryOut(
+        id=c.id,
+        class_id=c.class_id,
+        title=c.title,
+        description=c.description,
+    )
+
+
+@app.put("/test-categories/{cat_id}", response_model=schemas.TestCategoryOut)
+def update_test_category(cat_id: int, payload: schemas.TestCategoryPatch, db: Session = Depends(get_db)):
+    c = db.query(TestCategory).filter(TestCategory.id == cat_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    if payload.title is not None:
+        t = payload.title.strip()
+        if not t:
+            raise HTTPException(status_code=400, detail="Category title cannot be empty")
+        c.title = t
+
+    if payload.description is not None:
+        c.description = payload.description.strip() or None
+
+    db.commit()
+    db.refresh(c)
+
+    return schemas.TestCategoryOut(
+        id=c.id,
+        class_id=c.class_id,
+        title=c.title,
+        description=c.description,
+    )
+
+
+@app.delete("/test-categories/{cat_id}")
+def delete_test_category(cat_id: int, db: Session = Depends(get_db)):
+    c = db.query(TestCategory).filter(TestCategory.id == cat_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    # detach tests from category
+    db.query(TestItem).filter(TestItem.category_id == cat_id).update({"category_id": None})
+    db.delete(c)
+    db.commit()
+    return {"message": "Category deleted"}
+
+
+@app.get("/classes/{class_id}/tests", response_model=List[schemas.TestOut])
+def list_tests(class_id: int, db: Session = Depends(get_db)):
+    tests = (
+        db.query(TestItem)
+        .filter(TestItem.class_id == class_id)
+        .order_by(TestItem.id.desc())
+        .all()
+    )
+
+    out: List[schemas.TestOut] = []
+    for t in tests:
+        out.append(
+            schemas.TestOut(
+                id=t.id,
+                class_id=t.class_id,
+                category_id=t.category_id,
+                title=t.title,
+                description=t.description,
+                filename=t.filename,
+                file_url=_rel_upload_url(t.stored_path),
+                uploaded_at=t.uploaded_at,
+            )
+        )
+    return out
+
+
+@app.post("/tests", response_model=schemas.TestOut)
+def upload_test(
+    class_id: int = Form(...),
+    title: str = Form(...),
+    description: str = Form(""),
+    category_id: Optional[int] = Form(None),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    title = (title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+
+    dest_dir = UPLOADS_DIR / "tests" / str(class_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = (file.filename or "test.pdf").replace("\\", "/").split("/")[-1]
+    dest_path = dest_dir / f"{int(datetime.utcnow().timestamp())}_{safe_name}"
+
+    with dest_path.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    t = TestItem(
+        class_id=class_id,
+        category_id=category_id,
+        title=title,
+        description=(description or "").strip() or None,
+        filename=safe_name,
+        stored_path=str(dest_path),
+    )
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+
+    return schemas.TestOut(
+        id=t.id,
+        class_id=t.class_id,
+        category_id=t.category_id,
+        title=t.title,
+        description=t.description,
+        filename=t.filename,
+        file_url=_rel_upload_url(t.stored_path),
+        uploaded_at=t.uploaded_at,
+    )
+
+
+@app.put("/tests/{test_id}", response_model=schemas.TestOut)
+def update_test(test_id: int, payload: schemas.TestPatch, db: Session = Depends(get_db)):
+    t = db.query(TestItem).filter(TestItem.id == test_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    if payload.title is not None:
+        new_title = payload.title.strip()
+        if not new_title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        t.title = new_title
+
+    if payload.description is not None:
+        t.description = payload.description.strip() or None
+
+    if payload.category_id is not None or payload.category_id is None:
+        # allow explicit null to clear category
+        t.category_id = payload.category_id
+
+    db.commit()
+    db.refresh(t)
+
+    return schemas.TestOut(
+        id=t.id,
+        class_id=t.class_id,
+        category_id=t.category_id,
+        title=t.title,
+        description=t.description,
+        filename=t.filename,
+        file_url=_rel_upload_url(t.stored_path),
+        uploaded_at=t.uploaded_at,
+    )
+
+
+@app.delete("/tests/{test_id}")
+def delete_test(test_id: int, db: Session = Depends(get_db)):
+    t = db.query(TestItem).filter(TestItem.id == test_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    if t.stored_path and os.path.exists(t.stored_path):
+        try:
+            os.remove(t.stored_path)
+        except Exception:
+            pass
+
+    db.delete(t)
+    db.commit()
+    return {"message": "Test deleted"}
+
+# -------------------------
+# Calendar Routes
+# -------------------------
+# -------------------------
+# Calendar Routes (single canonical source of truth)
+# - class_id = NULL => global event
+# - class_id = <int> => class event
+# -------------------------
+
+@app.get("/calendar-events", response_model=list[schemas.CalendarEventOut])
+def list_calendar_events(
+    class_id: Optional[int] = None,
+    global_only: bool = False,
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.CalendarEvent)
+
+    if global_only:
+        return q.filter(models.CalendarEvent.class_id.is_(None)).all()
+
+    # If class_id provided, return (global + this class). Otherwise return all.
+    if class_id is not None:
+        return q.filter(
+            (models.CalendarEvent.class_id.is_(None))
+            | (models.CalendarEvent.class_id == class_id)
+        ).all()
+
+    return q.all()
+
+
+# Backwards-compatible endpoint (used by older pages)
+@app.get("/classes/{class_id}/calendar-events", response_model=list[schemas.CalendarEventOut])
+def get_calendar_events_for_class(class_id: int, db: Session = Depends(get_db)):
+    return db.query(models.CalendarEvent).filter(
+        models.CalendarEvent.class_id == class_id
+    ).all()
+
+
+@app.post("/calendar-events", response_model=schemas.CalendarEventOut)
+def create_calendar_event(event: schemas.CalendarEventCreate, db: Session = Depends(get_db)):
+    new_event = models.CalendarEvent(**event.dict())
+    db.add(new_event)
+    db.commit()
+    db.refresh(new_event)
+    return new_event
+
+
+@app.put("/calendar-events/{event_id}", response_model=schemas.CalendarEventOut)
+def update_calendar_event(event_id: int, event: schemas.CalendarEventCreate, db: Session = Depends(get_db)):
+    db_event = db.query(models.CalendarEvent).get(event_id)
+
+    if not db_event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    for key, value in event.dict().items():
+        setattr(db_event, key, value)
+
+    db.commit()
+    db.refresh(db_event)
+    return db_event
+
+# =========================================================
+# STUDENTS (first names only)
+# =========================================================
+
+@app.get("/classes/{class_id}/students")
+def list_students(class_id: int, db: Session = Depends(get_db)):
+    # include inactive too (teacher admin needs to see them)
+    rows = (
+        db.query(StudentModel)
+        .filter(StudentModel.class_id == class_id)
+        .order_by(StudentModel.id.desc())
+        .all()
+    )
+    return rows
+
+
+@app.post("/classes/{class_id}/students")
+def create_student(class_id: int, payload: StudentCreate, db: Session = Depends(get_db)):
+    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    name = (payload.first_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="First name cannot be empty")
+
+    s = StudentModel(
+        class_id=class_id,
+        first_name=name,
+        notes=(payload.notes or "").strip() or None,
+        active=True,
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return s
+
+
+@app.put("/students/{student_id}")
+def update_student(student_id: int, payload: StudentUpdate, db: Session = Depends(get_db)):
+    s = db.query(StudentModel).filter(StudentModel.id == student_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    if payload.first_name is not None:
+        name = payload.first_name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="First name cannot be empty")
+        s.first_name = name
+
+    if payload.notes is not None:
+        s.notes = payload.notes.strip() or None
+
+    if payload.active is not None:
+        s.active = bool(payload.active)
+
+    db.commit()
+    db.refresh(s)
+    return s
+
+@app.post("/classes/{class_id}/students/bulk")
+def create_students_bulk(class_id: int, payload: StudentBulkCreate, db: Session = Depends(get_db)):
+    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    cleaned = []
+    seen = set()
+
+    for n in (payload.names or []):
+        name = (n or "").strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(name)
+
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="No valid names provided")
+
+    existing = db.query(StudentModel.first_name).filter(
+        StudentModel.class_id == class_id
+    ).all()
+
+    existing_set = {(x[0] or "").strip().lower() for x in existing}
+
+    to_create = []
+    for name in cleaned:
+        if name.lower() in existing_set:
+            continue
+        to_create.append(
+            StudentModel(
+                class_id=class_id,
+                first_name=name,
+                active=True,
+            )
+        )
+
+    if not to_create:
+        return []
+
+    db.add_all(to_create)
+    db.commit()
+
+    for s in to_create:
+        db.refresh(s)
+
+    return to_create
+
+@app.delete("/calendar-events/{event_id}")
+def delete_calendar_event(event_id: int, db: Session = Depends(get_db)):
+    event = db.query(models.CalendarEvent).get(event_id)
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    db.delete(event)
+    db.commit()
+
+    return {"message": "Deleted"}
+
+# =========================================================
+# ASSESSMENTS (class tests/results tracker) — separate from PDF "tests"
+# =========================================================
+
+@app.get("/classes/{class_id}/assessments")
+def list_assessments(class_id: int, db: Session = Depends(get_db)):
+    rows = (
+        db.query(ClassAssessmentModel)
+        .filter(ClassAssessmentModel.class_id == class_id)
+        .order_by(ClassAssessmentModel.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": a.id,
+            "class_id": a.class_id,
+            "title": a.title,
+            "assessment_date": a.assessment_date.date().isoformat() if a.assessment_date else None,
+        }
+        for a in rows
+    ]
+
+
+@app.post("/classes/{class_id}/assessments")
+def create_assessment(class_id: int, payload: AssessmentCreate, db: Session = Depends(get_db)):
+    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+
+    # parse optional YYYY-MM-DD
+    if payload.assessment_date:
+        try:
+            dt = datetime.strptime(payload.assessment_date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="assessment_date must be YYYY-MM-DD")
+    else:
+        dt = datetime.utcnow()
+
+    a = ClassAssessmentModel(class_id=class_id, title=title, assessment_date=dt)
+    db.add(a)
+    db.commit()
+    db.refresh(a)
+
+    return {
+        "id": a.id,
+        "class_id": a.class_id,
+        "title": a.title,
+        "assessment_date": a.assessment_date.date().isoformat() if a.assessment_date else None,
+    }
+
+
+@app.get("/assessments/{assessment_id}/results")
+def get_assessment_results(assessment_id: int, db: Session = Depends(get_db)):
+    a = db.query(ClassAssessmentModel).filter(ClassAssessmentModel.id == assessment_id).first()
+    if not a:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    # Use ACTIVE students by default for entry grid
+    students = (
+        db.query(StudentModel)
+        .filter(StudentModel.class_id == a.class_id)
+        .filter(StudentModel.active == True)  # noqa: E712
+        .order_by(StudentModel.id.desc())
+        .all()
+    )
+
+    # existing results keyed by student_id
+    existing = (
+        db.query(AssessmentResultModel)
+        .filter(AssessmentResultModel.assessment_id == assessment_id)
+        .all()
+    )
+    by_student = {r.student_id: r for r in existing}
+
+    rows = []
+    for s in students:
+        r = by_student.get(s.id)
+        rows.append(
+            {
+                "student_id": s.id,
+                "first_name": s.first_name,
+                "score_percent": r.score_percent if r else None,
+                "absent": bool(r.absent) if r else False,
+            }
+        )
+
+    return {
+        "assessment": {
+            "id": a.id,
+            "class_id": a.class_id,
+            "title": a.title,
+            "assessment_date": a.assessment_date.date().isoformat() if a.assessment_date else None,
+        },
+        "results": rows,
+    }
+
+
+@app.put("/assessments/{assessment_id}/results")
+def upsert_assessment_results(assessment_id: int, payload: BulkResultsUpdate, db: Session = Depends(get_db)):
+    a = db.query(ClassAssessmentModel).filter(ClassAssessmentModel.id == assessment_id).first()
+    if not a:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    # Build map of existing rows for this assessment
+    existing = (
+        db.query(AssessmentResultModel)
+        .filter(AssessmentResultModel.assessment_id == assessment_id)
+        .all()
+    )
+    by_student = {r.student_id: r for r in existing}
+
+    for item in payload.results:
+        # Ensure student belongs to the same class
+        s = db.query(StudentModel).filter(StudentModel.id == item.student_id).first()
+        if not s or s.class_id != a.class_id:
+            raise HTTPException(status_code=400, detail=f"Student {item.student_id} not in this class")
+
+        absent = bool(item.absent)
+
+        # normalise score
+        score = item.score_percent
+        if absent:
+            score = None
+        else:
+            if score is None:
+                score = 0
+            score = int(score)
+            if score < 0 or score > 100:
+                raise HTTPException(status_code=400, detail="score_percent must be 0..100")
+
+        r = by_student.get(item.student_id)
+        if r:
+            r.absent = absent
+            r.score_percent = score
+        else:
+            r = AssessmentResultModel(
+                assessment_id=assessment_id,
+                student_id=item.student_id,
+                absent=absent,
+                score_percent=score,
+            )
+            db.add(r)
+
+    db.commit()
+
+    return {"message": "Saved"}
+
+@app.get("/classes/{class_id}/insights")
+def class_insights(class_id: int, db: Session = Depends(get_db)):
+    # Active students only (consistent with your results entry grid)
+    students = (
+        db.query(StudentModel)
+        .filter(StudentModel.class_id == class_id)
+        .filter(StudentModel.active == True)  # noqa: E712
+        .order_by(StudentModel.id.desc())
+        .all()
+    )
+
+    active_student_count = len(students)
+    if active_student_count == 0:
+        return {
+            "class_id": class_id,
+            "class_average": None,
+            "assessment_count": 0,
+            "active_student_count": 0,
+            "student_rankings": [],
+            "at_risk": [],
+        }
+
+    student_ids = [s.id for s in students]
+
+    # Count assessments for this class
+    assessment_count = (
+        db.query(ClassAssessmentModel)
+        .filter(ClassAssessmentModel.class_id == class_id)
+        .count()
+    )
+
+    # Pull all results for this class (join assessments -> results)
+    rows = (
+        db.query(AssessmentResultModel, ClassAssessmentModel)
+        .join(ClassAssessmentModel, AssessmentResultModel.assessment_id == ClassAssessmentModel.id)
+        .filter(ClassAssessmentModel.class_id == class_id)
+        .filter(AssessmentResultModel.student_id.in_(student_ids))
+        .all()
+    )
+
+    # Aggregate per student
+    scores_by_student: dict[int, list[int]] = {sid: [] for sid in student_ids}
+    tests_count_by_student: dict[int, int] = {sid: 0 for sid in student_ids}
+    absences_by_student: dict[int, int] = {sid: 0 for sid in student_ids}
+    latest_by_student: dict[int, int | None] = {sid: None for sid in student_ids}
+
+    for r, a in rows:
+        tests_count_by_student[r.student_id] += 1
+
+        if r.absent:
+            absences_by_student[r.student_id] += 1
+            continue
+
+        if r.score_percent is None:
+            continue
+
+        sc = int(r.score_percent)
+        scores_by_student[r.student_id].append(sc)
+        latest_by_student[r.student_id] = sc  # "latest" in the order rows arrive (good enough for now)
+
+    # Build output rows
+    rankings = []
+    class_avgs = []
+
+    for s in students:
+        scores = scores_by_student.get(s.id, [])
+        avg = round(sum(scores) / len(scores), 1) if scores else None
+
+        if avg is not None:
+            class_avgs.append(avg)
+
+        rankings.append(
+            {
+                "student_id": s.id,
+                "first_name": s.first_name,
+                "average": avg,
+                "taken": tests_count_by_student.get(s.id, 0),
+                "missed": absences_by_student.get(s.id, 0),
+                "latest": latest_by_student.get(s.id, None),
+            }
+        )
+
+    # Sort: strongest -> weakest by average; students with no avg at bottom
+    rankings.sort(
+        key=lambda x: (x["average"] is None, -(x["average"] or -1))
+    )
+
+    class_avg = round(sum(class_avgs) / len(class_avgs), 1) if class_avgs else None
+
+    # At-risk rule v1 (simple + effective)
+    # - average < 50 OR missed >= 2
+    at_risk = []
+    for r in rankings:
+        reasons = []
+        if r["average"] is not None and r["average"] < 50:
+            reasons.append("Average below 50")
+        if r["missed"] >= 2:
+            reasons.append(f"Missed {r['missed']} assessments")
+        if reasons:
+            at_risk.append(
+                {
+                    "student_id": r["student_id"],
+                    "first_name": r["first_name"],
+                    "average": r["average"],
+                    "missed": r["missed"],
+                    "reasons": reasons,
+                }
+            )
+
+    return {
+        "class_id": class_id,
+        "class_average": class_avg,
+        "assessment_count": assessment_count,
+        "active_student_count": active_student_count,
+        "student_rankings": rankings,
+        "at_risk": at_risk,
+    }
+
+
+# -------------------------
+# AI Calendar Assistant (draft only - NEVER writes to DB)
+# -------------------------
+@app.post("/ai/parse-event", response_model=schemas.AIParseEventResponse)
+def ai_parse_event(payload: schemas.AIParseEventRequest):
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    # Lazy import so your backend still runs even if openai isn't installed in this env
+    try:
+        from openai import OpenAI  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI client not available: {e}")
+
+    # ✅ Make key usage explicit (prevents silent 500s)
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="OPENAI_API_KEY is missing. Check backend .env and that load_dotenv() runs on startup.",
+        )
+
+    client = OpenAI(api_key=api_key)
+
+    system = (
+       "Today is " + datetime.now().date().isoformat() + " in timezone " + payload.timezone + ". "
+        "If the user does not specify a year, choose the next occurrence in the future (not past). "
+        "You convert teacher calendar requests into a single JSON object for an event draft. "
+        "Return ONLY valid JSON. No markdown. "
+        "Timezone: " + payload.timezone + ". "
+        "If date is relative (e.g. next Friday), resolve it relative to today's date. "
+        "If no end time is provided, set end_date to start + default duration. "
+        "If it's clearly an all-day item (e.g. 'midterm break', 'bank holiday'), set all_day=true and set times to 09:00 start, 09:00 end. "
+        "Use event_type one of: general, test, homework, trip. "
+        "Required keys: title, description, event_date, end_date, all_day, event_type, class_id."
+    )
+
+    user = (
+        f"Text: {text}\n"
+        f"class_id: {payload.class_id}\n"
+        f"default_duration_minutes: {payload.default_duration_minutes}\n"
+        f"timezone: {payload.timezone}"
+        f"today: {datetime.now().date().isoformat()}\n"
+    )
+
+    resp = client.chat.completions.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0.2,
+    )
+
+    content = (resp.choices[0].message.content or "").strip()
+
+    # Extract the first JSON object defensively (supports extra text)
+    m = re.search(r"\{[\s\S]*\}", content)
+    if not m:
+        raise HTTPException(status_code=500, detail=f"AI did not return JSON. Got: {content[:200]}")
+
+    try:
+        data = json.loads(m.group(0))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not parse AI JSON: {e}")
+
+    # Some models return {"draft": {...}}; accept both shapes
+    if isinstance(data, dict) and "draft" in data and isinstance(data["draft"], dict):
+        data = data["draft"]
+
+    warnings: list[str] = []
+
+    # Force class_id from payload if provided (front-end controls target class)
+    if payload.class_id is not None:
+        data["class_id"] = payload.class_id
+
+    # If end_date missing, we’ll let schema validation complain nicely (422),
+    # but keep your warning behavior too:
+    if data.get("end_date") in (None, ""):
+        warnings.append(f"End time assumed as {payload.default_duration_minutes} minutes (AI did not supply end_date).")
+
+    # ✅ Catch schema validation errors and return 422 instead of 500
+    try:
+        draft = schemas.CalendarEventCreate(**data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"AI draft failed validation against CalendarEventCreate. Error: {e}. Draft keys: {list(data.keys())}",
+        )
+
+    return schemas.AIParseEventResponse(draft=draft, warnings=warnings)
+
+
+# ================= AI QUIZ GENERATION =================
+
+import requests
+from pypdf import PdfReader
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+
+
+class GenerateQuizRequest(BaseModel):
+    class_id: int
+    note_id: int
+    num_questions: int = 10
+
+
+@app.get("/ai/status")
+def ai_status():
+    return {
+        "has_key": bool(OPENAI_API_KEY),
+        "model": OPENAI_MODEL,
+    }
+
+
+def extract_pdf_text(path: str):
+    reader = PdfReader(path)
+    text = ""
+
+    for page in reader.pages:
+        try:
+            text += page.extract_text() or ""
+        except:
+            pass
+
+    return text[:12000]
+
+@app.post("/ai/generate-quiz-from-note")
+def generate_quiz(payload: GenerateQuizRequest, db: Session = Depends(get_db)):
+
+    note = db.query(models.Note).filter(models.Note.id == payload.note_id).first()
+
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    if not os.path.exists(note.stored_path):
+        raise HTTPException(status_code=404, detail="PDF missing")
+
+    text = extract_pdf_text(note.stored_path)
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    prompt = f"""
+Create {payload.num_questions} multiple choice quiz questions from this content.
+
+Return JSON format:
+
+{{
+"title": "Quiz",
+"questions":[
+{{
+"prompt": "",
+"choices": ["","","",""],
+"correctIndex": 0
+}}
+]
+}}
+
+CONTENT:
+{text}
+"""
+
+    body = {
+        "model": OPENAI_MODEL,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.4
+    }
+
+    r = requests.post(OPENAI_URL, headers=headers, json=body)
+
+    if r.status_code != 200:
+        raise HTTPException(status_code=500, detail=r.text)
+
+    data = r.json()
+    content = data["choices"][0]["message"]["content"]
+
+    cleaned = content.strip()
+
+    if cleaned.startswith("```"):
+        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        return {
+            "error": "OpenAI did not return valid JSON",
+            "raw_response": cleaned
+        }
