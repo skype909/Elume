@@ -19,6 +19,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from sqlalchemy import text
+from fastapi import Header
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+
 
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
 import schemas
@@ -45,6 +49,27 @@ from models import (
 app = FastAPI()
 print("✅ LOADED main.py FROM:", __file__)
 
+PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
+JWT_SECRET = os.getenv("JWT_SECRET", "change-me")
+JWT_ALG = "HS256"
+JWT_EXPIRE_DAYS = 30
+
+class AuthRegister(BaseModel):
+    email: str
+    password: str
+
+class AuthLogin(BaseModel):
+    email: str
+    password: str
+
+class AuthToken(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+def _make_token(user_id: int) -> str:
+    exp = datetime.utcnow() + timedelta(days=JWT_EXPIRE_DAYS)
+    return jwt.encode({"sub": str(user_id), "exp": exp}, JWT_SECRET, algorithm=JWT_ALG)
+
 # =========================================================
 # CORS
 # =========================================================
@@ -58,6 +83,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.post("/auth/register", response_model=AuthToken)
+def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
+    email = (payload.email or "").strip().lower()
+    password = (payload.password or "").strip()
+
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    existing = db.query(models.UserModel).filter(models.UserModel.email == email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    user = models.UserModel(email=email, password_hash=PWD_CONTEXT.hash(password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return {"access_token": _make_token(user.id), "token_type": "bearer"}
+
+
+@app.post("/auth/login", response_model=AuthToken)
+def auth_login(payload: AuthLogin, db: Session = Depends(get_db)):
+    email = (payload.email or "").strip().lower()
+    password = (payload.password or "").strip()
+
+    user = db.query(models.UserModel).filter(models.UserModel.email == email).first()
+    if not user or not PWD_CONTEXT.verify(password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    return {"access_token": _make_token(user.id), "token_type": "bearer"}
 
 # =========================================================
 # DB
