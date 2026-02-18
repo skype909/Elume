@@ -83,6 +83,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+        
 @app.post("/auth/register", response_model=AuthToken)
 def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
     email = (payload.email or "").strip().lower()
@@ -121,13 +129,6 @@ def auth_login(payload: AuthLogin, db: Session = Depends(get_db)):
 # =========================================================
 Base.metadata.create_all(bind=engine)
 
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # =========================================================
 # ADMIN (Students + Assessments/Results)
