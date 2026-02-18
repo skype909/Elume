@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
-
+from sqlalchemy import text
 
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
 import schemas
@@ -170,6 +170,16 @@ def _current_question(session: LiveQuizSessionModel) -> Optional[dict]:
     if idx < 0 or idx >= len(qs):
         return None
     return qs[idx]
+
+def ensure_columns():
+    # Safely add missing columns to existing SQLite tables
+    with engine.connect() as conn:
+        cols = conn.execute(text("PRAGMA table_info(classes)")).fetchall()
+        col_names = {c[1] for c in cols}  # (cid, name, type, notnull, dflt_value, pk)
+
+        if "owner_user_id" not in col_names:
+            conn.execute(text("ALTER TABLE classes ADD COLUMN owner_user_id INTEGER"))
+            conn.commit()
 
 @app.post("/livequiz/create", response_model=LiveQuizCreateResponse)
 def livequiz_create(payload: LiveQuizCreateRequest, db: Session = Depends(get_db)):
@@ -503,6 +513,7 @@ def seed_classes(db: Session):
 
 @app.on_event("startup")
 def on_startup():
+    ensure_columns()
     db = SessionLocal()
     try:
         seed_classes(db)
