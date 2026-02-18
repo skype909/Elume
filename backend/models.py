@@ -1,18 +1,32 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
+
 
 from db import Base
 
+class UserModel(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, nullable=False, unique=True, index=True)
+    password_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    classes = relationship("ClassModel", back_populates="owner")
 
 class ClassModel(Base):
     __tablename__ = "classes"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
     name = Column(String, nullable=False)
     subject = Column(String, nullable=False)
+
+    owner = relationship("UserModel", back_populates="classes")
 
     posts = relationship("PostModel", back_populates="cls", cascade="all, delete-orphan")
     students = relationship("StudentModel", back_populates="cls", cascade="all, delete-orphan")
