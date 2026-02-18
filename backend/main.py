@@ -3,7 +3,9 @@ from __future__ import annotations
 import json, os, uuid
 import re
 import shutil
-from datetime import datetime
+import random
+import string
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -30,6 +32,10 @@ from models import (
     StudentModel,
     ClassAssessmentModel,
     AssessmentResultModel,
+    LiveQuizSessionModel,
+    LiveQuizParticipantModel,
+    LiveQuizAnswerModel,
+
 )
 
 
@@ -46,7 +52,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -97,6 +103,348 @@ class BulkResultsUpdate(BaseModel):
     results: List[ResultUpsert]
 
 # =========================================================
+# LIVE QUIZ / POLL
+# =========================================================
+
+class LiveQuizCreateQuestion(BaseModel):
+    id: str
+    prompt: str
+    choices: dict
+    correct: Optional[str] = None  # "A"|"B"|"C"|"D" or None
+
+class LiveQuizCreateRequest(BaseModel):
+    class_id: int
+    title: str
+    anonymous: bool = True
+    seconds_per_question: Optional[int] = 20
+    shuffle_questions: bool = False
+    auto_end_when_all_answered: bool = True
+    questions: List[LiveQuizCreateQuestion]
+
+class LiveQuizCreateResponse(BaseModel):
+    session_code: str
+    join_url: Optional[str] = None
+
+class LiveQuizJoinRequest(BaseModel):
+    anon_id: Optional[str] = None  # allow client to send same anon_id again (optional)
+
+class LiveQuizJoinResponse(BaseModel):
+    anon_id: str
+    nickname: Optional[str] = None
+
+class LiveQuizAnswerRequest(BaseModel):
+    anon_id: str
+    question_id: str
+    choice: str  # A/B/C/D
+
+def _rand_code(n: int = 6) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "".join(random.choice(alphabet) for _ in range(n))
+
+def _kid_name() -> str:
+    adj = ["Sunny","Rocket","Brave","Clever","Happy","Chill","Mighty","Rapid","Cosmic","Bouncy","Quiet","Zippy"]
+    animal = ["Panda","Koala","Tiger","Otter","Fox","Dolphin","Eagle","Turtle","Penguin","Lemur","Rabbit","Seal"]
+    return f"{random.choice(adj)} {random.choice(animal)}"
+
+def _load_questions(session: LiveQuizSessionModel) -> list:
+    try:
+        q = json.loads(session.questions_json or "[]")
+        return q if isinstance(q, list) else []
+    except Exception:
+        return []
+
+def _time_left_seconds(session: LiveQuizSessionModel) -> Optional[int]:
+    if session.state != "live":
+        return None
+    if not session.seconds_per_question:
+        return None
+    if not session.question_started_at:
+        return None
+    elapsed = (datetime.utcnow() - session.question_started_at).total_seconds()
+    left = int(session.seconds_per_question - elapsed)
+    return max(0, left)
+
+def _current_question(session: LiveQuizSessionModel) -> Optional[dict]:
+    qs = _load_questions(session)
+    idx = int(session.current_index or -1)
+    if idx < 0 or idx >= len(qs):
+        return None
+    return qs[idx]
+
+@app.post("/livequiz/create", response_model=LiveQuizCreateResponse)
+def livequiz_create(payload: LiveQuizCreateRequest, db: Session = Depends(get_db)):
+    cls = db.query(ClassModel).filter(ClassModel.id == payload.class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+
+    questions = payload.questions or []
+    if len(questions) == 0:
+        raise HTTPException(status_code=400, detail="At least one question is required")
+
+    # normalise + validate choices
+    cleaned = []
+    for q in questions:
+        qid = (q.id or "").strip()
+        prompt = (q.prompt or "").strip()
+        if not qid or not prompt:
+            raise HTTPException(status_code=400, detail="Each question needs id and prompt")
+
+        choices = q.choices or {}
+        # enforce A-D keys
+        obj = {
+            "id": qid,
+            "prompt": prompt,
+            "choices": {
+                "A": str(choices.get("A","")).strip(),
+                "B": str(choices.get("B","")).strip(),
+                "C": str(choices.get("C","")).strip(),
+                "D": str(choices.get("D","")).strip(),
+            },
+            "correct": (q.correct or None),
+        }
+        non_empty = [v for v in obj["choices"].values() if v]
+        if len(non_empty) < 2:
+            raise HTTPException(status_code=400, detail=f"Question '{prompt}' needs at least 2 options")
+        cleaned.append(obj)
+
+    if payload.shuffle_questions:
+        random.shuffle(cleaned)
+
+    # session code unique
+    for _ in range(20):
+        code = _rand_code(6)
+        exists = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+        if not exists:
+            break
+    else:
+        raise HTTPException(status_code=500, detail="Could not generate session code")
+
+    s = LiveQuizSessionModel(
+        class_id=payload.class_id,
+        session_code=code,
+        title=title,
+        anonymous=bool(payload.anonymous),
+        questions_json=json.dumps(cleaned, ensure_ascii=False),
+        state="lobby",
+        current_index=-1,
+        seconds_per_question=(int(payload.seconds_per_question) if payload.seconds_per_question else None),
+        shuffle_questions=bool(payload.shuffle_questions),
+        auto_end_when_all_answered=bool(payload.auto_end_when_all_answered),
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+
+    return {"session_code": s.session_code, "join_url": None}
+
+@app.get("/livequiz/{code}/status")
+def livequiz_status(code: str, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    qs = _load_questions(s)
+    joined = db.query(LiveQuizParticipantModel).filter(LiveQuizParticipantModel.session_id == s.id).count()
+
+    # answered count for current question
+    answered = 0
+    cq = _current_question(s)
+    if cq:
+        qid = cq.get("id")
+        answered = (
+            db.query(LiveQuizAnswerModel)
+            .filter(LiveQuizAnswerModel.session_id == s.id)
+            .filter(LiveQuizAnswerModel.question_id == qid)
+            .count()
+        )
+
+    return {
+        "session_code": s.session_code,
+        "state": s.state,
+        "title": s.title,
+        "anonymous": s.anonymous,
+        "seconds_per_question": s.seconds_per_question,
+        "current_index": s.current_index,
+        "total_questions": len(qs),
+        "time_left_seconds": _time_left_seconds(s),
+        "joined_count": joined,
+        "answered_count": answered,
+    }
+
+@app.post("/livequiz/{code}/start")
+def livequiz_start(code: str, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    qs = _load_questions(s)
+    if not qs:
+        raise HTTPException(status_code=400, detail="No questions")
+
+    s.state = "live"
+    s.started_at = datetime.utcnow()
+    s.current_index = 0
+    s.question_started_at = datetime.utcnow()
+    db.commit()
+    return {"message": "started"}
+
+@app.post("/livequiz/{code}/next")
+def livequiz_next(code: str, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    qs = _load_questions(s)
+    if not qs:
+        raise HTTPException(status_code=400, detail="No questions")
+
+    if s.state != "live":
+        raise HTTPException(status_code=400, detail="Session is not live")
+
+    nxt = int(s.current_index) + 1
+    if nxt >= len(qs):
+        s.state = "ended"
+        s.ended_at = datetime.utcnow()
+        db.commit()
+        return {"message": "ended"}
+
+    s.current_index = nxt
+    s.question_started_at = datetime.utcnow()
+    db.commit()
+    return {"message": "next"}
+
+@app.post("/livequiz/{code}/end-question")
+def livequiz_end_question(code: str, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if s.state != "live":
+        raise HTTPException(status_code=400, detail="Session is not live")
+
+    # just sets timer to 0 by moving question_started_at back
+    if s.seconds_per_question:
+        s.question_started_at = datetime.utcnow() - timedelta(seconds=int(s.seconds_per_question))
+        db.commit()
+    return {"message": "ended_question"}
+
+@app.post("/livequiz/{code}/end-session")
+def livequiz_end_session(code: str, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    s.state = "ended"
+    s.ended_at = datetime.utcnow()
+    db.commit()
+    return {"message": "ended"}
+
+@app.post("/livequiz/{code}/join", response_model=LiveQuizJoinResponse)
+def livequiz_join(code: str, payload: LiveQuizJoinRequest, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    anon_id = (payload.anon_id or "").strip() or uuid.uuid4().hex
+
+    existing = (
+        db.query(LiveQuizParticipantModel)
+        .filter(LiveQuizParticipantModel.session_id == s.id)
+        .filter(LiveQuizParticipantModel.anon_id == anon_id)
+        .first()
+    )
+    if existing:
+        return {"anon_id": existing.anon_id, "nickname": existing.nickname}
+
+    nickname = None if s.anonymous else _kid_name()
+
+    p = LiveQuizParticipantModel(session_id=s.id, anon_id=anon_id, nickname=nickname)
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+
+    return {"anon_id": p.anon_id, "nickname": p.nickname}
+
+@app.get("/livequiz/{code}/current")
+def livequiz_current(code: str, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    q = _current_question(s)
+    return {
+        "state": s.state,
+        "title": s.title,
+        "anonymous": s.anonymous,
+        "current_index": s.current_index,
+        "total_questions": len(_load_questions(s)),
+        "time_left_seconds": _time_left_seconds(s),
+        "question": q,
+    }
+
+@app.post("/livequiz/{code}/answer")
+def livequiz_answer(code: str, payload: LiveQuizAnswerRequest, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    anon_id = (payload.anon_id or "").strip()
+    if not anon_id:
+        raise HTTPException(status_code=400, detail="anon_id is required")
+
+    choice = (payload.choice or "").strip().upper()
+    if choice not in ["A", "B", "C", "D"]:
+        raise HTTPException(status_code=400, detail="choice must be A/B/C/D")
+
+    qid = (payload.question_id or "").strip()
+    if not qid:
+        raise HTTPException(status_code=400, detail="question_id is required")
+
+    p = (
+        db.query(LiveQuizParticipantModel)
+        .filter(LiveQuizParticipantModel.session_id == s.id)
+        .filter(LiveQuizParticipantModel.anon_id == anon_id)
+        .first()
+    )
+    if not p:
+        raise HTTPException(status_code=404, detail="Participant not joined")
+
+    # prevent double-answering same question by same participant
+    existing = (
+        db.query(LiveQuizAnswerModel)
+        .filter(LiveQuizAnswerModel.session_id == s.id)
+        .filter(LiveQuizAnswerModel.participant_id == p.id)
+        .filter(LiveQuizAnswerModel.question_id == qid)
+        .first()
+    )
+    if existing:
+        existing.choice = choice
+        existing.answered_at = datetime.utcnow()
+        db.commit()
+    else:
+        a = LiveQuizAnswerModel(session_id=s.id, participant_id=p.id, question_id=qid, choice=choice)
+        db.add(a)
+        db.commit()
+
+    # auto-end check (teacher can still press End Q early)
+    if s.auto_end_when_all_answered and s.state == "live":
+        joined = db.query(LiveQuizParticipantModel).filter(LiveQuizParticipantModel.session_id == s.id).count()
+        answered = (
+            db.query(LiveQuizAnswerModel)
+            .filter(LiveQuizAnswerModel.session_id == s.id)
+            .filter(LiveQuizAnswerModel.question_id == qid)
+            .count()
+        )
+        if joined > 0 and answered >= joined and s.seconds_per_question:
+            s.question_started_at = datetime.utcnow() - timedelta(seconds=int(s.seconds_per_question))
+            db.commit()
+
+    return {"message": "ok"}
+
+
+# =========================================================
 # FILES / UPLOADS (ABSOLUTE + STABLE)
 # =========================================================
 BASE_DIR = Path(__file__).resolve().parent
@@ -135,6 +483,10 @@ def _rel_upload_url(stored_path: str) -> str:
 # SEED CLASSES (optional)
 # =========================================================
 def seed_classes(db: Session):
+    # ONLY seed if database is empty
+    if db.query(ClassModel).count() > 0:
+        return
+
     defaults = [
         ("6th Year Physics", "Physics"),
         ("6th Year Maths", "Maths"),
@@ -143,11 +495,10 @@ def seed_classes(db: Session):
     ]
 
     for name, subject in defaults:
-        exists = db.query(ClassModel).filter(ClassModel.name == name).first()
-        if not exists:
-            db.add(ClassModel(name=name, subject=subject))
+        db.add(ClassModel(name=name, subject=subject))
 
     db.commit()
+
 
 
 @app.on_event("startup")

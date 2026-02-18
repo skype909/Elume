@@ -154,3 +154,61 @@ class SchoolDay(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     date = Column(DateTime, nullable=False, unique=True)
+
+
+# =========================================================
+# Live Quiz Session
+# =========================================================
+class LiveQuizSessionModel(Base):
+    __tablename__ = "livequiz_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False)
+
+    session_code = Column(String, nullable=False, unique=True, index=True)
+
+    title = Column(String, nullable=False)
+    anonymous = Column(Boolean, default=True, nullable=False)
+
+    # JSON stored as text
+    questions_json = Column(Text, nullable=False)
+
+    # flow control
+    state = Column(String, default="lobby", nullable=False)  # lobby | live | ended
+    current_index = Column(Integer, default=-1, nullable=False)
+
+    seconds_per_question = Column(Integer, nullable=True)
+    shuffle_questions = Column(Boolean, default=False, nullable=False)
+    auto_end_when_all_answered = Column(Boolean, default=True, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    question_started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+
+
+class LiveQuizParticipantModel(Base):
+    __tablename__ = "livequiz_participants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("livequiz_sessions.id"), nullable=False)
+
+    # if anonymous mode, we still create an anon_id for the device
+    anon_id = Column(String, nullable=False)
+    nickname = Column(String, nullable=True)
+
+    joined_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class LiveQuizAnswerModel(Base):
+    __tablename__ = "livequiz_answers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("livequiz_sessions.id"), nullable=False)
+    participant_id = Column(Integer, ForeignKey("livequiz_participants.id"), nullable=False)
+
+    question_id = Column(String, nullable=False)
+    choice = Column(String, nullable=False)  # "A" | "B" | "C" | "D"
+
+    answered_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+

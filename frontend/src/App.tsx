@@ -11,6 +11,10 @@ import QuizzesPage from "./QuizzesPage";
 import Tests from "./Tests";
 import CalendarPage from "./CalendarPage";
 import ClassAdminPage from "./ClassAdminPage";
+import SeatingPlanPage from "./SeatingPlanPage";
+import LiveQuizPage from "./LiveQuizPage";
+import StudentJoinQuizPage from "./StudentJoinQuizPage";
+
 
 
 import elumeLogo from "./assets/elume-logo.png";
@@ -752,10 +756,13 @@ function Dashboard() {
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Dashboard />} />
-      <Route path="/calendar" element={<CalendarPage />} />
+      {/* Student join MUST be above "/" */}
+      <Route path="/join/:code" element={<StudentJoinQuizPage />} />
 
+      {/* Teacher pages */}
       <Route path="/class/:id" element={<ClassPage />} />
+      <Route path="/class/:id/seating-plan" element={<SeatingPlanPage />} />
+      <Route path="/class/:id/live-quiz" element={<LiveQuizPage />} />
       <Route path="/whiteboard/:id" element={<WhiteboardPage />} />
       <Route path="/class/:id/notes" element={<NotesPage />} />
       <Route path="/class/:id/exam-papers" element={<ExamPapersPage />} />
@@ -765,7 +772,10 @@ export default function App() {
       <Route path="/class/:id/tests" element={<Tests />} />
       <Route path="/class/:id/calendar" element={<CalendarPage />} />
       <Route path="/class/:id/admin" element={<ClassAdminPage />} />
+      <Route path="/calendar" element={<CalendarPage />} />
 
+      {/* Dashboard LAST */}
+      <Route path="/" element={<Dashboard />} />
     </Routes>
   );
 }

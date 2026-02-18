@@ -1043,7 +1043,7 @@ export default function ClassPage() {
           </div>
         </div>
         {/* Classroom Tools (new box) */}
-        <div className={`mt-6 rounded-3xl border-2 border-slate-200 ${soft} p-4`}>
+       <div className="mt-6 rounded-3xl border-2 border-amber-300 bg-amber-50 p-4 shadow-md">
           <div className="flex items-center gap-2">
             <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
               🎯
@@ -1052,36 +1052,71 @@ export default function ClassPage() {
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              className={pill}
-              type="button"
-              onClick={() => setRngOpen((v) => !v)}
-            >
-              🎲 Random Number
-            </button>
+            {(() => {
+              const toolTile =
+                "aspect-square w-full rounded-full border-2 border-slate-200 bg-white shadow-sm hover:bg-slate-50 active:scale-[0.99] transition flex flex-col items-center justify-center text-center";
+              const toolIcon = "text-2xl";
+              const toolLabel = "mt-2 text-sm font-semibold leading-tight text-slate-900";
 
-            <button className={pill} type="button" onClick={() => alert("Seating Plan coming soon")}>
-              🪑 Seating Plan
-            </button>
+              return (
+                <>
+                  <button
+                    type="button"
+                    className={toolTile}
+                    onClick={() => setRngOpen((v) => !v)}
+                  >
+                    <div className={toolIcon}>🎲</div>
+                    <div className={toolLabel}>
+                      Random
+                      <br />
+                      Number
+                    </div>
+                  </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setTimerFinished(false);
-                setTimerRunning(false);
-                setTimerRemaining(timerMinutes * 60 + timerSeconds);
-                setTimerOpen(true);
-              }}
+                  <button
+                    type="button"
+                    className={toolTile}
+                    onClick={() => navigate(`/class/${classId}/seating-plan`)}
+                  >
+                    <div className={toolIcon}>🪑</div>
+                    <div className={toolLabel}>
+                      Seating
+                      <br />
+                      Plan
+                    </div>
+                  </button>
 
-              className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center justify-center gap-2"
-            >
-              <Timer size={16} />
-              Timer
-            </button>
+                  <button
+                    type="button"
+                    className={toolTile}
+                    onClick={() => {
+                      setTimerFinished(false);
+                      setTimerRunning(false);
+                      setTimerRemaining(timerMinutes * 60 + timerSeconds);
+                      setTimerOpen(true);
+                    }}
+                  >
+                    <div className={toolIcon}>
+                      <Timer size={22} />
+                    </div>
+                    <div className={toolLabel}>Timer</div>
+                  </button>
 
-            <button className={pill} type="button" onClick={() => alert("Coming soon")}>
-              Button 4
-            </button>
+                  <button
+                    type="button"
+                    className={toolTile}
+                    onClick={() => navigate(`/class/${classId}/live-quiz`)}
+                  >
+                    <div className={toolIcon}>🧠</div>
+                    <div className={toolLabel}>
+                      Live
+                      <br />
+                      Quiz
+                    </div>
+                  </button>
+                </>
+              );
+            })()}
           </div>
 
           {/* RNG Widget (inline pop-up card) */}
