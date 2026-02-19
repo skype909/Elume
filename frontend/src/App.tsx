@@ -14,6 +14,11 @@ import ClassAdminPage from "./ClassAdminPage";
 import SeatingPlanPage from "./SeatingPlanPage";
 import LiveQuizPage from "./LiveQuizPage";
 import StudentJoinQuizPage from "./StudentJoinQuizPage";
+import LoginPage from "./LoginPage";
+import { getToken, clearToken } from "./api";
+import { apiFetch } from "./api";
+
+
 
 
 
@@ -22,13 +27,14 @@ import ELogo from "./assets/ELogo.png";
 import ELogo2 from "./assets/ELogo2.png";
 
 
+
 type ClassItem = {
   id: number;
   name: string;
   subject: string;
 };
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "/api";
 
 // local-only metadata (color + order)
 type ClassMeta = {
@@ -53,6 +59,7 @@ const COLOURS: { name: string; bg: string; ring: string }[] = [
 ];
 
 const DEFAULT_BG = COLOURS[0]?.bg ?? "bg-emerald-500";
+
 
 function loadMeta(): MetaStore {
   try {
@@ -185,52 +192,31 @@ function Dashboard() {
   const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
-    const controller = new AbortController();
+    let cancelled = false;
+
     setLoading(true);
     setError(null);
 
-    fetch(`${API_BASE}/classes`, { signal: controller.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Classes fetch failed (${res.status})`);
-        return res.json();
-      })
+    apiFetch("/classes")
       .then((data) => {
-        const arr = Array.isArray(data) ? (data as ClassItem[]) : [];
+        if (cancelled) return;
+        const arr = Array.isArray(data) ? data : [];
         setClasses(arr);
-
-        // Ensure each class has metadata
-        setMeta((prev) => {
-          const next = { ...prev };
-
-          const orders = Object.values(next)
-            .map((m) => (typeof m?.order === "number" ? m.order : 0))
-            .filter((n) => Number.isFinite(n));
-          let maxOrder = orders.length ? Math.max(...orders) : 0;
-
-          for (const c of arr) {
-            const key = String(c.id);
-            if (!next[key]) {
-              maxOrder += 1;
-              next[key] = {
-                color: COLOURS[(c.id - 1) % COLOURS.length].bg,
-                order: maxOrder,
-              };
-            }
-          }
-
-          saveMeta(next);
-          return next;
-        });
       })
       .catch((e: any) => {
-        if (e?.name === "AbortError") return;
+        if (cancelled) return;
         setError(e?.message || "Failed to load classes");
         setClasses([]);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-    return () => controller.abort();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
 
   const sortedClasses = useMemo(() => {
     const copy = [...classes];
@@ -295,8 +281,8 @@ function Dashboard() {
       level === "Higher Level"
         ? " (Higher)"
         : level === "Ordinary Level"
-        ? " (Ordinary)"
-        : "";
+          ? " (Ordinary)"
+          : "";
 
     return `${year} ${subj}${lvlSuffix}`.trim();
   }
@@ -320,14 +306,11 @@ function Dashboard() {
     setError(null);
 
     try {
-      const r = await fetch(`${API_BASE}/classes`, {
+      const created = (await apiFetch("/classes", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, subject: subj }),
-      });
+      })) as ClassItem;
 
-      if (!r.ok) throw new Error(`Create class failed (${r.status})`);
-      const created = (await r.json()) as ClassItem;
 
       setClasses((prev) => [created, ...prev]);
 
@@ -378,19 +361,11 @@ function Dashboard() {
 
     try {
       // 1) Save name/subject to backend
-      const r = await fetch(`${API_BASE}/classes/${editingId}`, {
+      const updated = (await apiFetch(`/classes/${editingId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, subject: subj || "Subject" }),
-      });
+      })) as ClassItem;
 
-      if (!r.ok) {
-        throw new Error(
-          `Edit failed (${r.status}). Add PUT /classes/{id} on backend.`
-        );
-      }
-
-      const updated = (await r.json()) as ClassItem;
 
       // update local list
       setClasses((prev) => prev.map((x) => (x.id === editingId ? updated : x)));
@@ -421,10 +396,10 @@ function Dashboard() {
         <div className="mx-auto flex max-w-7xl items-center px-4 py-6">
           {/* Left brand */}
           <div className="flex items-center gap-5">
-            <img src={ELogo2} alt="ELume" className="h-28 w-auto object-contain"/>
+            <img src={ELogo2} alt="ELume" className="h-28 w-auto object-contain" />
             <div className="leading-tight">
-            <div className="text-5xl font-extrabold tracking-tight text-slate-700"
-     style={{ textShadow: "0 3px 8px rgba(0,0,0,0.25)" }}> ELume </div>
+              <div className="text-5xl font-extrabold tracking-tight text-slate-700"
+                style={{ textShadow: "0 3px 8px rgba(0,0,0,0.25)" }}> ELume </div>
               <div className="text-base font-semibold text-slate-500">Learn, Grow, Succeed</div>
             </div>
           </div>
@@ -754,28 +729,47 @@ function Dashboard() {
 }
 
 export default function App() {
+  const [isAuthed, setIsAuthed] = useState(!!localStorage.getItem("elume_token"));
+
+  function logout() {
+    clearToken();
+    setIsAuthed(false);
+  }
+
+  if (!isAuthed) {
+    return <LoginPage onLoggedIn={() => setIsAuthed(true)} />;
+  }
+
   return (
-    <Routes>
-      {/* Student join MUST be above "/" */}
-      <Route path="/join/:code" element={<StudentJoinQuizPage />} />
+    <>
+      {/* GLOBAL TOP BAR */}
+      <div className="flex justify-end items-center px-6 py-3 border-b bg-white">
+        <button
+          onClick={logout}
+          className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100"
+        >
+          Logout
+        </button>
+      </div>
 
-      {/* Teacher pages */}
-      <Route path="/class/:id" element={<ClassPage />} />
-      <Route path="/class/:id/seating-plan" element={<SeatingPlanPage />} />
-      <Route path="/class/:id/live-quiz" element={<LiveQuizPage />} />
-      <Route path="/whiteboard/:id" element={<WhiteboardPage />} />
-      <Route path="/class/:id/notes" element={<NotesPage />} />
-      <Route path="/class/:id/exam-papers" element={<ExamPapersPage />} />
-      <Route path="/class/:id/videos" element={<VideosPage />} />
-      <Route path="/class/:id/links" element={<LinksPage />} />
-      <Route path="/class/:id/quizzes" element={<QuizzesPage />} />
-      <Route path="/class/:id/tests" element={<Tests />} />
-      <Route path="/class/:id/calendar" element={<CalendarPage />} />
-      <Route path="/class/:id/admin" element={<ClassAdminPage />} />
-      <Route path="/calendar" element={<CalendarPage />} />
-
-      {/* Dashboard LAST */}
-      <Route path="/" element={<Dashboard />} />
-    </Routes>
+      {/* APP ROUTES */}
+      <Routes>
+        <Route path="/join/:code" element={<StudentJoinQuizPage />} />
+        <Route path="/class/:id" element={<ClassPage />} />
+        <Route path="/class/:id/seating-plan" element={<SeatingPlanPage />} />
+        <Route path="/class/:id/live-quiz" element={<LiveQuizPage />} />
+        <Route path="/whiteboard/:id" element={<WhiteboardPage />} />
+        <Route path="/class/:id/notes" element={<NotesPage />} />
+        <Route path="/class/:id/exam-papers" element={<ExamPapersPage />} />
+        <Route path="/class/:id/videos" element={<VideosPage />} />
+        <Route path="/class/:id/links" element={<LinksPage />} />
+        <Route path="/class/:id/quizzes" element={<QuizzesPage />} />
+        <Route path="/class/:id/tests" element={<Tests />} />
+        <Route path="/class/:id/calendar" element={<CalendarPage />} />
+        <Route path="/class/:id/admin" element={<ClassAdminPage />} />
+        <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/" element={<Dashboard />} />
+      </Routes>
+    </>
   );
 }
