@@ -90,7 +90,7 @@ def get_db():
         yield db
     finally:
         db.close()
-        
+
 @app.post("/auth/register", response_model=AuthToken)
 def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
     email = (payload.email or "").strip().lower()
@@ -123,6 +123,27 @@ def auth_login(payload: AuthLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     return {"access_token": _make_token(user.id), "token_type": "bearer"}
+
+def get_current_user(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+) -> models.UserModel:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    token = authorization.split(" ", 1)[1].strip()
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        user_id = int(payload.get("sub"))
+    except (JWTError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = db.query(models.UserModel).filter(models.UserModel.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    return user
 
 # =========================================================
 # DB
@@ -583,15 +604,24 @@ def on_startup():
 # CLASSES
 # =========================================================
 @app.get("/classes")
-def get_classes(db: Session = Depends(get_db)):
-    return db.query(ClassModel).all()
-
-
+def get_classes(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    return db.query(ClassModel).filter(ClassModel.owner_user_id == user.id).all()
 
 
 @app.post("/classes")
-def create_class(new_class: schemas.ClassCreate, db: Session = Depends(get_db)):
-    c = ClassModel(name=new_class.name, subject=new_class.subject)
+def create_class(
+    new_class: schemas.ClassCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    c = ClassModel(
+        owner_user_id=user.id,
+        name=new_class.name,
+        subject=new_class.subject
+    )
     db.add(c)
     db.commit()
     db.refresh(c)
