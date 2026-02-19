@@ -1,54 +1,63 @@
 // src/api.ts
-const API_BASE = "/api";
+const TOKEN_KEY = "elume_token";
 
 export function getToken(): string | null {
-  return localStorage.getItem("elume_token");
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
 }
 
 export function setToken(token: string) {
-  localStorage.setItem("elume_token", token);
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // ignore
+  }
 }
 
 export function clearToken() {
-  localStorage.removeItem("elume_token");
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // ignore
+  }
 }
 
-export async function apiFetch(path: string, options: RequestInit = {}) {
+export async function apiFetch(path: string, init: RequestInit = {}) {
   const token = getToken();
 
-  const headers = new Headers(options.headers || {});
-  // Only set JSON header if caller didn't already set one (e.g., FormData uploads)
-  if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
+  const headers = new Headers(init.headers || {});
+  if (!headers.has("Content-Type") && init.body) {
     headers.set("Content-Type", "application/json");
   }
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const url =
+    path.startsWith("/api")
+      ? path
+      : `/api${path.startsWith("/") ? "" : "/"}${path}`;
 
-  // If token is missing/expired, force logout
-  if (res.status === 401) {
-    clearToken();
-    throw new Error("Unauthorized");
+  const res = await fetch(url, { ...init, headers });
+
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
   }
 
-  // Try to return JSON; fall back to text for debugging
-  const text = await res.text();
-  const data = text ? safeJson(text) : null;
-
   if (!res.ok) {
-    const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+    const msg =
+      (data && (data.detail || data.message)) ||
+      (typeof data === "string" && data) ||
+      `Request failed (${res.status})`;
     throw new Error(msg);
   }
 
   return data;
-}
-
-function safeJson(text: string) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
 }
