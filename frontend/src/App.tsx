@@ -2,7 +2,6 @@ import { Routes, Route, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import ClassPage from "./ClassPage";
-import WhiteboardPage from "./WhiteBoardPage";
 import NotesPage from "./NotesPage";
 import ExamPapersPage from "./ExamPapersPage";
 import VideosPage from "./VideosPage";
@@ -18,6 +17,8 @@ import LoginPage from "./LoginPage";
 import StudentClassPage from "./StudentClassPage";
 import { getToken, clearToken } from "./api";
 import { apiFetch } from "./api";
+import WhiteBoardPage from "./WhiteBoardPage";
+
 
 
 
@@ -780,7 +781,7 @@ export default function App() {
         <Route path="/class/:id" element={<ClassPage />} />
         <Route path="/class/:id/seating-plan" element={<SeatingPlanPage />} />
         <Route path="/class/:id/live-quiz" element={<LiveQuizPage />} />
-        <Route path="/whiteboard/:id" element={<WhiteboardPage />} />
+        <Route path="/whiteBoard/:id" element={<WhiteBoardPage />} />
         <Route path="/class/:id/notes" element={<NotesPage />} />
         <Route path="/class/:id/exam-papers" element={<ExamPapersPage />} />
         <Route path="/class/:id/videos" element={<VideosPage />} />
