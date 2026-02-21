@@ -648,6 +648,10 @@ export default function WhiteboardPage() {
   // Scroll container
   const containerRef = useRef<HTMLDivElement | null>(null);
 
+  // Fullscreen
+  const fsRootRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
 
   // Four-layer canvases (background + images + ink + preview)
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -673,7 +677,8 @@ export default function WhiteboardPage() {
 
   // Whiteboard state
   const [boardTitle, setBoardTitle] = useState<string>("Class Whiteboard");
-  const [tool, setTool] = useState<Tool>("pen");
+  type Tool = "pen" | "eraser" | "line" | "hand";
+  const [tool, setTool] = useState<Tool>("hand");
   const [penColor, setPenColor] = useState(PEN_COLORS[0]);
   const [penSize, setPenSize] = useState(PEN_SIZES[1]);
   const [eraserSize, setEraserSize] = useState(ERASER_SIZES[1]);
@@ -691,6 +696,8 @@ export default function WhiteboardPage() {
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
 
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const handModeRef = useRef<"none" | "pan" | "img">("none");
+
 
   const imgDragRef = useRef<
     | null
@@ -1098,10 +1105,58 @@ export default function WhiteboardPage() {
       ctx.drawImage(img, p.x, p.y, p.w, p.h);
 
       if (p.id === selectedImageId) {
+        // selection outline
+        ctx.save();
         ctx.strokeStyle = "#2563eb";
         ctx.lineWidth = 2;
         ctx.strokeRect(p.x, p.y, p.w, p.h);
+
+        const HANDLE = 14; // size of corner squares
+        const half = HANDLE / 2;
+
+        // corner handles (white fill, blue border)
+        const corners: Array<[number, number]> = [
+          [p.x, p.y],                 // nw
+          [p.x + p.w, p.y],           // ne
+          [p.x, p.y + p.h],           // sw
+          [p.x + p.w, p.y + p.h],     // se
+        ];
+
+        ctx.fillStyle = "white";
+        ctx.strokeStyle = "#2563eb";
+        ctx.lineWidth = 2;
+        for (const [cx, cy] of corners) {
+          ctx.beginPath();
+          ctx.rect(cx - half, cy - half, HANDLE, HANDLE);
+          ctx.fill();
+          ctx.stroke();
+        }
+
+        // delete box (top-right)
+        const XBOX = 22;
+        const xbx = p.x + p.w - XBOX;
+        const xby = p.y - XBOX; // slightly above top edge feels nicer
+        ctx.fillStyle = "rgba(239,68,68,0.95)"; // red-500-ish
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(xbx, xby, XBOX, XBOX, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // X glyph
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(xbx + 6, xby + 6);
+        ctx.lineTo(xbx + XBOX - 6, xby + XBOX - 6);
+        ctx.moveTo(xbx + XBOX - 6, xby + 6);
+        ctx.lineTo(xbx + 6, xby + XBOX - 6);
+        ctx.stroke();
+
+        ctx.restore();
       }
+
     }
   }
 
@@ -1127,8 +1182,8 @@ export default function WhiteboardPage() {
     bgCtx.restore();
   }
   /* ---------- Ink drawing + Hand tool ---------- */
-  function getImgCanvasPoint(e: React.PointerEvent<HTMLCanvasElement>) {
-    const r = imgCanvasRef.current!.getBoundingClientRect();
+  function getBoardPoint(e: React.PointerEvent) {
+    const r = containerRef.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
@@ -1140,26 +1195,77 @@ export default function WhiteboardPage() {
     return null;
   }
 
+  function getImgCanvasPoint(e: React.PointerEvent) {
+    const r = containerRef.current!.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
   const onImgPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (tool !== "hand") return;
+    const onImgPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      // "hand" is effectively your select/move tool for images
+      if (tool !== "hand") return;
 
-    const { x, y } = getImgCanvasPoint(e);
-    const hit = findTopImageAt(x, y);
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
 
-    if (!hit) {
-      setSelectedImageId(null);
-      return;
-    }
+      const { x, y } = getImgCanvasPoint(e);
+      const hit = findTopImageAt(x, y);
 
-    setSelectedImageId(hit.id);
-    snapshotObjects();
+      if (!hit) {
+        setSelectedImageId(null);
+        return;
+      }
 
-    imgDragRef.current = {
-      id: hit.id,
-      mode: "move",
-      startX: x,
-      startY: y,
-      orig: { ...hit },
+      setSelectedImageId(hit.id);
+
+      // --- hit areas ---
+      const HANDLE = 14;
+      const half = HANDLE / 2;
+
+      const inRect = (px: number, py: number, rx: number, ry: number, rw: number, rh: number) =>
+        px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+
+      // delete box (same geometry as redraw)
+      const XBOX = 22;
+      const xbx = hit.x + hit.w - XBOX;
+      const xby = hit.y - XBOX;
+
+      // If tap delete box -> delete immediately
+      if (inRect(x, y, xbx, xby, XBOX, XBOX)) {
+        snapshotObjects(); // keep undo working
+        setPlacedImages((arr) => arr.filter((p) => p.id !== hit.id));
+        setSelectedImageId(null);
+        return;
+      }
+
+      // corner handle hit test
+      const corners = {
+        nw: { cx: hit.x, cy: hit.y },
+        ne: { cx: hit.x + hit.w, cy: hit.y },
+        sw: { cx: hit.x, cy: hit.y + hit.h },
+        se: { cx: hit.x + hit.w, cy: hit.y + hit.h },
+      } as const;
+
+      const hitHandle = (cx: number, cy: number) =>
+        inRect(x, y, cx - half, cy - half, HANDLE, HANDLE);
+
+      let mode: "move" | "nw" | "ne" | "sw" | "se" = "move";
+      if (hitHandle(corners.nw.cx, corners.nw.cy)) mode = "nw";
+      else if (hitHandle(corners.ne.cx, corners.ne.cy)) mode = "ne";
+      else if (hitHandle(corners.sw.cx, corners.sw.cy)) mode = "sw";
+      else if (hitHandle(corners.se.cx, corners.se.cy)) mode = "se";
+
+      snapshotObjects();
+
+      imgDragRef.current = {
+        id: hit.id,
+        mode,
+        startX: x,
+        startY: y,
+        orig: { x: hit.x, y: hit.y, w: hit.w, h: hit.h },
+      };
+
+      e.currentTarget.setPointerCapture(e.pointerId);
     };
   };
 
@@ -1170,46 +1276,200 @@ export default function WhiteboardPage() {
     const dx = x - imgDragRef.current.startX;
     const dy = y - imgDragRef.current.startY;
 
-    setPlacedImages(arr =>
-      arr.map(p =>
-        p.id === imgDragRef.current!.id
-          ? { ...p, x: imgDragRef.current!.orig.x + dx, y: imgDragRef.current!.orig.y + dy }
-          : p
-      )
+    const { id, mode, orig } = imgDragRef.current;
+
+    const MIN = 40; // minimum size so it never collapses
+
+    setPlacedImages((arr) =>
+      arr.map((p) => {
+        if (p.id !== id) return p;
+
+        // MOVE
+        if (mode === "move") {
+          return { ...p, x: orig.x + dx, y: orig.y + dy };
+        }
+
+        // RESIZE
+        let nx = orig.x;
+        let ny = orig.y;
+        let nw = orig.w;
+        let nh = orig.h;
+
+        if (mode === "se") {
+          nw = Math.max(MIN, orig.w + dx);
+          nh = Math.max(MIN, orig.h + dy);
+        } else if (mode === "ne") {
+          nw = Math.max(MIN, orig.w + dx);
+          nh = Math.max(MIN, orig.h - dy);
+          ny = orig.y + (orig.h - nh);
+        } else if (mode === "sw") {
+          nw = Math.max(MIN, orig.w - dx);
+          nh = Math.max(MIN, orig.h + dy);
+          nx = orig.x + (orig.w - nw);
+        } else if (mode === "nw") {
+          nw = Math.max(MIN, orig.w - dx);
+          nh = Math.max(MIN, orig.h - dy);
+          nx = orig.x + (orig.w - nw);
+          ny = orig.y + (orig.h - nh);
+        }
+
+        return { ...p, x: nx, y: ny, w: nw, h: nh };
+      })
     );
   };
 
-  const onImgPointerUp = () => {
+
+  const onImgPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     imgDragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { }
   };
-  const beginHandPan = (e: React.PointerEvent<HTMLDivElement>) => {
+
+
+  const onHandDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (tool !== "hand") return;
+
     const container = containerRef.current;
     if (!container) return;
 
-    // Only start panning if the user grabbed empty space (not an image canvas drag)
-    if (e.target !== container) return;
+    const { x, y } = getImgCanvasPoint(e);
 
+    const hit = findTopImageAt(x, y);
+    if (hit) {
+      setSelectedImageId(hit.id);
+
+      const inRect = (px: number, py: number, rx: number, ry: number, rw: number, rh: number) =>
+        px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+
+      const HANDLE = 14;
+      const half = HANDLE / 2;
+      const XBOX = 22;
+
+      // Must match redrawImages()
+      const xbx = hit.x + hit.w - XBOX;
+      const xby = hit.y - XBOX;
+
+      // delete
+      if (inRect(x, y, xbx, xby, XBOX, XBOX)) {
+        snapshotObjects();
+        setPlacedImages((arr) => arr.filter((p) => p.id !== hit.id));
+        setSelectedImageId(null);
+        return;
+      }
+
+      const corners = {
+        nw: { cx: hit.x, cy: hit.y },
+        ne: { cx: hit.x + hit.w, cy: hit.y },
+        sw: { cx: hit.x, cy: hit.y + hit.h },
+        se: { cx: hit.x + hit.w, cy: hit.y + hit.h },
+      } as const;
+
+      const hitHandle = (cx: number, cy: number) =>
+        inRect(x, y, cx - half, cy - half, HANDLE, HANDLE);
+
+      let mode: "move" | "nw" | "ne" | "sw" | "se" = "move";
+      if (hitHandle(corners.nw.cx, corners.nw.cy)) mode = "nw";
+      else if (hitHandle(corners.ne.cx, corners.ne.cy)) mode = "ne";
+      else if (hitHandle(corners.sw.cx, corners.sw.cy)) mode = "sw";
+      else if (hitHandle(corners.se.cx, corners.se.cy)) mode = "se";
+
+      snapshotObjects();
+      handModeRef.current = "img";
+      imgDragRef.current = {
+        id: hit.id,
+        mode,
+        startX: x,
+        startY: y,
+        orig: { x: hit.x, y: hit.y, w: hit.w, h: hit.h },
+      };
+
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // otherwise pan
+    setSelectedImageId(null);
+    handModeRef.current = "pan";
+
+    e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     handDragRef.current = true;
     handStartRef.current = { y: e.clientY, scrollTop: container.scrollTop };
   };
 
-  const moveHandPan = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onHandMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (tool !== "hand") return;
+
     const container = containerRef.current;
     if (!container) return;
-    if (!handDragRef.current || !handStartRef.current) return;
 
-    const dy = e.clientY - handStartRef.current.y;
-    container.scrollTop = handStartRef.current.scrollTop - dy;
+    // Image drag/resize
+    if (handModeRef.current === "img" && imgDragRef.current) {
+      const { x, y } = getImgCanvasPoint(e);
+      const dx = x - imgDragRef.current.startX;
+      const dy = y - imgDragRef.current.startY;
+
+      const { id, mode, orig } = imgDragRef.current;
+      const MIN = 40;
+
+      setPlacedImages((arr) =>
+        arr.map((p) => {
+          if (p.id !== id) return p;
+
+          if (mode === "move") {
+            return { ...p, x: orig.x + dx, y: orig.y + dy };
+          }
+
+          let nx = orig.x;
+          let ny = orig.y;
+          let nw = orig.w;
+          let nh = orig.h;
+
+          if (mode === "se") {
+            nw = Math.max(MIN, orig.w + dx);
+            nh = Math.max(MIN, orig.h + dy);
+          } else if (mode === "ne") {
+            nw = Math.max(MIN, orig.w + dx);
+            nh = Math.max(MIN, orig.h - dy);
+            ny = orig.y + (orig.h - nh);
+          } else if (mode === "sw") {
+            nw = Math.max(MIN, orig.w - dx);
+            nh = Math.max(MIN, orig.h + dy);
+            nx = orig.x + (orig.w - nw);
+          } else if (mode === "nw") {
+            nw = Math.max(MIN, orig.w - dx);
+            nh = Math.max(MIN, orig.h - dy);
+            nx = orig.x + (orig.w - nw);
+            ny = orig.y + (orig.h - nh);
+          }
+
+          return { ...p, x: nx, y: ny, w: nw, h: nh };
+        })
+      );
+      return;
+    }
+
+    // Pan
+    if (handModeRef.current === "pan" && handDragRef.current && handStartRef.current) {
+      const dy = e.clientY - handStartRef.current.y;
+      container.scrollTop = handStartRef.current.scrollTop - dy;
+    }
   };
 
-  const endHandPan = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onHandUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (tool !== "hand") return;
+
+    handModeRef.current = "none";
+    imgDragRef.current = null;
+
     handDragRef.current = false;
     handStartRef.current = null;
+
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch { }
   };
+
 
 
   const beginStroke = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -1397,19 +1657,20 @@ export default function WhiteboardPage() {
   };
 
   const clearAll = () => {
-    const bgCanvas = bgCanvasRef.current;
-    const bgCtx = bgCtxRef.current;
-    const previewCanvas = previewCanvasRef.current;
-    const previewCtx = previewCtxRef.current;
+  const bgCanvas = bgCanvasRef.current;
+  const bgCtx = bgCtxRef.current;
+  const previewCanvas = previewCanvasRef.current;
+  const previewCtx = previewCtxRef.current;
 
-    if (bgCanvas && bgCtx) bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
-    if (previewCanvas && previewCtx) previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+  if (bgCanvas && bgCtx) bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+  if (previewCanvas && previewCtx) previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
 
-    clearInk();
-    setBgUndoStack([]);
-    setGridApplied(false);
-    setAxesApplied(false);
-    setLastInsertInfo(null);
+  clearInk();
+
+  // ALSO remove all inserted/snipped PDF images
+  setPlacedImages([]);
+  setSelectedImageId(null);
+
   };
   /* ---------- Undo / Redo (Ink + Objects) ---------- */
 
@@ -1630,15 +1891,24 @@ export default function WhiteboardPage() {
       const width = container.clientWidth;
       const viewport0 = page.getViewport({ scale: 1.0 });
       const fitScale = (width / viewport0.width) * pdfInsertScale;
-      const viewport = page.getViewport({ scale: fitScale });
+      const dpr = Math.min(3, window.devicePixelRatio || 1); // cap to avoid huge memory use
+      const viewportCss = page.getViewport({ scale: fitScale });          // size you want on the board
+      const viewportHiDpi = page.getViewport({ scale: fitScale * dpr });  // extra pixels for sharpness
 
       const tmp = document.createElement("canvas");
-      tmp.width = Math.floor(viewport.width);
-      tmp.height = Math.floor(viewport.height);
+      tmp.width = Math.floor(viewportHiDpi.width);
+      tmp.height = Math.floor(viewportHiDpi.height);
+
       const tmpCtx = tmp.getContext("2d");
       if (!tmpCtx) throw new Error("Could not render PDF");
 
-      await page.render({ canvasContext: tmpCtx, viewport }).promise;
+      // render at higher resolution
+      await page.render({ canvasContext: tmpCtx, viewport: viewportHiDpi }).promise;
+
+      // IMPORTANT: keep your placed image size in CSS pixels (so it doesn't appear huge)
+      const wCss = Math.floor(viewportCss.width);
+      const hCss = Math.floor(viewportCss.height);
+
 
       const y = Math.max(0, container.scrollTop + 20);
 
@@ -1651,8 +1921,8 @@ export default function WhiteboardPage() {
           src: dataUrl,
           x: 20,
           y,
-          w: tmp.width,
-          h: tmp.height,
+          w: wCss,
+          h: hCss,
         },
       ]);
 
@@ -1684,17 +1954,26 @@ export default function WhiteboardPage() {
     const p = Math.max(1, Math.min(pageNum, pdf.numPages));
     const page = await pdf.getPage(p);
 
-    const viewport = page.getViewport({ scale: pdfViewScale });
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
 
-    canvas.width = Math.floor(viewport.width);
-    canvas.height = Math.floor(viewport.height);
-    setPdfCanvasSize({ w: canvas.width, h: canvas.height });
+    const viewportCss = page.getViewport({ scale: pdfViewScale });
+    const viewportHiDpi = page.getViewport({ scale: pdfViewScale * dpr });
+
+    canvas.width = Math.floor(viewportHiDpi.width);
+    canvas.height = Math.floor(viewportHiDpi.height);
+
+    // keep the on-screen size the same
+    canvas.style.width = `${Math.floor(viewportCss.width)}px`;
+    canvas.style.height = `${Math.floor(viewportCss.height)}px`;
+    setPdfCanvasSize({ w: Math.floor(viewportCss.width), h: Math.floor(viewportCss.height) });
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    await page.render({ canvasContext: ctx, viewport: viewportHiDpi }).promise;
+
 
     setPdfPageNum(p);
     setClipRect(null);
@@ -1764,16 +2043,29 @@ export default function WhiteboardPage() {
     }
 
     const crop = document.createElement("canvas");
-    crop.width = Math.floor(clipRect.w);
-    crop.height = Math.floor(clipRect.h);
+
+    // 🔹 calculate scale FIRST
+    const scaleX = src.width / pdfCanvasSize.w;
+    const scaleY = src.height / pdfCanvasSize.h;
+
+    // 🔹 then set crop resolution
+    crop.width = Math.floor(clipRect.w * scaleX);
+    crop.height = Math.floor(clipRect.h * scaleY);
 
     const cctx = crop.getContext("2d");
     if (!cctx) return;
 
+    // 🔹 draw using scaled coordinates
     cctx.drawImage(
       src,
-      clipRect.x, clipRect.y, clipRect.w, clipRect.h,
-      0, 0, crop.width, crop.height
+      clipRect.x * scaleX,
+      clipRect.y * scaleY,
+      clipRect.w * scaleX,
+      clipRect.h * scaleY,
+      0,
+      0,
+      crop.width,
+      crop.height
     );
 
     const dataUrl = crop.toDataURL("image/png");
@@ -1975,6 +2267,38 @@ export default function WhiteboardPage() {
     setAxesApplied(false);
   }
 
+  async function toggleFullscreen() {
+    const el = fsRootRef.current;
+    if (!el) return;
+
+    try {
+      if (!document.fullscreenElement) {
+        await el.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.warn("Fullscreen failed:", err);
+    }
+  }
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  // Ensure scrolling still works in fullscreen (some layouts/global css can force overflow hidden)
+  useEffect(() => {
+    if (isFullscreen) {
+      document.documentElement.style.overflow = "auto";
+      document.body.style.overflow = "auto";
+    } else {
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+    }
+  }, [isFullscreen]);
+
   function DotSizeButton({
     value,
     active,
@@ -1999,8 +2323,8 @@ export default function WhiteboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#dff3df]">
-      <div className="mx-auto max-w-9xl px-4 pt-6">
+    <div ref={fsRootRef} className="min-h-screen bg-[#dff3df]">
+      <div className="mx-auto max-w-9xl px-4 pt-2">
         {/* Top bar */}
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -2010,14 +2334,14 @@ export default function WhiteboardPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button className={pill} type="button" onClick={toggleFullscreen}>
+              {isFullscreen ? "Exit full screen" : "Full screen"}
+            </button>
             <button className={pill} type="button" onClick={() => setShowImportModal(true)}>
               Import PDF
             </button>
             <button className={pill} type="button" onClick={() => navigate(`/class/${classId}`)}>
               Back to Class
-            </button>
-            <button className={pill} type="button" onClick={() => setShowCalc((s) => !s)}>
-              Calculator
             </button>
             <button
               type="button"
@@ -2090,6 +2414,9 @@ export default function WhiteboardPage() {
               <button type="button" className={pill} onClick={() => setShowAxesModal(true)}>
                 XY Plane
               </button>
+              <button type="button" className={pill} onClick={() => setShowCalc((s) => !s)}>
+                Calculator
+              </button>
               <button type="button" className={pill} onClick={() => setShowPdfPanel((v) => !v)}>
                 {showPdfPanel ? "Hide PDF Import" : "Show PDF Import"}
               </button>
@@ -2112,10 +2439,11 @@ export default function WhiteboardPage() {
               <div
                 ref={containerRef}
                 onScroll={onScroll}
-                onPointerDown={tool === "hand" ? beginHandPan : undefined}
-                onPointerMove={tool === "hand" ? moveHandPan : undefined}
-                onPointerUp={tool === "hand" ? endHandPan : undefined}
-                onPointerCancel={tool === "hand" ? endHandPan : undefined}
+                onPointerDown={tool === "hand" ? onHandDown : undefined}
+                onPointerMove={tool === "hand" ? onHandMove : undefined}
+                onPointerUp={tool === "hand" ? onHandUp : undefined}
+                onPointerCancel={tool === "hand" ? onHandUp : undefined}
+
                 className="h-[70vh] overflow-y-scroll overflow-x-hidden rounded-2xl border-2 border-slate-200 bg-white relative"
               >
 
@@ -2123,13 +2451,15 @@ export default function WhiteboardPage() {
 
                 <canvas
                   ref={imgCanvasRef}
-                  className={`absolute left-0 top-0 ${tool === "hand" ? "" : "pointer-events-none"}`}
+                  className="absolute left-0 top-0 pointer-events-none"
+                  style={{ touchAction: tool === "hand" ? "none" : "auto" }}
                   onPointerDown={onImgPointerDown}
                   onPointerMove={onImgPointerMove}
                   onPointerUp={onImgPointerUp}
                   onPointerCancel={onImgPointerUp}
                   onPointerLeave={onImgPointerUp}
                 />
+
 
                 <canvas
                   ref={inkCanvasRef}

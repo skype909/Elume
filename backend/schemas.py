@@ -36,6 +36,14 @@ class NoteOut(BaseModel):
     uploaded_at: datetime
     topic_name: str
 
+class ClassOut(BaseModel):
+    id: int
+    name: str
+    subject: str
+
+    class Config:
+        orm_mode = True
+
 
 # -------------------------
 # Tests

@@ -2,7 +2,7 @@ import { Routes, Route, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import ClassPage from "./ClassPage";
-import WhiteboardPage from "./WhiteboardPage";
+import WhiteboardPage from "./WhiteBoardPage";
 import NotesPage from "./NotesPage";
 import ExamPapersPage from "./ExamPapersPage";
 import VideosPage from "./VideosPage";
@@ -15,6 +15,7 @@ import SeatingPlanPage from "./SeatingPlanPage";
 import LiveQuizPage from "./LiveQuizPage";
 import StudentJoinQuizPage from "./StudentJoinQuizPage";
 import LoginPage from "./LoginPage";
+import StudentClassPage from "./StudentClassPage";
 import { getToken, clearToken } from "./api";
 import { apiFetch } from "./api";
 
@@ -47,15 +48,15 @@ const META_KEY = "elume_class_layout_v1";
 // 20 bright classroom colours
 const COLOURS: { name: string; bg: string; ring: string }[] = [
   { name: "Emerald", bg: "bg-emerald-600", ring: "ring-emerald-200" },
-  { name: "Teal", bg: "bg-teal-600", ring: "ring-teal-200" },
-  { name: "Cyan", bg: "bg-cyan-600", ring: "ring-cyan-200" },
-  { name: "Sky", bg: "bg-sky-600", ring: "ring-sky-200" },
-  { name: "Blue", bg: "bg-blue-700", ring: "ring-blue-200" },
-  { name: "Indigo", bg: "bg-indigo-700", ring: "ring-indigo-200" },
-  { name: "Violet", bg: "bg-violet-700", ring: "ring-violet-200" },
-  { name: "Purple", bg: "bg-purple-700", ring: "ring-purple-200" },
-  { name: "Slate", bg: "bg-slate-800", ring: "ring-slate-300" },
-  { name: "Charcoal", bg: "bg-zinc-800", ring: "ring-zinc-300" },
+  { name: "Amber",   bg: "bg-amber-500",   ring: "ring-amber-200" },
+  { name: "Rose",    bg: "bg-rose-600",    ring: "ring-rose-200" },
+  { name: "Sky",     bg: "bg-sky-600",     ring: "ring-sky-200" },
+  { name: "Sunflower", bg: "bg-yellow-400", ring: "ring-yellow-200" },
+  { name: "Violet",  bg: "bg-violet-700",  ring: "ring-violet-200" },
+  { name: "Lime",    bg: "bg-lime-500",    ring: "ring-lime-200" },
+  { name: "Fuchsia", bg: "bg-fuchsia-600", ring: "ring-fuchsia-200" },
+  { name: "Orange",  bg: "bg-orange-600",  ring: "ring-orange-200" },
+  { name: "Slate",   bg: "bg-slate-800",   ring: "ring-slate-300" },
 ];
 
 const DEFAULT_BG = COLOURS[0]?.bg ?? "bg-emerald-500";
@@ -169,7 +170,7 @@ function Dashboard() {
   // header clock
   const [now, setNow] = useState(new Date());
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
+    const t = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(t);
   }, []);
 
@@ -179,7 +180,6 @@ function Dashboard() {
   const [year, setYear] = useState<YearOption>("1st Year");
   const [level, setLevel] = useState<LevelOption>("Common Level");
   const [subject, setSubject] = useState("Maths");
-  const [customName, setCustomName] = useState("");
   const [pickedColour, setPickedColour] = useState(DEFAULT_BG);
   const [creating, setCreating] = useState(false);
 
@@ -201,8 +201,20 @@ function Dashboard() {
       .then((data) => {
         if (cancelled) return;
         const arr = Array.isArray(data) ? data : [];
-        setClasses(arr);
+
+        setClasses((prev) => {
+          // Prefer server truth; keep local extras only if server doesn't have them yet
+          const byId = new Map<number, any>();
+
+          arr.forEach((c: any) => byId.set(c.id, c));      // server wins
+          prev.forEach((c: any) => {
+            if (!byId.has(c.id)) byId.set(c.id, c);        // keep local extras
+          });
+
+          return Array.from(byId.values());
+        });
       })
+
       .catch((e: any) => {
         if (cancelled) return;
         setError(e?.message || "Failed to load classes");
@@ -292,13 +304,12 @@ function Dashboard() {
     setYear("1st Year");
     setLevel("Common Level");
     setSubject("Maths");
-    setCustomName("");
     setPickedColour(DEFAULT_BG);
     setCreateOpen(true);
   }
 
   async function createClass() {
-    const name = (customName.trim() || suggestedName()).trim();
+    const name = year.trim();
     const subj = subject.trim() || "Subject";
     if (!name) return;
 
@@ -311,8 +322,22 @@ function Dashboard() {
         body: JSON.stringify({ name, subject: subj }),
       })) as ClassItem;
 
+      console.log("CREATE /classes response:", created);
 
-      setClasses((prev) => [created, ...prev]);
+      const createdFixed: ClassItem = {
+        ...created,
+        name: (created as any)?.name ?? name,
+        subject: (created as any)?.subject ?? subj,
+      };
+
+      if (!createdFixed?.id) throw new Error("Create returned no id");
+
+      setClasses((prev) => [createdFixed, ...prev]);
+
+      const fresh = await apiFetch("/classes");
+      const arr = Array.isArray(fresh) ? fresh : [];
+      setClasses(arr);
+
 
       setMeta((prev) => {
         const next = { ...prev };
@@ -320,7 +345,7 @@ function Dashboard() {
           (m, v) => Math.min(m, typeof v?.order === "number" ? v.order : 0),
           999999
         );
-        next[String(created.id)] = {
+        next[String(createdFixed.id)] = {
           color: pickedColour,
           order: Number.isFinite(minOrder) ? minOrder - 1 : 0,
         };
@@ -482,18 +507,31 @@ function Dashboard() {
                     flex items-center justify-center p-4`}
                   title="Open class"
                 >
-                  {/* Edit button (top-right) */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
+                  {/* Delete class button */}
+                  <div
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      openEdit(c);
+
+                      const confirmed = window.confirm(
+                        "Are you sure you want to delete this class?"
+                      );
+                      if (!confirmed) return;
+
+                      try {
+                        await apiFetch(`/classes/${c.id}`, { method: "DELETE" });
+
+                        // refresh tiles
+                        setClasses((prev) => prev.filter(cls => cls.id !== c.id));
+                      } catch (err) {
+                        alert("Could not delete class");
+                      }
                     }}
-                    className="absolute right-3 top-3 rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur hover:bg-white/30"
-                    title="Edit class"
+                    className="absolute bottom-2 right-2 opacity-70 hover:opacity-100"
+                    title="Delete class"
                   >
-                    Edit
-                  </button>
+                    🗑️
+                  </div>
+
                   <div className="text-center">
                     <div className="text-3xl md:text-4xl font-extrabold tracking-tight leading-tight drop-shadow-md">
                       {c.name}
@@ -599,22 +637,6 @@ function Dashboard() {
                     onChange={(e) => setSubject(e.target.value)}
                     placeholder="e.g. Maths, Physics, English"
                   />
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="mb-1 text-sm font-bold text-slate-700">
-                    Class name (optional override)
-                  </div>
-                  <input
-                    className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                    value={customName}
-                    onChange={(e) => setCustomName(e.target.value)}
-                    placeholder={`Suggested: ${suggestedName()}`}
-                  />
-                  <div className="mt-1 text-xs text-slate-500">
-                    If blank, ELume will use:{" "}
-                    <span className="font-semibold">{suggestedName()}</span>
-                  </div>
                 </div>
 
                 <div className="md:col-span-2">
@@ -768,6 +790,7 @@ export default function App() {
         <Route path="/class/:id/calendar" element={<CalendarPage />} />
         <Route path="/class/:id/admin" element={<ClassAdminPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/s/:token" element={<StudentClassPage />} />
         <Route path="/" element={<Dashboard />} />
       </Routes>
     </>

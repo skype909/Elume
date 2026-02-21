@@ -40,6 +40,10 @@ type CalendarEvent = {
 
 const API_BASE = "http://127.0.0.1:8000";
 
+function getJwt(): string | null {
+  return localStorage.getItem("elume_token");
+}
+
 /** ✅ Defensive: backend/DB may return links as a JSON string or a comma-separated string */
 function normalizeLinks(v: any): string[] {
   if (Array.isArray(v)) return v.filter(Boolean).map(String);
@@ -262,7 +266,8 @@ export default function ClassPage() {
   const classId = useMemo(() => Number(id), [id]);
   const validClassId = Number.isFinite(classId) && classId > 0;
   const [classColour, setClassColour] = useState<string>("bg-blue-500");
-
+  const [studentToken, setStudentToken] = useState<string | null>(null);
+  const [studentUrl, setStudentUrl] = useState<string | null>(null);
 
   const [classInfo, setClassInfo] = useState<ClassItem | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -406,6 +411,59 @@ export default function ClassPage() {
 
     return () => controller.abort();
   }, [classId, validClassId]);
+
+  useEffect(() => {
+    if (!validClassId) return;
+
+    const jwt = getJwt();
+    if (!jwt) {
+      setStudentToken(null);
+      setStudentUrl(null);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        // Try GET first (if your backend supports it)
+        let r = await fetch(`${API_BASE}/student-access/${classId}`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${getJwt()}` },
+          signal: controller.signal,
+        });
+
+        // If GET not available / fails, create via POST
+        if (!r.ok) {
+          r = await fetch(`${API_BASE}/student-access/${classId}`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${getJwt()}` },
+            signal: controller.signal,
+          });
+        }
+
+        if (!r.ok) throw new Error(`Student token request failed (${r.status})`);
+
+        const data = await r.json();
+        const tok = data?.token ?? null;
+
+        if (!tok) throw new Error("No token in response");
+
+        setStudentToken(tok);
+
+        // HashRouter route -> /#/s/<token>
+        setStudentUrl(`${window.location.origin}/#/s/${tok}`);
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        console.error("Student token error:", e);
+        setStudentToken(null);
+        setStudentUrl(null);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [classId, validClassId]);
+
 
   // Header Colour
   useEffect(() => {
@@ -839,14 +897,32 @@ export default function ClassPage() {
         </nav>
 
         <div className="mt-4 rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
+          <div className="text-sm font-extrabold tracking-tight">Student access</div>
+          <div className="mt-1 text-xs text-slate-500">Scan to open read-only view.</div>
+
           <div className="mt-3 flex flex-col items-center">
             <div className="bg-white p-2 rounded-xl border border-slate-200">
-              <QRCode value="https://www.tiktok.com/@mrfitzmaths" size={120} />
+              {studentUrl ? (
+                <QRCode value={studentUrl} size={120} />
+              ) : (
+                <div className="h-[120px] w-[120px] grid place-items-center text-xs text-slate-500">
+                  Loading…
+                </div>
+              )}
             </div>
 
-            <div className="mt-2 text-xs text-slate-600">Follow @mrfitzmaths</div>
+            {studentUrl && (
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(studentUrl)}
+                className="mt-2 rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
+              >
+                Copy link
+              </button>
+            )}
           </div>
         </div>
+
       </div>
     </aside>
   );
@@ -1043,7 +1119,7 @@ export default function ClassPage() {
           </div>
         </div>
         {/* Classroom Tools (new box) */}
-       <div className="mt-6 rounded-3xl border-2 border-amber-300 bg-amber-50 p-4 shadow-md">
+        <div className="mt-6 rounded-3xl border-2 border-amber-300 bg-amber-50 p-4 shadow-md">
           <div className="flex items-center gap-2">
             <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
               🎯

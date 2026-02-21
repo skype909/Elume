@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+
 const API_BASE = "http://127.0.0.1:8000";
+
 
 type Student = {
     id: number;
@@ -55,6 +57,7 @@ export default function ClassAdminPage() {
     const { id } = useParams<{ id: string }>();
     const classId = useMemo(() => Number(id), [id]);
     const validClassId = Number.isFinite(classId) && classId > 0;
+    const [studentToken, setStudentToken] = useState<string | null>(null);
 
     const navigate = useNavigate();
 
@@ -128,10 +131,30 @@ export default function ClassAdminPage() {
         }
     }
 
+    async function generateStudentLink() {
+        const r = await fetch(`${API_BASE}/student-access/${classId}`, {
+            method: "POST",
+        });
+
+        const data = await r.json();
+        setStudentToken(data.token);
+    }
+
+
     useEffect(() => {
         loadAll();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [classId, validClassId]);
+
+    useEffect(() => {
+        if (!validClassId) return;
+
+        fetch(`${API_BASE}/student-access/${classId}`)
+            .then(r => r.json())
+            .then(data => setStudentToken(data.token))
+            .catch(() => { });
+    }, [classId, validClassId]);
+
 
     useEffect(() => {
         if (tab !== "insights") return;

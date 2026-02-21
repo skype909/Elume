@@ -226,3 +226,14 @@ class LiveQuizAnswerModel(Base):
 
     answered_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+
+class StudentAccessLink(Base):
+    __tablename__ = "student_access_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False, index=True)
+
+    token = Column(String, unique=True, index=True, nullable=False)
+
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

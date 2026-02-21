@@ -22,6 +22,7 @@ from sqlalchemy import text
 from fastapi import Header
 from passlib.context import CryptContext
 from jose import jwt, JWTError
+import secrets
 
 
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
@@ -611,7 +612,7 @@ def get_classes(
     return db.query(ClassModel).filter(ClassModel.owner_user_id == user.id).all()
 
 
-@app.post("/classes")
+@app.post("/classes", response_model=schemas.ClassOut)
 def create_class(
     new_class: schemas.ClassCreate,
     db: Session = Depends(get_db),
@@ -620,12 +621,23 @@ def create_class(
     c = ClassModel(
         owner_user_id=user.id,
         name=new_class.name,
-        subject=new_class.subject
+        subject=new_class.subject,
     )
     db.add(c)
     db.commit()
     db.refresh(c)
+
+    # auto-create student access token
+    token = secrets.token_urlsafe(24)
+    link = models.StudentAccessLink(
+        class_id=c.id,
+        token=token,
+    )
+    db.add(link)
+    db.commit()
+
     return c
+
 
 @app.post("/whiteboard/save")
 async def save_whiteboard(
@@ -1040,6 +1052,23 @@ def list_tests(class_id: int, db: Session = Depends(get_db)):
         )
     return out
 
+@app.delete("/classes/{class_id}")
+def delete_class(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    c = db.query(ClassModel).filter(
+        ClassModel.id == class_id,
+        ClassModel.owner_user_id == user.id
+    ).first()
+
+    if not c:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
 
 @app.post("/tests", response_model=schemas.TestOut)
 def upload_test(
@@ -1197,6 +1226,122 @@ def update_calendar_event(event_id: int, event: schemas.CalendarEventCreate, db:
     db.commit()
     db.refresh(db_event)
     return db_event
+
+
+
+@app.post("/student-access/{class_id}")
+def create_student_access(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    cls = db.query(ClassModel).filter(
+        ClassModel.id == class_id,
+        ClassModel.owner_user_id == user.id
+    ).first()
+
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    # deactivate existing links
+    db.query(models.StudentAccessLink).filter(
+        models.StudentAccessLink.class_id == class_id,
+        models.StudentAccessLink.is_active == True
+    ).update({"is_active": False})
+
+    token = secrets.token_urlsafe(24)
+
+    link = models.StudentAccessLink(
+        class_id=class_id,
+        token=token,
+    )
+
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+
+    return {"token": token}
+
+@app.get("/student-access/{class_id}")
+def get_student_access(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    link = db.query(models.StudentAccessLink).filter(
+        models.StudentAccessLink.class_id == class_id,
+        models.StudentAccessLink.is_active == True
+    ).first()
+
+    return {"token": link.token if link else None}
+
+@app.get("/student/{token}")
+def student_view(token: str, db: Session = Depends(get_db)):
+    link = db.query(models.StudentAccessLink).filter(
+        models.StudentAccessLink.token == token,
+        models.StudentAccessLink.is_active == True
+    ).first()
+
+    if not link:
+        raise HTTPException(status_code=404, detail="Invalid link")
+
+    cls = db.query(ClassModel).filter(ClassModel.id == link.class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    posts = (
+        db.query(PostModel)
+        .filter(PostModel.class_id == link.class_id)
+        .order_by(PostModel.created_at.desc())
+        .all()
+    )
+
+    notes = db.query(models.Note).filter(models.Note.class_id == link.class_id).all()
+    tests = db.query(TestItem).filter(TestItem.class_id == link.class_id).all()
+
+    # If you already have _rel_upload_url in main.py elsewhere, reuse it here.
+    def _safe_url(stored_path: str | None):
+        if not stored_path:
+            return None
+        # If your project already defines _rel_upload_url earlier, call that instead.
+        # This is a safe fallback:
+        p = stored_path.replace("\\", "/")
+        if "/uploads/" in p:
+            return p[p.index("/uploads/"):]
+        if "uploads/" in p:
+            return "/" + p[p.index("uploads/"):]
+        return None
+
+    return {
+        "class_name": cls.name,
+        "subject": cls.subject,
+        "posts": [
+            {
+                "id": p.id,
+                "author": p.author,
+                "content": p.content,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in posts
+        ],
+        "notes": [
+            {
+                "id": n.id,
+                "filename": n.filename,
+                "file_url": _safe_url(n.stored_path),
+            }
+            for n in notes
+        ],
+        "tests": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "file_url": _safe_url(t.stored_path),
+            }
+            for t in tests
+        ],
+    }
+
 
 # =========================================================
 # STUDENTS (first names only)

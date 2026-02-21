@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-
-// Use env override if you deploy. Local default should be localhost (127 can break on boards).
-const API_BASE = (process.env.REACT_APP_API_BASE as string) || "http://localhost:8000";
+import { apiFetch } from "./api";
 
 type ClassItem = { id: number; name: string; subject: string };
 
@@ -32,7 +30,6 @@ type AIParseResponse = {
 
 function toISODate(value: string): string {
   if (!value) return "";
-  // Handles "YYYY-MM-DD" or full ISO
   if (value.length >= 10 && value[4] === "-" && value[7] === "-") return value.slice(0, 10);
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
@@ -49,7 +46,6 @@ function toLocalTimeHHMM(value?: string | null): string {
 }
 
 function combineDateTime(dateYMD: string, timeHHMM: string): string {
-  // returns ISO string in local time interpreted by browser, converted to ISO
   const t = timeHHMM || "09:00";
   const d = new Date(`${dateYMD}T${t}:00`);
   return d.toISOString();
@@ -65,15 +61,6 @@ function typeDotClass(t: string) {
       return "bg-blue-500";
     default:
       return "bg-emerald-500";
-  }
-}
-
-async function safeJson(res: Response) {
-  const text = await res.text();
-  try {
-    return text ? JSON.parse(text) : null;
-  } catch {
-    return { detail: text };
   }
 }
 
@@ -114,8 +101,7 @@ export default function CalendarPage() {
 
   // --------- load classes (for filter dropdown) ---------
   useEffect(() => {
-    fetch(`${API_BASE}/classes`)
-      .then((r) => r.json())
+    apiFetch("/classes")
       .then((data) => setClasses(Array.isArray(data) ? data : []))
       .catch(() => setClasses([]));
   }, []);
@@ -135,19 +121,14 @@ export default function CalendarPage() {
     setErr(null);
 
     try {
-      let url = `${API_BASE}/calendar-events`;
+      let url = `/calendar-events`;
       if (filterMode === "global") {
         url += `?global_only=true`;
       } else if (filterMode === "class") {
         url += `?class_id=${filterClassId}`;
       }
 
-      const res = await fetch(url);
-      if (!res.ok) {
-        const j = await safeJson(res);
-        throw new Error(j?.detail || `Failed to load (${res.status})`);
-      }
-      const data = await res.json();
+      const data = await apiFetch(url);
       setEvents(Array.isArray(data) ? data : []);
     } catch (e: any) {
       setErr(e?.message || "Failed to load events");
@@ -224,9 +205,8 @@ export default function CalendarPage() {
 
   function currentTargetClassId(): number | null {
     if (filterMode === "class") return filterClassId;
-    // If you're on /class/:id/calendar, prefer that id
     if (hasRouteClass) return routeClassId;
-    return null; // global by default for /calendar
+    return null;
   }
 
   async function saveEvent() {
@@ -242,8 +222,7 @@ export default function CalendarPage() {
       ? combineDateTime(draftDate, "09:00")
       : combineDateTime(draftDate, draftTime || "09:30");
 
-    const endISO =
-      draftEndTime && !draftAllDay ? combineDateTime(draftDate, draftEndTime) : null;
+    const endISO = draftEndTime && !draftAllDay ? combineDateTime(draftDate, draftEndTime) : null;
 
     const body = {
       class_id: classIdToSave,
@@ -259,25 +238,15 @@ export default function CalendarPage() {
       setErr(null);
 
       if (editingEventId) {
-        const res = await fetch(`${API_BASE}/calendar-events/${editingEventId}`, {
+        await apiFetch(`/calendar-events/${editingEventId}`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        if (!res.ok) {
-          const j = await safeJson(res);
-          throw new Error(j?.detail || `Update failed (${res.status})`);
-        }
       } else {
-        const res = await fetch(`${API_BASE}/calendar-events`, {
+        await apiFetch(`/calendar-events`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        if (!res.ok) {
-          const j = await safeJson(res);
-          throw new Error(j?.detail || `Create failed (${res.status})`);
-        }
       }
 
       setShowModal(false);
@@ -296,14 +265,31 @@ export default function CalendarPage() {
 
     try {
       setErr(null);
-      const res = await fetch(`${API_BASE}/calendar-events/${editingEventId}`, { method: "DELETE" });
-      if (!res.ok) {
-        const j = await safeJson(res);
-        throw new Error(j?.detail || `Delete failed (${res.status})`);
-      }
+      await apiFetch(`/calendar-events/${editingEventId}`, { method: "DELETE" });
       setShowModal(false);
       setEditingEventId(null);
       resetDraft();
+      await refresh();
+    } catch (e: any) {
+      setErr(e?.message || "Delete failed");
+    }
+  }
+
+  // Bin delete from the quick list (doesn't require switching to Edit mode)
+  async function deleteEventById(eventId: number) {
+    const ok = window.confirm("Delete this event? This cannot be undone.");
+    if (!ok) return;
+
+    try {
+      setErr(null);
+      await apiFetch(`/calendar-events/${eventId}`, { method: "DELETE" });
+
+      // If we were editing this same event, reset edit state
+      if (editingEventId === eventId) {
+        setEditingEventId(null);
+        resetDraft();
+      }
+
       await refresh();
     } catch (e: any) {
       setErr(e?.message || "Delete failed");
@@ -320,23 +306,16 @@ export default function CalendarPage() {
     setAiPreview(null);
 
     try {
-      const res = await fetch(`${API_BASE}/ai/parse-event`, {
+      const data = (await apiFetch(`/ai/parse-event`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text,
           class_id: currentTargetClassId(),
           timezone: "Europe/Dublin",
           default_duration_minutes: 60,
         }),
-      });
+      })) as AIParseResponse;
 
-      if (!res.ok) {
-        const j = await safeJson(res);
-        throw new Error(j?.detail || `AI parse failed (${res.status})`);
-      }
-
-      const data = (await res.json()) as AIParseResponse;
       setAiPreview(data);
     } catch (e: any) {
       setErr(e?.message || "AI parse failed");
@@ -344,47 +323,23 @@ export default function CalendarPage() {
       setAiBusy(false);
     }
   }
-  
+
   async function createFromPreview() {
-  if (!aiPreview?.draft) return;
+    if (!aiPreview?.draft) return;
 
-  const createRes = await fetch(`${API_BASE}/calendar-events`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(aiPreview.draft),
-  });
+    try {
+      setErr(null);
+      await apiFetch(`/calendar-events`, {
+        method: "POST",
+        body: JSON.stringify(aiPreview.draft),
+      });
 
-  if (!createRes.ok) {
-    const txt = await createRes.text();
-    throw new Error(txt || `Create failed (${createRes.status})`);
-  }
-
-  await refresh();
-  setAiPreview(null);
-  setAiText("");
-}
-
-
-  function applyAIPreviewToModal() {
-    if (!aiPreview) return;
-
-    const d = aiPreview.draft;
-    setDraftTitle(d.title || "");
-    setDraftDesc(d.description || "");
-    setDraftType(d.event_type || "general");
-    setDraftAllDay(Boolean(d.all_day));
-
-    const ymd = toISODate(d.event_date) || new Date().toISOString().slice(0, 10);
-    setDraftDate(ymd);
-
-    const hhmm = toLocalTimeHHMM(d.event_date) || "09:30";
-    setDraftTime(hhmm);
-
-    const end = toLocalTimeHHMM(d.end_date) || "";
-    setDraftEndTime(end);
-
-    setEditingEventId(null);
-    setShowModal(true);
+      await refresh();
+      setAiPreview(null);
+      setAiText("");
+    } catch (e: any) {
+      setErr(e?.message || "Create failed");
+    }
   }
 
   const pageTitle = hasRouteClass ? "Class Calendar" : "Calendar";
@@ -428,7 +383,9 @@ export default function CalendarPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 className={`rounded-full border-2 px-4 py-2 text-sm ${
-                  filterMode === "all" ? "border-emerald-700 bg-emerald-50" : "border-slate-200 bg-white"
+                  filterMode === "all"
+                    ? "border-emerald-700 bg-emerald-50"
+                    : "border-slate-200 bg-white"
                 }`}
                 type="button"
                 onClick={() => setFilterMode("all")}
@@ -438,7 +395,9 @@ export default function CalendarPage() {
 
               <button
                 className={`rounded-full border-2 px-4 py-2 text-sm ${
-                  filterMode === "global" ? "border-emerald-700 bg-emerald-50" : "border-slate-200 bg-white"
+                  filterMode === "global"
+                    ? "border-emerald-700 bg-emerald-50"
+                    : "border-slate-200 bg-white"
                 }`}
                 type="button"
                 onClick={() => setFilterMode("global")}
@@ -448,7 +407,9 @@ export default function CalendarPage() {
 
               <button
                 className={`rounded-full border-2 px-4 py-2 text-sm ${
-                  filterMode === "class" ? "border-emerald-700 bg-emerald-50" : "border-slate-200 bg-white"
+                  filterMode === "class"
+                    ? "border-emerald-700 bg-emerald-50"
+                    : "border-slate-200 bg-white"
                 }`}
                 type="button"
                 onClick={() => setFilterMode("class")}
@@ -481,7 +442,8 @@ export default function CalendarPage() {
               <div>
                 <div className="text-sm font-semibold">AI Calendar Assistant</div>
                 <div className="text-xs text-slate-600">
-                  Type something like: <span className="font-medium">“6th year maths test next Friday at 9:30”</span>
+                  Type something like:{" "}
+                  <span className="font-medium">“6th year maths test next Friday at 9:30”</span>
                 </div>
               </div>
               <button
@@ -506,24 +468,29 @@ export default function CalendarPage() {
               <div className="mt-3 rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold">Draft preview</div>
-                 <button
+                  <button
                     type="button"
                     className="mt-3 rounded-xl bg-emerald-600 px-4 py-2 text-white font-semibold hover:bg-emerald-700"
                     onClick={createFromPreview}
-                >
-                Create event
-                </button>
+                  >
+                    Create event
+                  </button>
                 </div>
 
                 <div className="mt-2 text-sm">
                   <div className="font-semibold">{aiPreview.draft.title}</div>
                   <div className="text-xs text-slate-700 mt-1">
                     {toISODate(aiPreview.draft.event_date)}
-                    {aiPreview.draft.all_day ? " • All day" : ` • ${toLocalTimeHHMM(aiPreview.draft.event_date)}`}
-                    {aiPreview.draft.end_date ? `–${toLocalTimeHHMM(aiPreview.draft.end_date)}` : ""}
+                    {aiPreview.draft.all_day
+                      ? " • All day"
+                      : ` • ${toLocalTimeHHMM(aiPreview.draft.event_date)}`}
+                    {aiPreview.draft.end_date
+                      ? `–${toLocalTimeHHMM(aiPreview.draft.end_date)}`
+                      : ""}
                     {" • "}
                     {aiPreview.draft.event_type}
                   </div>
+
                   {aiPreview.warnings?.length > 0 && (
                     <div className="mt-2 text-xs text-amber-700">
                       {aiPreview.warnings.join(" • ")}
@@ -575,7 +542,9 @@ export default function CalendarPage() {
 
                   {Array.from({ length: daysInMonth }).map((__, dayIndex) => {
                     const day = dayIndex + 1;
-                    const dateISO = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                    const dateISO = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(
+                      day
+                    ).padStart(2, "0")}`;
                     const dayEvents = eventsByDay.get(dateISO) || [];
 
                     return (
@@ -606,9 +575,7 @@ export default function CalendarPage() {
                         </div>
 
                         {dayEvents.length > 0 && (
-                          <div className="mt-1 text-[10px] text-slate-500">
-                            {dayEvents[0].title}
-                          </div>
+                          <div className="mt-1 text-[10px] text-slate-500">{dayEvents[0].title}</div>
                         )}
                       </button>
                     );
@@ -750,6 +717,7 @@ export default function CalendarPage() {
                   <div className="text-xs font-semibold text-slate-700 mb-2">
                     Events on {draftDate}
                   </div>
+
                   <div className="grid gap-1">
                     {(eventsByDay.get(draftDate) || []).slice(0, 6).map((e) => (
                       <button
@@ -762,8 +730,25 @@ export default function CalendarPage() {
                           <span className={`h-2 w-2 rounded-full ${typeDotClass(e.event_type)}`} />
                           <div className="text-sm font-semibold">{e.title}</div>
                         </div>
-                        <div className="text-xs text-slate-500">
-                          {e.all_day ? "All day" : toLocalTimeHHMM(e.event_date)}
+
+                        {/* Right side: time + bin */}
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs text-slate-500">
+                            {e.all_day ? "All day" : toLocalTimeHHMM(e.event_date)}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={(ev) => {
+                              ev.stopPropagation(); // don't open edit
+                              deleteEventById(e.id);
+                            }}
+                            className="rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50"
+                            title="Delete event"
+                            aria-label="Delete event"
+                          >
+                            🗑
+                          </button>
                         </div>
                       </button>
                     ))}
