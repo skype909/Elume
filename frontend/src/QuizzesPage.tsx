@@ -42,7 +42,7 @@ type GenerateQuizResponse = {
 };
 
 /** ---------------- Helpers ---------------- */
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "/api";
 
 function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;

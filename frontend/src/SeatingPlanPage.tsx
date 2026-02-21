@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "/api";
 
 type ClassItem = { id: number; name: string; subject: string };
 

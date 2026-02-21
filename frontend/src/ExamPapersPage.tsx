@@ -2,9 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-// Prefer localhost over 127.0.0.1 (127 breaks on other devices like a Clevertouch board)
-// You can override with REACT_APP_API_BASE later if you deploy.
-const API_BASE = (process.env.REACT_APP_API_BASE as string) || "http://localhost:8000";
+const API_BASE = "/api";
 
 type Topic = {
   id: number;

@@ -38,7 +38,7 @@ type CalendarEvent = {
 };
 
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "/api";
 
 function getJwt(): string | null {
   return localStorage.getItem("elume_token");

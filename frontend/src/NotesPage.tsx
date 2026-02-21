@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "/api";
 
 type Topic = {
   id: number;

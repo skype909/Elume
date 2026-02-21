@@ -1,9 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
-// If you ever deploy, set REACT_APP_API_BASE in your environment.
-// Otherwise localhost is the safest default (avoid 127.0.0.1 issues on other devices).
-const API_BASE = (process.env.REACT_APP_API_BASE as string) || "http://localhost:8000";
+const API_BASE = "/api";
 
 type TestCategory = {
   id: number;
