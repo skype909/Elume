@@ -177,7 +177,7 @@ function normaliseSavedQuiz(q: SavedQuizAny): NormalisedQuiz | null {
       if (nonEmptyCount < 2) return null;
 
       return {
-        id: String(rq.id ?? rq.qid ?? `${id}_${idx}` ?? uid("q")),
+        id: String(rq.id ?? rq.qid ?? `${id}_${idx}`),
         prompt: prompt.trim(),
         choices: {
           A: String(choicesObj.A ?? "").trim(),
