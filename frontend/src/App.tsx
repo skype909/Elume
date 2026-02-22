@@ -1,4 +1,4 @@
-import { Routes, Route, useNavigate } from "react-router-dom";
+import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import ClassPage from "./ClassPage";
@@ -774,27 +774,35 @@ export default function App() {
   const userEmail = useMemo(() => getEmailFromToken(), [isAuthed]);
   const userLabel = userEmail ? userEmail.split("@")[0] : "";
 
+  const location = useLocation();
+
+  // Public routes should NOT require login
+  const isPublicRoute =
+    location.pathname.startsWith("/s/") ||
+    location.pathname.startsWith("/join/");
+
   function logout() {
     clearToken();
     setIsAuthed(false);
   }
 
-  if (!isAuthed) {
+  if (!isAuthed && !isPublicRoute) {
     return <LoginPage onLoggedIn={() => setIsAuthed(true)} />;
   }
 
   return (
     <>
       {/* GLOBAL TOP BAR */}
-      <div className="flex justify-end items-center px-6 py-3 border-b bg-white">
-        <button
-          onClick={logout}
-          className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100"
-        >
-          Logout
-        </button>
-      </div>
-
+      {!isPublicRoute && (
+        <div className="flex justify-end items-center px-6 py-3 border-b bg-white">
+          <button
+            onClick={logout}
+            className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100"
+          >
+            Logout
+          </button>
+        </div>
+      )}
       {/* APP ROUTES */}
       <Routes>
         <Route path="/join/:code" element={<StudentJoinQuizPage />} />
