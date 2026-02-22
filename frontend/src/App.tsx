@@ -44,28 +44,45 @@ type ClassMeta = {
   order: number;
 };
 type MetaStore = Record<string, ClassMeta>;
-const META_KEY = "elume_class_layout_v1";
+
 
 // 20 bright classroom colours
 const COLOURS: { name: string; bg: string; ring: string }[] = [
   { name: "Emerald", bg: "bg-emerald-600", ring: "ring-emerald-200" },
-  { name: "Amber",   bg: "bg-amber-500",   ring: "ring-amber-200" },
-  { name: "Rose",    bg: "bg-rose-600",    ring: "ring-rose-200" },
-  { name: "Sky",     bg: "bg-sky-600",     ring: "ring-sky-200" },
+  { name: "Amber", bg: "bg-amber-500", ring: "ring-amber-200" },
+  { name: "Rose", bg: "bg-rose-600", ring: "ring-rose-200" },
+  { name: "Sky", bg: "bg-sky-600", ring: "ring-sky-200" },
   { name: "Sunflower", bg: "bg-yellow-400", ring: "ring-yellow-200" },
-  { name: "Violet",  bg: "bg-violet-700",  ring: "ring-violet-200" },
-  { name: "Lime",    bg: "bg-lime-500",    ring: "ring-lime-200" },
+  { name: "Violet", bg: "bg-violet-700", ring: "ring-violet-200" },
+  { name: "Lime", bg: "bg-lime-500", ring: "ring-lime-200" },
   { name: "Fuchsia", bg: "bg-fuchsia-600", ring: "ring-fuchsia-200" },
-  { name: "Orange",  bg: "bg-orange-600",  ring: "ring-orange-200" },
-  { name: "Slate",   bg: "bg-slate-800",   ring: "ring-slate-300" },
+  { name: "Orange", bg: "bg-orange-600", ring: "ring-orange-200" },
+  { name: "Slate", bg: "bg-slate-800", ring: "ring-slate-300" },
 ];
 
 const DEFAULT_BG = COLOURS[0]?.bg ?? "bg-emerald-500";
 
+function getEmailFromToken(): string | null {
+  const t = localStorage.getItem("elume_token");
+  if (!t) return null;
+  try {
+    const payload = JSON.parse(atob(t.split(".")[1]));
+    // common JWT fields
+    return payload?.email ?? payload?.sub ?? payload?.username ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function metaKeyForUser() {
+  const email = getEmailFromToken() ?? "anon";
+  return `elume_class_layout_v1__${email}`;
+}
+
 
 function loadMeta(): MetaStore {
   try {
-    const raw = localStorage.getItem(META_KEY);
+    const raw = localStorage.getItem(metaKeyForUser());
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return {};
@@ -76,8 +93,9 @@ function loadMeta(): MetaStore {
 }
 
 function saveMeta(meta: MetaStore) {
-  localStorage.setItem(META_KEY, JSON.stringify(meta));
+  localStorage.setItem(metaKeyForUser(), JSON.stringify(meta));
 }
+
 
 function textClassForBg(bg: string) {
   if (bg.includes("yellow") || bg.includes("amber")) return "text-slate-900";
@@ -483,7 +501,7 @@ function Dashboard() {
           {!loading &&
             sortedClasses.map((c) => {
               const m = meta[String(c.id)];
-              const bg = m?.color ?? "bg-blue-500";
+              const bg = m?.color ?? COLOURS[c.id % COLOURS.length].bg;
               const txt = textClassForBg(bg);
 
               return (
@@ -753,6 +771,8 @@ function Dashboard() {
 
 export default function App() {
   const [isAuthed, setIsAuthed] = useState(!!localStorage.getItem("elume_token"));
+  const userEmail = useMemo(() => getEmailFromToken(), [isAuthed]);
+  const userLabel = userEmail ? userEmail.split("@")[0] : "";
 
   function logout() {
     clearToken();
@@ -794,6 +814,11 @@ export default function App() {
         <Route path="/s/:token" element={<StudentClassPage />} />
         <Route path="/" element={<Dashboard />} />
       </Routes>
+      {userEmail && (
+        <div className="fixed bottom-3 right-3 z-50 rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">
+          Logged in as {userLabel}
+        </div>
+      )}
     </>
   );
 }
