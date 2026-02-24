@@ -883,7 +883,7 @@ export default function ClassPage() {
 
         <nav className="space-y-2">
           {[
-            { label: "Classroom", to: `/` },
+            { label: "Dashboard", to: `/` },
             { label: "Whiteboard", to: `/whiteboard/${classId}` },
             { label: "Collaborate", to: null },
             { label: "eBooks", to: null },

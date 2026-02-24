@@ -1,8 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-
-// If you have a specific ELUME logo file, update this import path.
-// If not, you can delete the <img> below and keep the text logo.
 import ELogo2 from "./assets/ELogo2.png";
 
 const API_BASE = "/api";

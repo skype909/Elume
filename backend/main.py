@@ -1735,6 +1735,101 @@ def class_insights(class_id: int, db: Session = Depends(get_db)):
         "at_risk": at_risk,
     }
 
+from sqlalchemy import func  # add near your other imports
+
+@app.get("/classes/{class_id}/students/{student_id}/history")
+def student_history(
+    class_id: int,
+    student_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    # ✅ Security: ensure class belongs to logged-in teacher
+    cls = db.query(ClassModel).filter(
+        ClassModel.id == class_id,
+        ClassModel.owner_user_id == user.id
+    ).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    # Ensure student belongs to this class
+    student = db.query(StudentModel).filter(
+        StudentModel.id == student_id,
+        StudentModel.class_id == class_id
+    ).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # Assessments in chronological order
+    assessments = (
+        db.query(ClassAssessmentModel)
+        .filter(ClassAssessmentModel.class_id == class_id)
+        .order_by(ClassAssessmentModel.assessment_date.asc(), ClassAssessmentModel.id.asc())
+        .all()
+    )
+
+    if not assessments:
+        return {
+            "student": {"id": student.id, "first_name": student.first_name},
+            "points": [],
+        }
+
+    assessment_ids = [a.id for a in assessments]
+
+    # Student results for those assessments
+    student_results = (
+        db.query(AssessmentResultModel)
+        .filter(AssessmentResultModel.assessment_id.in_(assessment_ids))
+        .filter(AssessmentResultModel.student_id == student_id)
+        .all()
+    )
+    by_assessment = {r.assessment_id: r for r in student_results}
+
+    # Class averages per assessment (exclude absent + null scores)
+    avg_rows = (
+        db.query(
+            AssessmentResultModel.assessment_id.label("assessment_id"),
+            func.avg(AssessmentResultModel.score_percent).label("avg_score"),
+        )
+        .filter(AssessmentResultModel.assessment_id.in_(assessment_ids))
+        .filter(AssessmentResultModel.absent == False)  # noqa: E712
+        .filter(AssessmentResultModel.score_percent.isnot(None))
+        .group_by(AssessmentResultModel.assessment_id)
+        .all()
+    )
+    avg_by_assessment = {int(r.assessment_id): float(r.avg_score) for r in avg_rows}
+
+    points = []
+    for a in assessments:
+        r = by_assessment.get(a.id)
+
+        # student score: null if absent or missing row
+        student_score = None
+        absent = False
+
+        if r:
+            absent = bool(r.absent)
+            if not absent and r.score_percent is not None:
+                student_score = int(r.score_percent)
+
+        class_avg = avg_by_assessment.get(a.id, None)
+        class_avg_rounded = round(class_avg, 1) if class_avg is not None else None
+
+        points.append(
+            {
+                "assessment_id": a.id,
+                "title": a.title,
+                "date": a.assessment_date.date().isoformat() if a.assessment_date else None,
+                "student": student_score,
+                "absent": absent,
+                "class_avg": class_avg_rounded,
+            }
+        )
+
+    return {
+        "student": {"id": student.id, "first_name": student.first_name},
+        "points": points,
+    }
 
 # -------------------------
 # AI Calendar Assistant (draft only - NEVER writes to DB)

@@ -53,6 +53,20 @@ type InsightsPayload = {
     at_risk: AtRiskRow[];
 };
 
+type StudentHistoryPoint = {
+    assessment_id: number;
+    title: string;
+    date: string | null;
+    student: number | null;
+    absent: boolean;
+    class_avg: number | null;
+};
+
+type StudentHistoryResp = {
+    student: { id: number; first_name: string };
+    points: StudentHistoryPoint[];
+};
+
 export default function ClassAdminPage() {
     const { id } = useParams<{ id: string }>();
     const classId = useMemo(() => Number(id), [id]);
@@ -78,6 +92,34 @@ export default function ClassAdminPage() {
     const [insightsLoading, setInsightsLoading] = useState(false);
     const [insightsError, setInsightsError] = useState<string | null>(null);
 
+    const [historyCache, setHistoryCache] = useState<Record<number, StudentHistoryResp | null>>({});
+    const [historyLoading, setHistoryLoading] = useState<Record<number, boolean>>({});
+
+    async function fetchStudentHistory(studentId: number) {
+        if (!validClassId) return;
+        if (historyCache[studentId] || historyLoading[studentId]) return;
+
+        setHistoryLoading(p => ({ ...p, [studentId]: true }));
+
+        try {
+            const token = localStorage.getItem("elume_token") || "";
+
+            const res = await fetch(`${API_BASE}/classes/${classId}/students/${studentId}/history`, {
+                headers: {
+                    Authorization: token ? `Bearer ${token}` : "",
+                },
+            });
+
+            if (!res.ok) throw new Error(await res.text());
+            const data: StudentHistoryResp = await res.json();
+
+            setHistoryCache(p => ({ ...p, [studentId]: data }));
+        } catch {
+            setHistoryCache(p => ({ ...p, [studentId]: null }));
+        } finally {
+            setHistoryLoading(p => ({ ...p, [studentId]: false }));
+        }
+    }
 
     // quick add student
     const [firstName, setFirstName] = useState("");
@@ -444,7 +486,51 @@ export default function ClassAdminPage() {
         if (t === "flat") return "text-slate-600";
         return "text-slate-400";
     }
+    function Sparkline({ points }: { points: StudentHistoryPoint[] }) {
+        const width = 220;
+        const height = 60;
+        const pad = 6;
 
+        const vals = points
+            .flatMap(p => [p.student, p.class_avg])
+            .filter((v): v is number => typeof v === "number");
+
+        const maxY = Math.max(100, ...vals);
+        const minY = 0;
+
+        const w = width - pad * 2;
+        const h = height - pad * 2;
+
+        const xTo = (i: number) => pad + (points.length <= 1 ? 0 : (i / (points.length - 1)) * w);
+        const yTo = (v: number) => pad + (1 - (v - minY) / (maxY - minY || 1)) * h;
+
+        const poly = (getter: (p: StudentHistoryPoint) => number | null) =>
+            points
+                .map((p, i) => {
+                    const v = getter(p);
+                    return typeof v === "number" ? `${xTo(i)},${yTo(v)}` : null;
+                })
+                .filter(Boolean)
+                .join(" ");
+
+        return (
+            <svg width={width} height={height}>
+                <polyline
+                    points={poly(p => p.class_avg)}
+                    fill="none"
+                    strokeWidth="2"
+                    strokeDasharray="4 4"
+                    className="stroke-red-500"
+                />
+                <polyline
+                    points={poly(p => p.student)}
+                    fill="none"
+                    strokeWidth="2.5"
+                    className="stroke-slate-900"
+                />
+            </svg>
+        );
+    }
     return (
         <div className="min-h-screen bg-emerald-100 p-6">
             <div className="mx-auto max-w-6xl px-4 py-6">
@@ -785,7 +871,88 @@ export default function ClassAdminPage() {
                                                     className="grid grid-cols-12 items-center px-3 py-2 text-sm"
                                                 >
                                                     <div className="col-span-4 font-semibold text-slate-900">
-                                                        {s.first_name}
+                                                        <div
+                                                            className="relative inline-block group hover:z-40"
+                                                            onMouseEnter={() => fetchStudentHistory(s.student_id)}
+                                                        >
+                                                            <span className="underline decoration-dotted underline-offset-4">
+                                                                {s.first_name}
+                                                            </span>
+
+                                                            <div className="absolute left-0 top-[calc(100%-4px)] z-30 mt-2 hidden w-[320px] rounded-2xl border-2 border-slate-200 bg-white p-3 shadow-xl group-hover:block">
+
+                                                                <div className="text-sm font-extrabold text-slate-900">
+                                                                    {s.first_name}
+                                                                </div>
+
+                                                                <div className="text-xs text-slate-600 mt-1">
+                                                                    Latest: <b>{s.latest ?? "—"}</b>% ·
+                                                                    Avg: <b>{s.average ?? "—"}</b>% ·
+                                                                    Taken: <b>{s.taken}</b> ·
+                                                                    Missed: <b>{s.missed}</b>
+                                                                </div>
+
+                                                                <div className="mt-3 border rounded-xl p-2">
+                                                                    {historyLoading[s.student_id] && (
+                                                                        <div className="text-xs text-slate-500">Loading…</div>
+                                                                    )}
+
+                                                                    {!historyLoading[s.student_id] &&
+                                                                        historyCache[s.student_id]?.points?.length ? (
+                                                                        <>
+                                                                            <Sparkline points={historyCache[s.student_id]!.points.slice(-8)} />
+                                                                            <div className="mt-2 max-h-28 overflow-auto rounded-lg border border-slate-100 bg-slate-50 px-2 py-1">
+                                                                                {historyCache[s.student_id]!.points
+                                                                                    .slice(-10)
+                                                                                    .slice()
+                                                                                    .reverse()
+                                                                                    .map((p) => {
+                                                                                        const delta =
+                                                                                            typeof p.student === "number" && typeof p.class_avg === "number"
+                                                                                                ? Math.round((p.student - p.class_avg) * 10) / 10
+                                                                                                : null;
+
+                                                                                        return (
+                                                                                            <div
+                                                                                                key={p.assessment_id}
+                                                                                                className="flex items-center justify-between gap-2 border-b border-slate-200/60 py-1 last:border-b-0"
+                                                                                            >
+                                                                                                <div className="min-w-0">
+                                                                                                    <div className="truncate text-xs font-semibold text-slate-800">
+                                                                                                        {p.title}
+                                                                                                    </div>
+                                                                                                    <div className="text-[11px] text-slate-500">
+                                                                                                        {p.date ?? ""}
+                                                                                                    </div>
+                                                                                                </div>
+
+                                                                                                <div className="shrink-0 text-right">
+                                                                                                    <div className="text-xs font-extrabold text-slate-900">
+                                                                                                        {p.absent ? "Absent" : (p.student == null ? "—" : `${p.student}%`)}
+                                                                                                    </div>
+
+                                                                                                    <div className="text-[11px] text-slate-500">
+                                                                                                        {typeof p.class_avg === "number" ? `avg ${p.class_avg}%` : "avg —"}
+                                                                                                        {delta != null && (
+                                                                                                            <span className={delta >= 0 ? "ml-1 text-emerald-700" : "ml-1 text-rose-700"}>
+                                                                                                                ({delta >= 0 ? "+" : ""}{delta})
+                                                                                                            </span>
+                                                                                                        )}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        );
+                                                                                    })}
+                                                                            </div>
+
+                                                                            <div className="mt-2 text-[11px] text-slate-500">
+                                                                                Solid = student · Dotted red = class avg
+                                                                            </div>
+                                                                        </>
+                                                                    ) : null}
+                                                                </div>
+                                                            </div>
+                                                        </div>
                                                     </div>
 
                                                     <div className="col-span-2">

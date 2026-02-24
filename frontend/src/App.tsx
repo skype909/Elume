@@ -18,6 +18,7 @@ import StudentClassPage from "./StudentClassPage";
 import { getToken, clearToken } from "./api";
 import { apiFetch } from "./api";
 import WhiteBoardPage from "./WhiteBoardPage";
+import TeacherAdminPage from "./TeacherAdminPage";
 
 
 
@@ -71,6 +72,29 @@ function getEmailFromToken(): string | null {
     return payload?.email ?? payload?.sub ?? payload?.username ?? null;
   } catch {
     return null;
+  }
+}
+
+function teacherAdminKeyForUser() {
+  const email = getEmailFromToken() ?? "anon";
+  return `elume_teacher_admin_v2__${email}`;
+}
+
+function loadTeacherWelcome(): string {
+  try {
+    const raw = localStorage.getItem(teacherAdminKeyForUser());
+    if (!raw) return "";
+    const parsed = JSON.parse(raw);
+    const p = parsed?.profile;
+    if (!p) return "";
+
+    const title = String(p.title ?? "").trim();
+    const surname = String(p.surname ?? "").trim();
+
+    if (!title || !surname) return "";
+    return `Welcome ${title} ${surname}`;
+  } catch {
+    return "";
   }
 }
 
@@ -179,6 +203,7 @@ function Dashboard() {
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [welcome, setWelcome] = useState<string>(() => loadTeacherWelcome());
 
   const navigate = useNavigate();
 
@@ -248,6 +273,19 @@ function Dashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    const onStorage = () => setWelcome(loadTeacherWelcome());
+    window.addEventListener("storage", onStorage);
+
+    // also refresh when user comes back to the tab
+    const onFocus = () => setWelcome(loadTeacherWelcome());
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   const sortedClasses = useMemo(() => {
     const copy = [...classes];
@@ -450,7 +488,7 @@ function Dashboard() {
 
           {/* Right controls */}
           <div className="ml-auto flex items-center gap-4">
-            <button className={btn} type="button" onClick={() => alert("Admin coming soon")}>
+            <button className={btn} type="button" onClick={() => navigate("/admin")}>
               Admin
             </button>
 
@@ -483,7 +521,12 @@ function Dashboard() {
           <div className="text-base font-semibold text-slate-700">
             Drag tiles to arrange. Colour + order save on this device.
           </div>
+
+          <div className="ml-auto text-base font-extrabold text-slate-800">
+            {welcome || ""}
+          </div>
         </div>
+
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           {loading && (
@@ -821,6 +864,7 @@ export default function App() {
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/s/:token" element={<StudentClassPage />} />
         <Route path="/" element={<Dashboard />} />
+        <Route path="/admin" element={<TeacherAdminPage />} />
       </Routes>
       {userEmail && (
         <div className="fixed bottom-3 right-3 z-50 rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">
