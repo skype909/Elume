@@ -896,7 +896,11 @@ export default function ClassPage() {
                 if (item.to) navigate(item.to);
                 else alert("Coming soon 🙂");
               }}
-              className="w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50"
+              className={
+                item.label === "Dashboard"
+                  ? "w-full rounded-2xl border-2 border-emerald-600 bg-emerald-50 px-3 py-2 text-left text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100"
+                  : "w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50"
+              }
             >
               {item.label}
             </button>

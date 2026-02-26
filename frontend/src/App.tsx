@@ -21,14 +21,8 @@ import WhiteBoardPage from "./WhiteBoardPage";
 import TeacherAdminPage from "./TeacherAdminPage";
 
 
-
-
-
-
-import elumeLogo from "./assets/elume-logo.png";
-import ELogo from "./assets/ELogo.png";
 import ELogo2 from "./assets/ELogo2.png";
-
+import HomeLogo from "./assets/Home Logo.png";
 
 
 type ClassItem = {
@@ -818,6 +812,7 @@ export default function App() {
   const userLabel = userEmail ? userEmail.split("@")[0] : "";
 
   const location = useLocation();
+  const navigate = useNavigate();
 
   // Public routes should NOT require login
   const isPublicRoute =
@@ -837,7 +832,18 @@ export default function App() {
     <>
       {/* GLOBAL TOP BAR */}
       {!isPublicRoute && (
-        <div className="flex justify-end items-center px-6 py-3 border-b bg-white">
+
+        <div className="flex items-center justify-between px-6 py-3 border-b bg-white">
+          {/* ✅ Logo only (no text) -> Dashboard */}
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="rounded-xl p-1 hover:bg-slate-100"
+            title="Back to Dashboard"
+          >
+            <img src={HomeLogo} alt="Elume" className="h-9 w-9 object-contain" />
+          </button>
+
           <button
             onClick={logout}
             className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100"
