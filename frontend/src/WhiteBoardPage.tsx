@@ -658,11 +658,14 @@ export default function WhiteBoardPage() {
   const imgCanvasRef = useRef<HTMLCanvasElement | null>(null);   // NEW
   const inkCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   const bgCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const previewCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const inkCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const imgCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+
 
 
   // Drawing / hand tool refs
@@ -942,7 +945,24 @@ export default function WhiteBoardPage() {
     const widthCss = container.clientWidth;
     const heightCss = canvasHeight;
 
+    // Overlay canvas (grid/axes layer)
+    const overlayCanvas = overlayCanvasRef.current;
+    if (overlayCanvas) {
+      overlayCanvas.style.width = `${width}px`;
+      overlayCanvas.style.height = `${canvasHeight}px`;
+      overlayCanvas.width = Math.floor(width * ratio);
+      overlayCanvas.height = Math.floor(canvasHeight * ratio);
 
+      const octx = overlayCanvas.getContext("2d");
+      if (octx) {
+        octx.setTransform(1, 0, 0, 1, 0, 0);
+        octx.scale(ratio, ratio);
+        overlayCtxRef.current = octx;
+
+        // Important: clear overlay on resize so it doesn't smear
+        octx.clearRect(0, 0, width, canvasHeight);
+      }
+    }
 
     const copyOld = (c: HTMLCanvasElement) => {
       const tmp = document.createElement("canvas");
@@ -1657,19 +1677,19 @@ export default function WhiteBoardPage() {
   };
 
   const clearAll = () => {
-  const bgCanvas = bgCanvasRef.current;
-  const bgCtx = bgCtxRef.current;
-  const previewCanvas = previewCanvasRef.current;
-  const previewCtx = previewCtxRef.current;
+    const bgCanvas = bgCanvasRef.current;
+    const bgCtx = bgCtxRef.current;
+    const previewCanvas = previewCanvasRef.current;
+    const previewCtx = previewCtxRef.current;
 
-  if (bgCanvas && bgCtx) bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
-  if (previewCanvas && previewCtx) previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+    if (bgCanvas && bgCtx) bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+    if (previewCanvas && previewCtx) previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
 
-  clearInk();
+    clearInk();
 
-  // ALSO remove all inserted/snipped PDF images
-  setPlacedImages([]);
-  setSelectedImageId(null);
+    // ALSO remove all inserted/snipped PDF images
+    setPlacedImages([]);
+    setSelectedImageId(null);
 
   };
   /* ---------- Undo / Redo (Ink + Objects) ---------- */
@@ -1742,6 +1762,10 @@ export default function WhiteBoardPage() {
     if (!el) return;
     const nearBottom = el.scrollTop + el.clientHeight > el.scrollHeight - 500;
     if (nearBottom) setCanvasHeight((h) => Math.min(h + 2000, 30000));
+    requestAnimationFrame(() => {
+      if (gridApplied) drawGridOverlay();
+      else if (axesApplied) drawAxesOverlay();
+    });
   };
 
   function addPage() {
@@ -2100,20 +2124,26 @@ export default function WhiteBoardPage() {
     setSnipMode(false);
   }
 
-  /* ---------- Grid overlay ---------- */
-  function applyGrid() {
-    const bgCtx = bgCtxRef.current;
+  function clearOverlay() {
+    const ctx = overlayCtxRef.current;
     const container = containerRef.current;
-    if (!bgCtx || !container) return;
+    if (!ctx || !container) return;
+    ctx.clearRect(0, 0, container.clientWidth, canvasHeight);
+  }
 
-    pushBgUndo();
+  function drawGridOverlay() {
+    const ctx = overlayCtxRef.current;
+    const container = containerRef.current;
+    if (!ctx || !container) return;
+
+    clearOverlay();
 
     const width = gridMode === "half" ? Math.floor(container.clientWidth / 2) : container.clientWidth;
     const left = gridMode === "half" ? Math.floor(container.clientWidth / 2) : 0;
+
     const viewH = container.clientHeight;
     const top = container.scrollTop;
-
-    const h = viewH; // half mode is RIGHT half, so height stays full
+    const h = viewH;
 
     const cols = Math.max(2, Math.min(80, Math.floor(gridX)));
     const rows = Math.max(2, Math.min(80, Math.floor(gridY)));
@@ -2121,54 +2151,36 @@ export default function WhiteBoardPage() {
     const cellW = width / cols;
     const cellH = h / rows;
 
-    bgCtx.save();
-    bgCtx.globalCompositeOperation = "source-over";
-    bgCtx.strokeStyle = "rgba(15,23,42,0.18)";
-    bgCtx.lineWidth = 1;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = "rgba(15,23,42,0.18)";
+    ctx.lineWidth = 1;
 
     for (let c = 0; c <= cols; c++) {
       const x = left + c * cellW;
-      bgCtx.beginPath();
-      bgCtx.moveTo(x, top);
-      bgCtx.lineTo(x, top + h);
-      bgCtx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, top + h);
+      ctx.stroke();
     }
 
     for (let r = 0; r <= rows; r++) {
       const y = top + r * cellH;
-      bgCtx.beginPath();
-      bgCtx.moveTo(left, y);
-      bgCtx.lineTo(left + width, y);
-      bgCtx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(left + width, y);
+      ctx.stroke();
     }
 
-    bgCtx.restore();
-    setGridApplied(true);
-    setShowGridModal(false);
+    ctx.restore();
   }
 
-  function removeGrid() {
-    if (!gridApplied) return;
-    popBgUndo();
-    setGridApplied(false);
-  }
-
-  /* ---------- XY Plane ---------- */
-  function applyAxes() {
-    const bgCtx = bgCtxRef.current;
+  function drawAxesOverlay() {
+    const ctx = overlayCtxRef.current;
     const container = containerRef.current;
-    if (!bgCtx || !container) return;
+    if (!ctx || !container) return;
 
-    if (domMax <= domMin || rngMax <= rngMin) {
-      alert("Domain/Range max must be greater than min.");
-      return;
-    }
-    if (domStep <= 0 || rngStep <= 0) {
-      alert("Increments must be > 0");
-      return;
-    }
-
-    pushBgUndo();
+    clearOverlay();
 
     const fullW = container.clientWidth;
     const viewH = container.clientHeight;
@@ -2182,88 +2194,122 @@ export default function WhiteBoardPage() {
     const x1 = left + width;
     const y1 = top + viewH;
 
-
     const mapX = (x: number) => x0 + ((x - domMin) / (domMax - domMin)) * (x1 - x0);
     const mapY = (y: number) => y1 - ((y - rngMin) / (rngMax - rngMin)) * (y1 - y0);
 
-    bgCtx.save();
-    bgCtx.globalCompositeOperation = "source-over";
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
 
-    bgCtx.fillStyle = "rgba(15,23,42,0.25)";
+    // dots
+    ctx.fillStyle = "rgba(15,23,42,0.25)";
     const dotR = 1.2;
-
     for (let x = domMin; x <= domMax + 1e-9; x += domStep) {
       for (let y = rngMin; y <= rngMax + 1e-9; y += rngStep) {
         const px = mapX(x);
         const py = mapY(y);
-        bgCtx.beginPath();
-        bgCtx.arc(px, py, dotR, 0, Math.PI * 2);
-        bgCtx.fill();
+        ctx.beginPath();
+        ctx.arc(px, py, dotR, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
 
-    bgCtx.strokeStyle = "rgba(15,23,42,0.6)";
-    bgCtx.lineWidth = 2;
-    bgCtx.fillStyle = "#0f172a";
-    bgCtx.font = "12px sans-serif";
-    bgCtx.textAlign = "center";
-    bgCtx.textBaseline = "top";
+    // axes + labels
+    ctx.strokeStyle = "rgba(15,23,42,0.6)";
+    ctx.lineWidth = 2;
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "12px sans-serif";
 
-    // --- Axis label positions (avoid overlap with lines) ---
-    const xAxisY = Math.min(y1 - 18, Math.max(y0 + 2, mapY(0))); // clamp to viewport
-    const yAxisX = Math.min(x1 - 6, Math.max(x0 + 18, mapX(0))); // clamp to viewport
+    const xAxisY = Math.min(y1 - 18, Math.max(y0 + 2, mapY(0)));
+    const yAxisX = Math.min(x1 - 6, Math.max(x0 + 18, mapX(0)));
 
-    // X-axis labels (below the x-axis line)
-    bgCtx.textAlign = "center";
-    bgCtx.textBaseline = "top";
+    // x labels
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
     for (let x = domMin; x <= domMax + 1e-9; x += domStep) {
-      if (Math.abs(x) < 1e-9) continue; // skip 0 (we usually label origin separately)
+      if (Math.abs(x) < 1e-9) continue;
       const px = mapX(x);
-      bgCtx.fillText(String(x), px, xAxisY + 6); // +6 puts labels below axis
+      ctx.fillText(String(x), px, xAxisY + 6);
     }
 
-    // Y-axis labels (left of the y-axis line)
-    bgCtx.textAlign = "right";
-    bgCtx.textBaseline = "middle";
+    // y labels
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
     for (let y = rngMin; y <= rngMax + 1e-9; y += rngStep) {
-      if (Math.abs(y) < 1e-9) continue; // skip 0
+      if (Math.abs(y) < 1e-9) continue;
       const py = mapY(y);
-      bgCtx.fillText(String(y), yAxisX - 8, py); // -8 pushes labels left of axis
+      ctx.fillText(String(y), yAxisX - 8, py);
     }
-
 
     const zeroYPx = mapY(0);
 
-
+    // vertical axis (x=0)
     if (domMin <= 0 && 0 <= domMax) {
       const px = mapX(0);
-
-      bgCtx.fillText("0", px, zeroYPx + 4);
-
-      bgCtx.beginPath();
-      bgCtx.moveTo(px, y0);
-      bgCtx.lineTo(px, y1);
-      bgCtx.stroke();
+      ctx.fillText("0", px, zeroYPx + 4);
+      ctx.beginPath();
+      ctx.moveTo(px, y0);
+      ctx.lineTo(px, y1);
+      ctx.stroke();
     }
 
-
+    // horizontal axis (y=0)
     if (rngMin <= 0 && 0 <= rngMax) {
       const py = mapY(0);
-      bgCtx.beginPath();
-      bgCtx.moveTo(x0, py);
-      bgCtx.lineTo(x1, py);
-      bgCtx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x0, py);
+      ctx.lineTo(x1, py);
+      ctx.stroke();
     }
 
-    bgCtx.restore();
+    ctx.restore();
+  }
 
+  /* ---------- Grid overlay ---------- */
+  function applyGrid() {
+    const ctx = overlayCtxRef.current;
+    const container = containerRef.current;
+    if (!ctx || !container) return;
+
+    // Grid and XY share the same overlay, so make them mutually exclusive
+    setAxesApplied(false);
+
+    drawGridOverlay();
+    setGridApplied(true);
+    setShowGridModal(false);
+  }
+
+  function removeGrid() {
+    if (!gridApplied) return;
+    clearOverlay();
+    setGridApplied(false);
+  }
+
+  /* ---------- XY Plane ---------- */
+  function applyAxes() {
+    const ctx = overlayCtxRef.current;
+    const container = containerRef.current;
+    if (!ctx || !container) return;
+
+    if (domMax <= domMin || rngMax <= rngMin) {
+      alert("Domain/Range max must be greater than min.");
+      return;
+    }
+    if (domStep <= 0 || rngStep <= 0) {
+      alert("Increments must be > 0");
+      return;
+    }
+
+    // XY and Grid share the same overlay, so make them mutually exclusive
+    setGridApplied(false);
+
+    drawAxesOverlay();
     setAxesApplied(true);
     setShowAxesModal(false);
   }
 
   function removeAxes() {
     if (!axesApplied) return;
-    popBgUndo();
+    clearOverlay();
     setAxesApplied(false);
   }
 
@@ -2448,6 +2494,8 @@ export default function WhiteBoardPage() {
               >
 
                 <canvas ref={bgCanvasRef} className="absolute left-0 top-0 pointer-events-none" />
+
+                <canvas ref={overlayCanvasRef} className="absolute left-0 top-0 pointer-events-none" />
 
                 <canvas
                   ref={imgCanvasRef}

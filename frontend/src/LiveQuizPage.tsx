@@ -55,8 +55,34 @@ type LiveStatus = {
   time_left_seconds?: number | null;
   joined_count?: number;
   answered_count?: number;
-  // Optional result summary blobs if your backend returns them
-  results?: any;
+};
+
+type LiveQuizResults = {
+  session_code: string;
+  class_id: number;
+  title: string;
+  anonymous: boolean;
+  ended_at?: string | null;
+  summary: {
+    joined: number;
+    attempted_any: number;
+    total_questions: number;
+    avg_percent: number;
+    hardest_question?: { question_id: string; prompt: string; correct_rate: number } | null;
+    scored_mode: boolean;
+  };
+  top3: Array<{ name: string; correct: number; answered: number; percent: number }>;
+  leaderboard: Array<{ name: string; correct: number; answered: number; percent: number }>;
+};
+
+type LiveQuizHistoryItem = {
+  saved_at: string;
+  session_code: string;
+  title: string;
+  anonymous: boolean;
+  summary: LiveQuizResults["summary"];
+  top3: LiveQuizResults["top3"];
+  leaderboard: LiveQuizResults["leaderboard"];
 };
 
 function uid(prefix = "q") {
@@ -92,19 +118,15 @@ function normaliseSavedQuiz(q: SavedQuizAny): NormalisedQuiz | null {
   const id = String(q.id ?? q.quizId ?? q.key ?? uid("saved"));
 
   const createdAt =
-    typeof q.createdAt === "string"
-      ? q.createdAt
-      : typeof q.date === "string"
-      ? q.date
-      : undefined;
+    typeof q.createdAt === "string" ? q.createdAt : typeof q.date === "string" ? q.date : undefined;
 
   const rawQuestions: any[] = Array.isArray(q.questions)
     ? q.questions
     : Array.isArray(q.items)
-    ? q.items
-    : Array.isArray(q.quiz)
-    ? q.quiz
-    : [];
+      ? q.items
+      : Array.isArray(q.quiz)
+        ? q.quiz
+        : [];
 
   const questions: LiveQuestion[] = rawQuestions
     .map((rq, idx) => {
@@ -163,6 +185,7 @@ function normaliseSavedQuiz(q: SavedQuizAny): NormalisedQuiz | null {
       // Correct can be "A" or 0..3 etc
       let correct: ChoiceKey | null | undefined = undefined;
       const rawCorrect = rq.correct ?? rq.answer ?? rq.correctAnswer ?? rq.key ?? null;
+
       if (rawCorrect === null || rawCorrect === undefined || rawCorrect === "") {
         correct = null;
       } else if (typeof rawCorrect === "string") {
@@ -223,7 +246,7 @@ export default function LiveQuizPage() {
   const [mode, setMode] = useState<"saved" | "custom">("saved");
 
   // Settings
-  const [anonymous, setAnonymous] = useState<boolean>(true);
+  const [anonymous, setAnonymous] = useState<boolean>(false);
   const [shuffleQuestions, setShuffleQuestions] = useState<boolean>(false);
   const [autoEndWhenAllAnswered, setAutoEndWhenAllAnswered] = useState<boolean>(true);
   const [secondsPerQuestion, setSecondsPerQuestion] = useState<number>(20);
@@ -251,6 +274,10 @@ export default function LiveQuizPage() {
   const pollRef = useRef<number | null>(null);
 
   const quizzesStorageKey = useMemo(() => `elume:quizzes:class:${classId}`, [classId]);
+  const liveHistoryKey = useMemo(() => `elume:livequiz:history:class:${classId}`, [classId]);
+
+  const [history, setHistory] = useState<LiveQuizHistoryItem[]>([]);
+  const [activeReport, setActiveReport] = useState<LiveQuizHistoryItem | null>(null);
 
   // Load class info
   useEffect(() => {
@@ -280,14 +307,9 @@ export default function LiveQuizPage() {
   useEffect(() => {
     const raw = localStorage.getItem(quizzesStorageKey);
     const parsed = safeJsonParse<any>(raw, []);
-    const arr = Array.isArray(parsed)
-      ? parsed
-      : parsed?.quizzes && Array.isArray(parsed.quizzes)
-      ? parsed.quizzes
-      : [];
+    const arr = Array.isArray(parsed) ? parsed : parsed?.quizzes && Array.isArray(parsed.quizzes) ? parsed.quizzes : [];
 
     const normalised = (arr as SavedQuizAny[]).map(normaliseSavedQuiz).filter(Boolean) as NormalisedQuiz[];
-
     setSavedQuizzes(normalised);
 
     if (normalised.length && !selectedSavedQuizId) {
@@ -295,6 +317,13 @@ export default function LiveQuizPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quizzesStorageKey]);
+
+  // Load live quiz history from localStorage
+  useEffect(() => {
+    const raw = localStorage.getItem(liveHistoryKey);
+    const parsed = safeJsonParse<LiveQuizHistoryItem[]>(raw, []);
+    setHistory(Array.isArray(parsed) ? parsed : []);
+  }, [liveHistoryKey]);
 
   const selectedQuiz = useMemo(() => {
     if (mode !== "saved") return null;
@@ -400,7 +429,7 @@ export default function LiveQuizPage() {
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Failed to create live session (backend endpoints not added yet).");
+        throw new Error(txt || "Failed to create live session.");
       }
 
       const data = (await res.json()) as CreateSessionResponse;
@@ -410,6 +439,7 @@ export default function LiveQuizPage() {
 
       setSession({ code, joinUrl: url });
       setStatus(null);
+      setActiveReport(null);
     } catch (e: any) {
       setCreateError(e?.message || "Failed to create session.");
     } finally {
@@ -420,7 +450,7 @@ export default function LiveQuizPage() {
   async function fetchStatus(code: string) {
     try {
       const res = await fetch(`${API_BASE}/livequiz/${code}/status`);
-      if (!res.ok) throw new Error("Status not available yet (backend endpoint not added yet).");
+      if (!res.ok) throw new Error("Status unavailable.");
       const data = (await res.json()) as LiveStatus;
       setStatus(data);
       setStatusError(null);
@@ -448,7 +478,6 @@ export default function LiveQuizPage() {
       return () => stopPollingStatus();
     }
     stopPollingStatus();
-    return;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.code]);
 
@@ -456,16 +485,67 @@ export default function LiveQuizPage() {
     return () => stopPollingStatus();
   }, []);
 
+  async function fetchResultsAndSave(code: string) {
+    const res = await fetch(`${API_BASE}/livequiz/${code}/results`);
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(txt || "Failed to fetch results.");
+    }
+
+    const results = (await res.json()) as LiveQuizResults;
+
+    const item: LiveQuizHistoryItem = {
+      saved_at: new Date().toISOString(),
+      session_code: results.session_code,
+      title: results.title,
+      anonymous: results.anonymous,
+      summary: results.summary,
+      top3: results.top3 || [],
+      leaderboard: results.leaderboard || [],
+    };
+
+    setHistory((prev) => {
+      const next = [item, ...prev].slice(0, 30);
+      localStorage.setItem(liveHistoryKey, JSON.stringify(next));
+      return next;
+    });
+
+    setActiveReport(item);
+  }
+
+  function deleteHistoryItem(saved_at: string, session_code: string) {
+    setHistory((prev) => {
+      const next = prev.filter((h) => !(h.saved_at === saved_at && h.session_code === session_code));
+      localStorage.setItem(liveHistoryKey, JSON.stringify(next));
+
+      // If the currently open report is the one deleted, clear it
+      setActiveReport((curr) => {
+        if (!curr) return null;
+        return curr.saved_at === saved_at && curr.session_code === session_code ? null : curr;
+      });
+
+      return next;
+    });
+  }
+
   async function postControl(action: "start" | "next" | "end-question" | "end-session") {
     if (!session?.code) return;
     setStatusError(null);
+
     try {
       const res = await fetch(`${API_BASE}/livequiz/${session.code}/${action}`, { method: "POST" });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Control action failed (backend endpoints not added yet).");
+        throw new Error(txt || "Control action failed.");
       }
+
+      // Refresh status after control
       fetchStatus(session.code);
+
+      // If teacher ended session, fetch results + save history
+      if (action === "end-session") {
+        await fetchResultsAndSave(session.code);
+      }
     } catch (e: any) {
       setStatusError(e?.message || "Control action failed.");
     }
@@ -478,8 +558,8 @@ export default function LiveQuizPage() {
       s === "lobby"
         ? "bg-slate-100 text-slate-700"
         : s === "live"
-        ? "bg-emerald-100 text-emerald-800"
-        : "bg-rose-100 text-rose-800";
+          ? "bg-emerald-100 text-emerald-800"
+          : "bg-rose-100 text-rose-800";
     return <span className={`rounded-full px-2 py-1 text-xs font-bold ${cls}`}>{s.toUpperCase()}</span>;
   }
 
@@ -544,11 +624,10 @@ export default function LiveQuizPage() {
             <div className="mt-3 flex gap-2">
               <button
                 type="button"
-                className={`flex-1 rounded-2xl border-2 px-4 py-2 text-sm font-bold ${
-                  mode === "saved"
-                    ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-                }`}
+                className={`flex-1 rounded-2xl border-2 px-4 py-2 text-sm font-bold ${mode === "saved"
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                  }`}
                 onClick={() => setMode("saved")}
               >
                 Use saved quiz
@@ -556,11 +635,10 @@ export default function LiveQuizPage() {
 
               <button
                 type="button"
-                className={`flex-1 rounded-2xl border-2 px-4 py-2 text-sm font-bold ${
-                  mode === "custom"
-                    ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-                }`}
+                className={`flex-1 rounded-2xl border-2 px-4 py-2 text-sm font-bold ${mode === "custom"
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                  }`}
                 onClick={() => setMode("custom")}
               >
                 Quick custom
@@ -610,7 +688,7 @@ export default function LiveQuizPage() {
 
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <label className="flex items-center justify-between gap-3 rounded-2xl border-2 border-slate-200 bg-white px-3 py-2">
-                  <span className="text-sm font-semibold text-slate-800">Anonymous</span>
+                  <span className="text-sm font-semibold text-slate-800">Anonymous mode (don’t record names)</span>
                   <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)} />
                 </label>
 
@@ -753,7 +831,7 @@ export default function LiveQuizPage() {
           )}
         </div>
 
-        {/* Right: Session + QR + Controls */}
+        {/* Right: Session + QR + Controls + Results */}
         <div className="lg:col-span-7">
           <div className="rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
@@ -766,11 +844,11 @@ export default function LiveQuizPage() {
                 <button
                   className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-50"
                   onClick={() => {
-                    if (!window.confirm("Clear this session from the page? (This does not end it on the server.)"))
-                      return;
+                    if (!window.confirm("Clear this session from the page? (This does not end it on the server.)")) return;
                     setSession(null);
                     setStatus(null);
                     setStatusError(null);
+                    setActiveReport(null);
                   }}
                 >
                   Clear
@@ -857,9 +935,7 @@ export default function LiveQuizPage() {
                     <div className="rounded-2xl border-2 border-slate-200 bg-white p-3">
                       <div className="text-[11px] font-semibold text-slate-600">Question</div>
                       <div className="text-xl font-extrabold text-slate-900">
-                        {status?.total_questions
-                          ? `${(status.current_index ?? 0) + 1}/${status.total_questions}`
-                          : "—"}
+                        {status?.total_questions ? `${(status.current_index ?? 0) + 1}/${status.total_questions}` : "—"}
                       </div>
                     </div>
 
@@ -908,6 +984,136 @@ export default function LiveQuizPage() {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Results + History */}
+          <div className="mt-4 rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-lg font-bold text-slate-900">Results & History</div>
+                <div className="mt-1 text-xs text-slate-600">Reports are saved locally on this device.</div>
+              </div>
+
+              {session?.code ? (
+                <button
+                  className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-extrabold text-slate-800 hover:bg-slate-50"
+                  onClick={() => fetchResultsAndSave(session.code)}
+                >
+                  Refresh results
+                </button>
+              ) : null}
+            </div>
+
+            {activeReport ? (
+              <div className="mt-4 rounded-3xl border-2 border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-extrabold text-slate-900">{activeReport.title}</div>
+                  <div className="text-xs text-slate-600">{new Date(activeReport.saved_at).toLocaleString()}</div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-2xl border-2 border-slate-200 bg-white p-3">
+                    <div className="text-[11px] font-semibold text-slate-600">Joined</div>
+                    <div className="text-xl font-extrabold text-slate-900">{activeReport.summary.joined}</div>
+                  </div>
+                  <div className="rounded-2xl border-2 border-slate-200 bg-white p-3">
+                    <div className="text-[11px] font-semibold text-slate-600">Attempted</div>
+                    <div className="text-xl font-extrabold text-slate-900">{activeReport.summary.attempted_any}</div>
+                  </div>
+                  <div className="rounded-2xl border-2 border-slate-200 bg-white p-3">
+                    <div className="text-[11px] font-semibold text-slate-600">Questions</div>
+                    <div className="text-xl font-extrabold text-slate-900">{activeReport.summary.total_questions}</div>
+                  </div>
+                  <div className="rounded-2xl border-2 border-slate-200 bg-white p-3">
+                    <div className="text-[11px] font-semibold text-slate-600">Avg</div>
+                    <div className="text-xl font-extrabold text-slate-900">{activeReport.summary.avg_percent}%</div>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <div className="text-sm font-extrabold text-slate-900">Top 3</div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    {(activeReport.top3 || []).map((p, i) => (
+                      <div key={i} className="rounded-2xl border-2 border-slate-200 bg-white p-3">
+                        <div className="text-xs font-bold text-slate-600">#{i + 1}</div>
+                        <div className="mt-1 text-base font-extrabold text-slate-900">{p.name}</div>
+                        <div className="mt-1 text-xs text-slate-600">
+                          {activeReport.summary.scored_mode ? `${p.correct} correct` : `${p.answered} answered`} •{" "}
+                          {p.percent}%
+                        </div>
+                      </div>
+                    ))}
+                    {!activeReport.top3?.length ? (
+                      <div className="text-sm text-slate-600 sm:col-span-3">No results yet.</div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <div className="text-sm font-extrabold text-slate-900">Leaderboard</div>
+                  <div className="mt-2 overflow-hidden rounded-2xl border-2 border-slate-200 bg-white">
+                    {(activeReport.leaderboard || []).slice(0, 25).map((r, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between border-b border-slate-100 px-3 py-2 last:border-b-0"
+                      >
+                        <div className="text-sm font-semibold text-slate-900">
+                          {idx + 1}. {r.name}
+                        </div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {activeReport.summary.scored_mode ? r.correct : r.answered} • {r.percent}%
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                <div className="text-sm font-extrabold text-slate-900">No report selected</div>
+                <div className="mt-1 text-xs text-slate-600">End a session to generate a report automatically.</div>
+              </div>
+            )}
+
+            <div className="mt-5">
+              <div className="text-sm font-extrabold text-slate-900">History</div>
+              <div className="mt-2 overflow-hidden rounded-2xl border-2 border-slate-200 bg-white">
+                {history.length ? (
+                  history.map((h, idx) => (
+                    <div
+                      key={`${h.session_code}_${h.saved_at}_${idx}`}
+                      className="flex items-center justify-between border-b border-slate-100 px-3 py-2 last:border-b-0"
+                    >
+                      <button
+                        className="flex-1 text-left hover:opacity-90"
+                        onClick={() => setActiveReport(h)}
+                        type="button"
+                      >
+                        <div className="text-sm font-extrabold text-slate-900">{h.title}</div>
+                        <div className="text-xs text-slate-600">
+                          {new Date(h.saved_at).toLocaleString()} • {h.anonymous ? "Anonymous" : "Named"} • Avg {h.summary.avg_percent}%
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="ml-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-extrabold text-rose-800 hover:bg-rose-100"
+                        onClick={() => {
+                          const ok = window.confirm("Delete this saved report? This can't be undone.");
+                          if (!ok) return;
+                          deleteHistoryItem(h.saved_at, h.session_code);
+                        }}
+                        title="Delete report"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-3 py-4 text-sm text-slate-600">No history yet.</div>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Preview */}
