@@ -207,6 +207,7 @@ class LiveQuizCreateResponse(BaseModel):
 
 class LiveQuizJoinRequest(BaseModel):
     anon_id: Optional[str] = None  # allow client to send same anon_id again (optional)
+    name: Optional[str] = None     # ✅ student-entered name
 
 class LiveQuizJoinResponse(BaseModel):
     anon_id: str
@@ -246,7 +247,16 @@ def _time_left_seconds(session: LiveQuizSessionModel) -> Optional[int]:
 
 def _current_question(session: LiveQuizSessionModel) -> Optional[dict]:
     qs = _load_questions(session)
-    idx = int(session.current_index or -1)
+
+    # IMPORTANT: current_index can be 0, so do NOT use "or -1"
+    if session.current_index is None:
+        idx = -1
+    else:
+        try:
+            idx = int(session.current_index)
+        except Exception:
+            idx = -1
+
     if idx < 0 or idx >= len(qs):
         return None
     return qs[idx]
@@ -448,7 +458,13 @@ def livequiz_join(code: str, payload: LiveQuizJoinRequest, db: Session = Depends
     if existing:
         return {"anon_id": existing.anon_id, "nickname": existing.nickname}
 
-    nickname = None if s.anonymous else _kid_name()
+    provided = (payload.name or "").strip()
+
+    # If anonymous mode, do not store names
+    if s.anonymous:
+        nickname = None
+    else:
+        nickname = provided if provided else _kid_name()
 
     p = LiveQuizParticipantModel(session_id=s.id, anon_id=anon_id, nickname=nickname)
     db.add(p)
@@ -533,6 +549,314 @@ def livequiz_answer(code: str, payload: LiveQuizAnswerRequest, db: Session = Dep
 
     return {"message": "ok"}
 
+def _build_livequiz_results(db: Session, s: LiveQuizSessionModel) -> dict:
+    qs = _load_questions(s)
+    correct_map = {}
+    for q in qs:
+        qid = str(q.get("id", "")).strip()
+        corr = q.get("correct", None)
+        corr = (str(corr).strip().upper() if corr is not None else None)
+        if qid:
+            correct_map[qid] = corr if corr in ["A", "B", "C", "D"] else None
+
+    participants = (
+        db.query(LiveQuizParticipantModel)
+        .filter(LiveQuizParticipantModel.session_id == s.id)
+        .all()
+    )
+    pid_to_name = {
+        p.id: (p.nickname or ("Anonymous" if s.anonymous else "Player"))
+        for p in participants
+    }
+
+    answers = (
+        db.query(LiveQuizAnswerModel)
+        .filter(LiveQuizAnswerModel.session_id == s.id)
+        .all()
+    )
+
+    # Score per participant
+    by_pid = {}
+    for a in answers:
+        pid = int(a.participant_id)
+        qid = str(a.question_id)
+        choice = str(a.choice).strip().upper()
+        if pid not in by_pid:
+            by_pid[pid] = {"answered": 0, "correct": 0}
+        by_pid[pid]["answered"] += 1
+        corr = correct_map.get(qid, None)
+        if corr and choice == corr:
+            by_pid[pid]["correct"] += 1
+
+    total_qs = len(qs)
+    leaderboard = []
+    for p in participants:
+        stats = by_pid.get(p.id, {"answered": 0, "correct": 0})
+        correct = int(stats["correct"])
+        answered = int(stats["answered"])
+        percent = int(round((correct / total_qs) * 100)) if total_qs else 0
+        leaderboard.append({
+            "participant_id": p.id,
+            "name": pid_to_name.get(p.id, "Player"),
+            "correct": correct,
+            "answered": answered,
+            "total_questions": total_qs,
+            "percent": percent,
+        })
+
+    # Sort: most correct, then most answered, then name
+    leaderboard.sort(key=lambda r: (-r["correct"], -r["answered"], r["name"].lower()))
+
+    top3 = leaderboard[:3]
+
+    # Question stats (most common choice, difficulty)
+    # Build counts by question_id
+    q_counts = {}
+    for a in answers:
+        qid = str(a.question_id)
+        choice = str(a.choice).strip().upper()
+        if qid not in q_counts:
+            q_counts[qid] = {"A": 0, "B": 0, "C": 0, "D": 0, "total": 0}
+        if choice in ["A", "B", "C", "D"]:
+            q_counts[qid][choice] += 1
+            q_counts[qid]["total"] += 1
+
+    question_stats = []
+    for q in qs:
+        qid = str(q.get("id", ""))
+        prompt = str(q.get("prompt", ""))
+        counts = q_counts.get(qid, {"A": 0, "B": 0, "C": 0, "D": 0, "total": 0})
+        corr = correct_map.get(qid, None)
+        total = int(counts["total"])
+        correct_ct = int(counts.get(corr, 0)) if corr else 0
+        correct_rate = (correct_ct / total) if (total and corr) else None
+
+        # Most common wrong choice
+        most_wrong = None
+        if corr and total:
+            wrong_items = [(k, counts[k]) for k in ["A", "B", "C", "D"] if k != corr]
+            wrong_items.sort(key=lambda x: -x[1])
+            if wrong_items and wrong_items[0][1] > 0:
+                most_wrong = wrong_items[0][0]
+
+        question_stats.append({
+            "question_id": qid,
+            "prompt": prompt,
+            "correct": corr,
+            "counts": {k: int(counts[k]) for k in ["A", "B", "C", "D"]},
+            "total_answers": total,
+            "correct_rate": (float(correct_rate) if correct_rate is not None else None),
+            "most_common_wrong": most_wrong,
+        })
+
+    # Snapshot
+    joined = len(participants)
+    attempted_any = sum(1 for r in leaderboard if r["answered"] > 0)
+    avg_percent = int(round(sum(r["percent"] for r in leaderboard) / joined)) if joined else 0
+
+    # Hardest question = lowest correct_rate (ignoring None)
+    hardest = None
+    rated = [q for q in question_stats if isinstance(q["correct_rate"], float)]
+    if rated:
+        rated.sort(key=lambda q: q["correct_rate"])
+        hardest = {"question_id": rated[0]["question_id"], "prompt": rated[0]["prompt"], "correct_rate": rated[0]["correct_rate"]}
+
+    return {
+        "session_code": s.session_code,
+        "class_id": s.class_id,
+        "title": s.title,
+        "anonymous": s.anonymous,
+        "state": s.state,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "started_at": s.started_at.isoformat() if s.started_at else None,
+        "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+        "summary": {
+            "joined": joined,
+            "attempted_any": attempted_any,
+            "total_questions": total_qs,
+            "avg_percent": avg_percent,
+            "hardest_question": hardest,
+        },
+        "top3": top3,
+        "leaderboard": leaderboard,
+        "question_stats": question_stats,
+    }
+
+
+@app.get("/livequiz/{code}/results")
+def livequiz_results(code: str, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return _build_livequiz_results(db, s)
+
+def _build_livequiz_results(db: Session, s: LiveQuizSessionModel) -> dict:
+    qs = _load_questions(s)
+
+    # Map question_id -> correct option (A/B/C/D) if available
+    correct_map = {}
+    for q in qs:
+        qid = str(q.get("id", "")).strip()
+        corr = q.get("correct", None)
+        corr = (str(corr).strip().upper() if corr is not None else None)
+        if qid:
+            correct_map[qid] = corr if corr in ["A", "B", "C", "D"] else None
+
+    participants = (
+        db.query(LiveQuizParticipantModel)
+        .filter(LiveQuizParticipantModel.session_id == s.id)
+        .all()
+    )
+
+    # Name display (nickname stored; in anonymous mode nickname is None)
+    pid_to_name = {}
+    for p in participants:
+        if s.anonymous:
+            pid_to_name[p.id] = "Anonymous"
+        else:
+            pid_to_name[p.id] = (p.nickname or "Player")
+
+    answers = (
+        db.query(LiveQuizAnswerModel)
+        .filter(LiveQuizAnswerModel.session_id == s.id)
+        .all()
+    )
+
+    # Score per participant
+    by_pid = {}
+    for a in answers:
+        pid = int(a.participant_id)
+        qid = str(a.question_id)
+        choice = str(a.choice).strip().upper()
+
+        if pid not in by_pid:
+            by_pid[pid] = {"answered": 0, "correct": 0}
+
+        # count only valid choices
+        if choice in ["A", "B", "C", "D"]:
+            by_pid[pid]["answered"] += 1
+
+        corr = correct_map.get(qid, None)
+        if corr and choice == corr:
+            by_pid[pid]["correct"] += 1
+
+    total_qs = len(qs)
+    any_correct_keys = any(v in ["A", "B", "C", "D"] for v in correct_map.values())
+
+    leaderboard = []
+    for p in participants:
+        stats = by_pid.get(p.id, {"answered": 0, "correct": 0})
+        answered = int(stats["answered"])
+        correct = int(stats["correct"])
+
+        # If there are no correct answers defined, percent is based on participation
+        if any_correct_keys and total_qs:
+            percent = int(round((correct / total_qs) * 100))
+        else:
+            percent = int(round((answered / total_qs) * 100)) if total_qs else 0
+
+        leaderboard.append({
+            "participant_id": p.id,
+            "name": pid_to_name.get(p.id, "Player"),
+            "correct": correct,
+            "answered": answered,
+            "total_questions": total_qs,
+            "percent": percent,
+        })
+
+    # Sort: if correct keys exist, sort by correct then answered; otherwise answered then name
+    if any_correct_keys:
+        leaderboard.sort(key=lambda r: (-r["correct"], -r["answered"], r["name"].lower()))
+    else:
+        leaderboard.sort(key=lambda r: (-r["answered"], r["name"].lower()))
+
+    top3 = leaderboard[:3]
+
+    # Question stats: counts per option + correct rate when available
+    q_counts = {}
+    for a in answers:
+        qid = str(a.question_id)
+        choice = str(a.choice).strip().upper()
+        if qid not in q_counts:
+            q_counts[qid] = {"A": 0, "B": 0, "C": 0, "D": 0, "total": 0}
+        if choice in ["A", "B", "C", "D"]:
+            q_counts[qid][choice] += 1
+            q_counts[qid]["total"] += 1
+
+    question_stats = []
+    for q in qs:
+        qid = str(q.get("id", "")).strip()
+        prompt = str(q.get("prompt", "")).strip()
+        counts = q_counts.get(qid, {"A": 0, "B": 0, "C": 0, "D": 0, "total": 0})
+        corr = correct_map.get(qid, None)
+
+        total = int(counts["total"])
+        correct_ct = int(counts.get(corr, 0)) if corr else 0
+        correct_rate = (correct_ct / total) if (total and corr) else None
+
+        # most common wrong choice
+        most_wrong = None
+        if corr and total:
+            wrong_items = [(k, counts[k]) for k in ["A", "B", "C", "D"] if k != corr]
+            wrong_items.sort(key=lambda x: -x[1])
+            if wrong_items and wrong_items[0][1] > 0:
+                most_wrong = wrong_items[0][0]
+
+        question_stats.append({
+            "question_id": qid,
+            "prompt": prompt,
+            "correct": corr,
+            "counts": {k: int(counts[k]) for k in ["A", "B", "C", "D"]},
+            "total_answers": total,
+            "correct_rate": (float(correct_rate) if correct_rate is not None else None),
+            "most_common_wrong": most_wrong,
+        })
+
+    joined = len(participants)
+    attempted_any = sum(1 for r in leaderboard if r["answered"] > 0)
+    avg_percent = int(round(sum(r["percent"] for r in leaderboard) / joined)) if joined else 0
+
+    # hardest question = lowest correct_rate
+    hardest = None
+    rated = [q for q in question_stats if isinstance(q["correct_rate"], float)]
+    if rated:
+        rated.sort(key=lambda q: q["correct_rate"])
+        hardest = {
+            "question_id": rated[0]["question_id"],
+            "prompt": rated[0]["prompt"],
+            "correct_rate": rated[0]["correct_rate"],
+        }
+
+    return {
+        "session_code": s.session_code,
+        "class_id": s.class_id,
+        "title": s.title,
+        "anonymous": s.anonymous,
+        "state": s.state,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "started_at": s.started_at.isoformat() if s.started_at else None,
+        "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+        "summary": {
+            "joined": joined,
+            "attempted_any": attempted_any,
+            "total_questions": total_qs,
+            "avg_percent": avg_percent,
+            "hardest_question": hardest,
+            "scored_mode": bool(any_correct_keys),
+        },
+        "top3": top3,
+        "leaderboard": leaderboard,
+        "question_stats": question_stats,
+    }
+
+
+@app.get("/livequiz/{code}/results")
+def livequiz_results(code: str, db: Session = Depends(get_db)):
+    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return _build_livequiz_results(db, s)
 
 # =========================================================
 # FILES / UPLOADS (ABSOLUTE + STABLE)
@@ -1316,14 +1640,15 @@ def student_view(token: str, db: Session = Depends(get_db)):
         "class_name": cls.name,
         "subject": cls.subject,
         "posts": [
-            {
-                "id": p.id,
-                "author": p.author,
-                "content": p.content,
-                "created_at": p.created_at.isoformat() if p.created_at else None,
-            }
-            for p in posts
-        ],
+    {
+        "id": p.id,
+        "author": p.author,
+        "content": p.content,
+        "links": _links_to_list(getattr(p, "links", None)),  # ✅ add this
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+    for p in posts
+],
         "notes": [
             {
                 "id": n.id,

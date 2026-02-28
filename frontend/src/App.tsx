@@ -841,7 +841,7 @@ export default function App() {
             className="rounded-xl p-1 hover:bg-slate-100"
             title="Back to Dashboard"
           >
-            <img src={HomeLogo} alt="Elume" className="h-9 w-9 object-contain" />
+            <img src={ELogo2} alt="Elume" className="h-9 w-9 object-contain" />
           </button>
 
           <button
