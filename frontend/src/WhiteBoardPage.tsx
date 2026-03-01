@@ -675,6 +675,10 @@ export default function WhiteBoardPage() {
   const lineStartRef = useRef<{ x: number; y: number } | null>(null);
   // Pen smoothing (prevents “snapped” handwriting)
   const penPrevRef = useRef<{ x: number; y: number } | null>(null);
+  const snappedThisStrokeRef = useRef(false);
+  const penPendingRef = useRef<{ x: number; y: number }[]>([]);
+  const penRafRef = useRef<number | null>(null);
+  const lastPenXYRef = useRef<{ x: number; y: number } | null>(null);
 
 
 
@@ -736,8 +740,11 @@ export default function WhiteBoardPage() {
   // Insert PDF as image controls
   const [pdfInsertScale, setPdfInsertScale] = useState(1.0);
   const [bgUndoStack, setBgUndoStack] = useState<ImageData[]>([]);
-  const [inkUndoStack, setInkUndoStack] = useState<ImageData[]>([]);
-  const [inkRedoStack, setInkRedoStack] = useState<ImageData[]>([]);
+
+  type InkSnap = { y: number; h: number; data: ImageData };
+
+  const [inkUndoStack, setInkUndoStack] = useState<InkSnap[]>([]);
+  const [inkRedoStack, setInkRedoStack] = useState<InkSnap[]>([]);
 
   const [objUndoStack, setObjUndoStack] = useState<PlacedImage[][]>([]);
   const [objRedoStack, setObjRedoStack] = useState<PlacedImage[][]>([]);
@@ -767,6 +774,7 @@ export default function WhiteBoardPage() {
   const [gridMode, setGridMode] = useState<"full" | "half">("full");
   const [gridX, setGridX] = useState(24);
   const [gridY, setGridY] = useState(24);
+  const [gridTop, setGridTop] = useState<number | null>(null);
   const [gridApplied, setGridApplied] = useState(false);
 
   const [showAxesModal, setShowAxesModal] = useState(false);
@@ -778,6 +786,7 @@ export default function WhiteBoardPage() {
   const [rngMax, setRngMax] = useState(50);
   const [rngStep, setRngStep] = useState(5);
   const [axesApplied, setAxesApplied] = useState(false);
+  const [axesTop, setAxesTop] = useState<number | null>(null);
 
   // Styles
   const pill =
@@ -905,22 +914,38 @@ export default function WhiteBoardPage() {
   function endCalcDrag() {
     calcDragRef.current = null;
   }
-
-  function snapshotInk() {
+  function snapshotInkViewport(pad = 200) {
     const ink = inkCanvasRef.current;
     const ctx = inkCtxRef.current;
-    if (!ink || !ctx) return;
+    const container = containerRef.current;
+    if (!ink || !ctx || !container) return;
 
-    const snap = ctx.getImageData(0, 0, ink.width, ink.height);
-    setInkUndoStack((s) => [...s, snap]);
+    const dpr = window.devicePixelRatio || 1;
+
+    // Visible viewport in CSS px
+    const yCss = Math.max(0, Math.floor(container.scrollTop - pad));
+    const hCss = Math.min(
+      canvasHeight - yCss,
+      Math.floor(container.clientHeight + pad * 2)
+    );
+
+    // Convert to canvas pixel coords (since canvas is scaled by dpr)
+    const yPx = Math.floor(yCss * dpr);
+    const hPx = Math.max(1, Math.floor(hCss * dpr));
+
+    // Full width in pixels
+    const wPx = ink.width;
+
+    const snap = ctx.getImageData(0, yPx, wPx, hPx);
+
+    setInkUndoStack((s) => [...s, { y: yPx, h: hPx, data: snap }]);
     setInkRedoStack([]); // clear redo on new action
   }
 
-  function restoreInk(img: ImageData) {
+  function restoreInkSnap(snap: { y: number; h: number; data: ImageData }) {
     const ctx = inkCtxRef.current;
-    const ink = inkCanvasRef.current;
-    if (!ctx || !ink) return;
-    ctx.putImageData(img, 0, 0);
+    if (!ctx) return;
+    ctx.putImageData(snap.data, 0, snap.y);
   }
 
   function snapshotObjects() {
@@ -1048,6 +1073,20 @@ export default function WhiteBoardPage() {
     syncCanvasSize();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasHeight]);
+
+  // 🔥 Warm up canvas so first stroke feels instant
+  useEffect(() => {
+    const ctx = inkCtxRef.current;
+    if (!ctx) return;
+
+    ctx.save();
+    ctx.globalAlpha = 0.001;   // invisible stroke
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(1, 1);
+    ctx.stroke();
+    ctx.restore();
+  }, []);
 
   useEffect(() => {
     const onResize = () => syncCanvasSize();
@@ -1510,7 +1549,7 @@ export default function WhiteBoardPage() {
     if (!inkCtx) return;
 
     // Snapshot for undo (pen/eraser/line)
-    snapshotInk();
+    snappedThisStrokeRef.current = false;
     drawingRef.current = true;
     const { x, y } = getLocalXY(e);
 
@@ -1569,6 +1608,11 @@ export default function WhiteBoardPage() {
 
     if (!drawingRef.current) return;
 
+    if (!snappedThisStrokeRef.current) {
+      snappedThisStrokeRef.current = true;
+      snapshotInkViewport();
+    }
+
     const { x, y } = getLocalXY(e);
 
     // LINE TOOL: draw ONLY on preview canvas while moving
@@ -1596,22 +1640,12 @@ export default function WhiteBoardPage() {
 
     // Pen smoothing: quadratic midpoint curve
     if (tool === "pen") {
-      const prev = penPrevRef.current;
+      // Buffer points; actual drawing happens in flushPen() at most once per frame
+      penPendingRef.current.push({ x, y });
 
-      if (!prev) {
-        penPrevRef.current = { x, y };
-        inkCtx.lineTo(x, y);
-        inkCtx.stroke();
-        return;
+      if (penRafRef.current == null) {
+        penRafRef.current = requestAnimationFrame(flushPen);
       }
-
-      const midX = (prev.x + x) / 2;
-      const midY = (prev.y + y) / 2;
-
-      inkCtx.quadraticCurveTo(prev.x, prev.y, midX, midY);
-      inkCtx.stroke();
-
-      penPrevRef.current = { x, y };
       return;
     }
 
@@ -1695,21 +1729,36 @@ export default function WhiteBoardPage() {
   /* ---------- Undo / Redo (Ink + Objects) ---------- */
 
   // Snapshot the current ink canvas into the undo stack (and clear redo)
-  function snapshotInkForUndo() {
+  function snapshotInkForUndo(pad = 200) {
     const ink = inkCanvasRef.current;
     const ctx = inkCtxRef.current;
-    if (!ink || !ctx) return;
+    const container = containerRef.current;
+    if (!ink || !ctx || !container) return;
 
-    const snap = ctx.getImageData(0, 0, ink.width, ink.height);
-    setInkUndoStack((s) => [...s, snap]);
+    const dpr = window.devicePixelRatio || 1;
+
+    // Visible viewport on the scroll container (CSS px)
+    const yCss = Math.max(0, Math.floor(container.scrollTop - pad));
+    const hCss = Math.min(
+      canvasHeight - yCss,
+      Math.floor(container.clientHeight + pad * 2)
+    );
+
+    // Convert to canvas pixel coords (because canvas is scaled by DPR)
+    const yPx = Math.floor(yCss * dpr);
+    const hPx = Math.max(1, Math.floor(hCss * dpr));
+
+    const snap = ctx.getImageData(0, yPx, ink.width, hPx);
+
+    setInkUndoStack((s) => [...s, { y: yPx, h: hPx, data: snap }]);
     setInkRedoStack([]); // new action clears redo
   }
 
   // Apply an ImageData back onto the ink canvas
-  function applyInkSnapshot(img: ImageData) {
+  function applyInkSnapshot(snap: InkSnap) {
     const ctx = inkCtxRef.current;
     if (!ctx) return;
-    ctx.putImageData(img, 0, 0);
+    ctx.putImageData(snap.data, 0, snap.y);
   }
 
   // Snapshot placed images (objects) into undo stack (and clear redo)
@@ -1719,39 +1768,43 @@ export default function WhiteBoardPage() {
   }
 
   function undo() {
+    const ink = inkCanvasRef.current;
+    const ctx = inkCtxRef.current;
+    if (!ink || !ctx) return;
+
     setInkUndoStack((u) => {
       if (u.length === 0) return u;
 
       const prev = u[u.length - 1];
 
-      // Save current ink into redo before restoring
-      const ink = inkCanvasRef.current;
-      const ctx = inkCtxRef.current;
-      if (ink && ctx) {
-        const cur = ctx.getImageData(0, 0, ink.width, ink.height);
-        setInkRedoStack((r) => [...r, cur]);
-      }
+      // Save current region into redo
+      const curImg = ctx.getImageData(0, prev.y, ink.width, prev.h);
+      setInkRedoStack((r) => [...r, { y: prev.y, h: prev.h, data: curImg }]);
 
-      restoreInk(prev);
+      // Restore previous region
+      ctx.putImageData(prev.data, 0, prev.y);
+
       return u.slice(0, -1);
     });
   }
 
   function redo() {
+    const ink = inkCanvasRef.current;
+    const ctx = inkCtxRef.current;
+    if (!ink || !ctx) return;
+
     setInkRedoStack((r) => {
       if (r.length === 0) return r;
 
       const next = r[r.length - 1];
 
-      // Save current ink into undo before restoring
-      const ink = inkCanvasRef.current;
-      const ctx = inkCtxRef.current;
-      if (ink && ctx) {
-        const cur = ctx.getImageData(0, 0, ink.width, ink.height);
-        setInkUndoStack((u) => [...u, cur]);
-      }
+      // Save current region into undo
+      const curImg = ctx.getImageData(0, next.y, ink.width, next.h);
+      setInkUndoStack((u) => [...u, { y: next.y, h: next.h, data: curImg }]);
 
-      restoreInk(next);
+      // Restore redo region
+      ctx.putImageData(next.data, 0, next.y);
+
       return r.slice(0, -1);
     });
   }
@@ -1793,6 +1846,39 @@ export default function WhiteBoardPage() {
       bgCtx.stroke();
     }
     bgCtx.restore();
+  }
+
+  // 🔥 draw buffered pen points once per animation frame
+  function flushPen() {
+    penRafRef.current = null;
+
+    const inkCtx = inkCtxRef.current;
+    if (!inkCtx) {
+      penPendingRef.current = [];
+      return;
+    }
+
+    const pts = penPendingRef.current;
+    penPendingRef.current = [];
+    if (pts.length === 0) return;
+
+    for (const p of pts) {
+      const prev = penPrevRef.current;
+
+      if (!prev) {
+        penPrevRef.current = { x: p.x, y: p.y };
+        inkCtx.lineTo(p.x, p.y);
+        continue;
+      }
+
+      const midX = (prev.x + p.x) / 2;
+      const midY = (prev.y + p.y) / 2;
+
+      inkCtx.quadraticCurveTo(prev.x, prev.y, midX, midY);
+      penPrevRef.current = { x: p.x, y: p.y };
+    }
+
+    inkCtx.stroke();
   }
 
   /* ---------- Save ---------- */
@@ -2012,7 +2098,7 @@ export default function WhiteBoardPage() {
 
   const onClipDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // only left click / primary touch
-    if (e.button !== undefined && e.button !== 0) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
 
     e.preventDefault();
 
@@ -2142,7 +2228,7 @@ export default function WhiteBoardPage() {
     const left = gridMode === "half" ? Math.floor(container.clientWidth / 2) : 0;
 
     const viewH = container.clientHeight;
-    const top = container.scrollTop;
+    const top = gridTop ?? container.scrollTop;
     const h = viewH;
 
     const cols = Math.max(2, Math.min(80, Math.floor(gridX)));
@@ -2184,7 +2270,7 @@ export default function WhiteBoardPage() {
 
     const fullW = container.clientWidth;
     const viewH = container.clientHeight;
-    const top = container.scrollTop;
+    const top = axesTop ?? container.scrollTop;
 
     const left = axesMode === "half" ? Math.floor(fullW / 2) : 0;
     const width = axesMode === "half" ? Math.floor(fullW / 2) : fullW;
@@ -2270,8 +2356,10 @@ export default function WhiteBoardPage() {
     const container = containerRef.current;
     if (!ctx || !container) return;
 
-    // Grid and XY share the same overlay, so make them mutually exclusive
     setAxesApplied(false);
+
+    // ✅ remember where it was applied
+    setGridTop(container.scrollTop);
 
     drawGridOverlay();
     setGridApplied(true);
@@ -2282,7 +2370,9 @@ export default function WhiteBoardPage() {
     if (!gridApplied) return;
     clearOverlay();
     setGridApplied(false);
+    setGridTop(null); // ✅ reset snap position
   }
+
 
   /* ---------- XY Plane ---------- */
   function applyAxes() {
@@ -2302,6 +2392,9 @@ export default function WhiteBoardPage() {
     // XY and Grid share the same overlay, so make them mutually exclusive
     setGridApplied(false);
 
+    // ✅ remember where it was applied
+    setAxesTop(container.scrollTop);
+
     drawAxesOverlay();
     setAxesApplied(true);
     setShowAxesModal(false);
@@ -2311,6 +2404,7 @@ export default function WhiteBoardPage() {
     if (!axesApplied) return;
     clearOverlay();
     setAxesApplied(false);
+    setAxesTop(null);
   }
 
   async function toggleFullscreen() {
@@ -2658,6 +2752,8 @@ export default function WhiteBoardPage() {
                           cursor: snipMode ? "crosshair" : "default",
                           pointerEvents: snipMode ? "auto" : "none",
                           zIndex: 50,
+                          touchAction: "none",
+                          userSelect: "none",
                         }}
                         onPointerDown={snipMode ? onClipDown : undefined}
                         onPointerMove={snipMode ? onClipMove : undefined}

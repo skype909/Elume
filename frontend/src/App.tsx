@@ -19,10 +19,11 @@ import { getToken, clearToken } from "./api";
 import { apiFetch } from "./api";
 import WhiteBoardPage from "./WhiteBoardPage";
 import TeacherAdminPage from "./TeacherAdminPage";
+import TeacherPlanner from "./TeacherPlanner";
 
 
 import ELogo2 from "./assets/ELogo2.png";
-import HomeLogo from "./assets/Home Logo.png";
+import PlannerLogo from "./assets/Planner_Logo.png";
 
 
 type ClassItem = {
@@ -300,7 +301,6 @@ function Dashboard() {
   const headerTime = now.toLocaleTimeString("en-IE", {
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
   });
 
   // Design tokens
@@ -507,17 +507,47 @@ function Dashboard() {
           </div>
         )}
 
-        <div className="mb-5 flex flex-wrap items-center gap-3">
-          <button className={btnPrimary} type="button" onClick={openCreate}>
-            + Create Class
-          </button>
+        <div className="mb-5 flex flex-wrap items-center gap-3 w-full justify-between">
+          {/* Left side: Create button + helper text */}
+          <div className="flex flex-wrap items-center gap-3">
+            <button className={btnPrimary} type="button" onClick={openCreate}>
+              + Create Class
+            </button>
 
-          <div className="text-base font-semibold text-slate-700">
-            Drag tiles to arrange. Colour + order save on this device.
+            <div className="text-base font-semibold text-slate-700">
+              Drag tiles to arrange. Colour + order save on this device.
+            </div>
           </div>
 
-          <div className="ml-auto text-base font-extrabold text-slate-800">
-            {welcome || ""}
+          {/* Right side: Planner / Welcome card */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => navigate("/planner")}
+              title="Open Planner"
+              className="group flex items-center gap-3 rounded-3xl border-2 border-slate-200 bg-white px-4 py-2 shadow-sm hover:bg-slate-50 active:translate-y-[1px]"
+            >
+              <img
+                src={PlannerLogo}
+                alt="Planner"
+                className="h-10 w-10 object-contain"
+              />
+
+              <div className="text-left leading-tight">
+                <div className="text-[11px] font-semibold tracking-wide text-slate-500">
+                  Teacher Dashboard
+                </div>
+
+                <div className="text-lg font-extrabold tracking-tight text-slate-800">
+                  {welcome ? welcome.replace(/^Welcome\s*/i, "Welcome, ") : "Welcome"}
+                </div>
+
+                <div className="text-[11px] text-slate-500">
+                  Planner • Tasks • Week view
+                  <span className="ml-1 opacity-60 group-hover:opacity-100">→</span>
+                </div>
+              </div>
+            </button>
           </div>
         </div>
 
@@ -871,6 +901,7 @@ export default function App() {
         <Route path="/s/:token" element={<StudentClassPage />} />
         <Route path="/" element={<Dashboard />} />
         <Route path="/admin" element={<TeacherAdminPage />} />
+        <Route path="/planner" element={<TeacherPlanner />} />
       </Routes>
       {userEmail && (
         <div className="fixed bottom-3 right-3 z-50 rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">

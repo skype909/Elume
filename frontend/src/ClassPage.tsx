@@ -709,11 +709,25 @@ export default function ClassPage() {
   const pageSubtitle =
     loadingClass ? "Please wait" : classInfo ? classInfo.subject : "Class details not found";
 
-  const today = new Date();
-  const dayName = today.toLocaleDateString("en-IE", { weekday: "long" });
-  const dayNumber = today.getDate();
-  const monthName = today.toLocaleDateString("en-IE", { month: "long" });
+  // Live clock (updates every 30s so minutes stay accurate, no seconds shown)
+  const [now, setNow] = useState(() => new Date());
 
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  const dayName = now.toLocaleDateString("en-IE", { weekday: "long" });
+  const dayNumber = now.getDate();
+  const monthName = now.toLocaleDateString("en-IE", { month: "long" });
+  const timeNow = now.toLocaleTimeString("en-IE", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  // IMPORTANT: keep using `today` below for calendar logic, but base it on `now`
+  const today = now;
   function toYMD(d: Date) {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -970,10 +984,16 @@ export default function ClassPage() {
 
           {/* Date badge */}
           {/* Date badge + Bell */}
-          <div className="relative rounded-3xl border-2 border-slate-200 bg-white p-4 text-center shadow-[0_2px_0_rgba(15,23,42,0.06)] text-slate-900">
+          <div className="relative rounded-3xl border-2 border-slate-200 bg-white p-3 text-center shadow-[0_2px_0_rgba(15,23,42,0.06)] text-slate-900">
             <div className="text-sm text-slate-600 font-semibold">{dayName}</div>
             <div className="text-4xl font-extrabold leading-tight">{dayNumber}</div>
             <div className="text-sm text-slate-600 font-semibold">{monthName}</div>
+            <div className="text-xs text-slate-700 tracking-tight">
+              <span className="font-semibold">{timeNow.split(" ")[0]}</span>
+              <span className="text-[0.6rem] align-top ml-0.5 opacity-70">
+                {timeNow.split(" ")[1]}
+              </span>
+            </div>
           </div>
           <button
             type="button"
@@ -1296,8 +1316,6 @@ export default function ClassPage() {
 
   return (
     <div className="min-h-screen bg-emerald-100 p-6">
-      <div className="h-10 border-b-2 border-slate-200 bg-white" />
-
       <div className="mx-auto max-w-7xl px-4 py-6">
         {error && (
           <div className="mb-4 rounded-3xl border-2 border-red-200 bg-red-50 p-3 text-sm text-red-800">

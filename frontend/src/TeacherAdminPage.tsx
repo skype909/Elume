@@ -52,6 +52,25 @@ type MetaStore = Record<string, ClassMeta>;
 
 const DAYS: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
+// --- Match Dashboard colour palette (App.tsx) so timetable colours stay consistent ---
+const COLOURS = [
+  { name: "Emerald", bg: "bg-emerald-600", ring: "ring-emerald-200" },
+  { name: "Amber", bg: "bg-amber-500", ring: "ring-amber-200" },
+  { name: "Rose", bg: "bg-rose-600", ring: "ring-rose-200" },
+  { name: "Sky", bg: "bg-sky-600", ring: "ring-sky-200" },
+  { name: "Sunflower", bg: "bg-yellow-400", ring: "ring-yellow-200" },
+  { name: "Violet", bg: "bg-violet-700", ring: "ring-violet-200" },
+  { name: "Lime", bg: "bg-lime-500", ring: "ring-lime-200" },
+  { name: "Fuchsia", bg: "bg-fuchsia-600", ring: "ring-fuchsia-200" },
+  { name: "Orange", bg: "bg-orange-600", ring: "ring-orange-200" },
+  { name: "Slate", bg: "bg-slate-800", ring: "ring-slate-300" },
+];
+
+function defaultBgForClassId(classId: number) {
+  // Same approach as Dashboard: stable, deterministic per id
+  return COLOURS[classId % COLOURS.length]?.bg ?? "bg-emerald-600";
+}
+
 function toMinutes(hhmm: string) {
   const [h, m] = hhmm.split(":").map(Number);
   return h * 60 + m;
@@ -316,9 +335,23 @@ export default function TeacherAdminPage() {
 
   // Pull real classes + refresh colour meta (dashboard tile colours)
   useEffect(() => {
+    // Refresh meta now
     setMeta(loadMeta());
 
+    // Refresh meta again when returning to this tab (common: teacher edits colours on dashboard then comes back)
+    const onFocus = () => setMeta(loadMeta());
+
+    // Refresh meta if another tab updates it (or if dashboard updates and triggers storage event)
+    const onStorage = (e: StorageEvent) => {
+      // If you want to be extra strict, you can check e.key === metaKeyForUser()
+      setMeta(loadMeta());
+    };
+
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("storage", onStorage);
+
     let cancelled = false;
+
     apiFetch("/classes")
       .then((data) => {
         if (cancelled) return;
@@ -332,6 +365,27 @@ export default function TeacherAdminPage() {
           .filter((c) => Number.isFinite(c.id) && c.id > 0);
 
         setClasses(cleaned);
+
+        // ✅ Backfill missing colour meta for any class ids not yet stored (old classes)
+        const currentMeta = loadMeta();
+        let changed = false;
+
+        for (const cls of cleaned) {
+          const key = String(cls.id);
+          if (!currentMeta[key]?.color) {
+            currentMeta[key] = {
+              color: defaultBgForClassId(cls.id),
+              order: currentMeta[key]?.order ?? cls.id,
+            };
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          // Save + refresh state
+          localStorage.setItem(metaKeyForUser(), JSON.stringify(currentMeta));
+          setMeta(currentMeta);
+        }
       })
       .catch(() => {
         if (!cancelled) setClasses([]);
@@ -339,6 +393,8 @@ export default function TeacherAdminPage() {
 
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
@@ -352,10 +408,62 @@ export default function TeacherAdminPage() {
     ];
   }, [classes]);
 
+  useEffect(() => {
+    if (classes.length === 0) return;
+
+    // Build a fast lookup from label -> id
+    const labelToId = new Map<string, number>();
+    for (const c of classes) {
+      const label = `${c.name}${c.subject ? ` — ${c.subject}` : ""}`.trim();
+      labelToId.set(label, c.id);
+    }
+
+    let changed = false;
+
+    // Create a deep-ish copy only if we actually change something
+    const next: StoredAdminState = {
+      ...state,
+      schedule: { ...state.schedule },
+    };
+
+    for (const day of DAYS) {
+      const daySch = state.schedule[day];
+      let dayChanged = false;
+
+      const nextEntries = { ...daySch.entries };
+
+      for (const slot of daySch.slots) {
+        const e = nextEntries[slot.id];
+        if (!e) continue;
+
+        // If old saved entry has label but no id, recover id from label
+        if ((e.classId == null || e.classId === 0) && e.classLabel?.trim()) {
+          const recovered = labelToId.get(e.classLabel.trim());
+          if (recovered) {
+            nextEntries[slot.id] = { ...e, classId: recovered };
+            dayChanged = true;
+            changed = true;
+          }
+        }
+      }
+
+      if (dayChanged) {
+        next.schedule[day] = { ...daySch, entries: nextEntries };
+      }
+    }
+
+    if (changed) {
+      // Save once — this will permanently fix "old" timetable data
+      saveState({ ...next, updatedAt: new Date().toISOString() });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classes]);
+
   function tileBgForClassId(classId: number | null) {
     if (!classId) return "bg-white";
     const m = meta[String(classId)];
-    return m?.color ?? "bg-slate-200";
+    // If meta missing, fall back to Dashboard-style deterministic colour (not grey)
+    return m?.color ?? defaultBgForClassId(classId);
   }
 
   const card =
@@ -539,11 +647,10 @@ export default function TeacherAdminPage() {
                   <button
                     key={d}
                     type="button"
-                    className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${
-                      dayView === d
-                        ? "border-emerald-400 bg-emerald-50 text-emerald-900"
-                        : "border-slate-200 bg-white text-slate-800"
-                    }`}
+                    className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${dayView === d
+                      ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                      : "border-slate-200 bg-white text-slate-800"
+                      }`}
                     onClick={() => setDayView(d)}
                   >
                     {fmtDay(d)}
@@ -892,9 +999,8 @@ function DayCell({
         <button
           type="button"
           onClick={() => setEditing({ day, slotId: slot.id })}
-          className={`w-full text-left rounded-3xl p-3 ${tile} ${
-            isActive ? "ring-2 ring-emerald-300" : ""
-          }`}
+          className={`w-full text-left rounded-3xl p-3 ${tile} ${isActive ? "ring-2 ring-emerald-300" : ""
+            }`}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -938,9 +1044,12 @@ function DayCell({
       <button
         type="button"
         onClick={() => setEditing({ day, slotId: slot.id })}
-        className={`w-full text-left rounded-2xl border-2 ${
-          slot.kind === "lunch" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"
-        } p-2 ${isActive ? "ring-2 ring-emerald-300" : ""}`}
+        className={`w-full text-left rounded-2xl border-2 p-2 ${note
+            ? "border-red-400 bg-red-50"
+            : slot.kind === "lunch"
+              ? "border-amber-200 bg-amber-50"
+              : "border-slate-200 bg-slate-50"
+          } ${isActive ? "ring-2 ring-emerald-300" : ""}`}
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
