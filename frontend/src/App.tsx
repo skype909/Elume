@@ -474,9 +474,11 @@ function Dashboard() {
           <div className="flex items-center gap-5">
             <img src={ELogo2} alt="ELume" className="h-28 w-auto object-contain" />
             <div className="leading-tight">
-              <div className="text-5xl font-extrabold tracking-tight text-slate-700"
+              <div className="hidden md:block text-5xl font-extrabold tracking-tight text-slate-700"
                 style={{ textShadow: "0 3px 8px rgba(0,0,0,0.25)" }}> ELume </div>
-              <div className="text-base font-semibold text-slate-500">Learn, Grow, Succeed</div>
+              <div className="hidden md:block text-base font-semibold text-slate-500">
+                Learn, Grow, Succeed
+              </div>
             </div>
           </div>
 
@@ -839,7 +841,7 @@ function Dashboard() {
 export default function App() {
   const [isAuthed, setIsAuthed] = useState(!!localStorage.getItem("elume_token"));
   const userEmail = useMemo(() => getEmailFromToken(), [isAuthed]);
-  const userLabel = userEmail ? userEmail.split("@")[0] : "";
+  const userLabel = userEmail ?? "";
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -904,8 +906,11 @@ export default function App() {
         <Route path="/planner" element={<TeacherPlanner />} />
       </Routes>
       {userEmail && (
-        <div className="fixed bottom-3 right-3 z-50 rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">
-          Logged in as {userLabel}
+        <div className="fixed bottom-3 right-3 z-50 rounded-lg border border-slate-200 bg-white/90 px-2 py-1 text-[10px] leading-tight text-slate-600 shadow-sm">
+          <div className="opacity-70">Signed in</div>
+          <div className="font-semibold truncate max-w-[140px]">
+            {userEmail}
+          </div>
         </div>
       )}
     </>

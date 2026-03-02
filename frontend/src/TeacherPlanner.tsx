@@ -288,6 +288,7 @@ export default function TeacherPlanner() {
     const weekKey = useMemo(() => toYMD(weekMonday), [weekMonday]);
     const prevWeekMonday = useMemo(() => addWeeks(weekMonday, -1), [weekMonday]);
     const nextWeekMonday = useMemo(() => addWeeks(weekMonday, 1), [weekMonday]);
+    const todayISO = useMemo(() => toYMD(new Date()), []);
 
     const weekDays = useMemo(() => {
         // Mon..Fri
@@ -534,7 +535,7 @@ export default function TeacherPlanner() {
         );
     }
 
-    function DayHeader({ d }: { d: Date }) {
+    function DayHeader({ d, isToday }: { d: Date; isToday?: boolean }) {
         const iso = toYMD(d);
         const evs = eventsByDay.get(iso) || [];
         const hasEvents = evs.length > 0;
@@ -542,8 +543,15 @@ export default function TeacherPlanner() {
         return (
             <div className="flex items-center justify-between gap-2">
                 <div>
-                    <div className="text-sm font-extrabold tracking-tight">
-                        {d.toLocaleDateString("en-IE", { weekday: "long" })}
+                    <div className="flex items-center gap-2">
+                        <div className={["font-extrabold tracking-tight", isToday ? "text-base" : "text-sm"].join(" ")}>
+                            {d.toLocaleDateString("en-IE", { weekday: "long" })}
+                        </div>
+                        {isToday ? (
+                            <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+                                Today
+                            </span>
+                        ) : null}
                     </div>
                     <div className="text-xs text-slate-600">
                         {d.toLocaleDateString("en-IE", { day: "numeric", month: "short" })}
@@ -598,7 +606,7 @@ export default function TeacherPlanner() {
 
                     <div className="flex-1">
                         <div className="text-3xl font-extrabold tracking-tight text-slate-700"
-                style={{ textShadow: "0 3px 8px rgba(0,0,0,0.25)" }}>Teacher Planner </div>
+                            style={{ textShadow: "0 3px 8px rgba(0,0,0,0.25)" }}>Teacher Planner </div>
                         <div className="text-sm text-slate-600">
                             Weekly diary + tasks (Mon–Fri) • Click any line to expand
                         </div>
@@ -657,39 +665,51 @@ export default function TeacherPlanner() {
 
                         {/* Days grid */}
                         <div className="mt-5 grid gap-4 md:grid-cols-5">
-                            {weekDays.map((d, dayIndex) => (
-                                <div key={toYMD(d)} className="rounded-3xl border-2 border-slate-200 bg-slate-50 p-3">
-                                    <DayHeader d={d} />
+                            {weekDays.map((d, dayIndex) => {
+                                const isToday = toYMD(d) === todayISO;
 
-                                    <div className="mt-3 grid gap-2">
-                                        {Array.from({ length: 7 }).map((_, slotIndex) => {
-                                            const note = notesByCell.get(`${dayIndex}:${slotIndex}`);
-                                            return (
-                                                <button
-                                                    key={slotIndex}
-                                                    type="button"
-                                                    onClick={() => openSlot(dayIndex, slotIndex)}
-                                                    className={[
-                                                        "w-full text-left rounded-2xl border-2 px-3 py-2 transition",
-                                                        note ? "border-emerald-200 bg-white hover:bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-100",
-                                                    ].join(" ")}
-                                                >
-                                                    <div className="flex items-center justify-between gap-2">
-                                                        <div className="text-xs font-semibold text-slate-500">
-                                                            {slotIndex < 6 ? `Class ${slotIndex + 1}` : "Extra"}
+                                return (
+                                    <div
+                                        key={toYMD(d)}
+                                        className={[
+                                            "rounded-3xl border-2 p-3 transition-transform",
+                                            isToday
+                                                ? "border-emerald-500 bg-white shadow-lg ring-2 ring-emerald-200 scale-[1.03]"
+                                                : "border-slate-200 bg-slate-50",
+                                        ].join(" ")}
+                                    >
+                                        <DayHeader d={d} isToday={isToday} />
+
+                                        <div className="mt-3 grid gap-2">
+                                            {Array.from({ length: 7 }).map((_, slotIndex) => {
+                                                const note = notesByCell.get(`${dayIndex}:${slotIndex}`);
+                                                return (
+                                                    <button
+                                                        key={slotIndex}
+                                                        type="button"
+                                                        onClick={() => openSlot(dayIndex, slotIndex)}
+                                                        className={[
+                                                            "w-full text-left rounded-2xl border-2 px-3 py-2 transition",
+                                                            note ? "border-emerald-200 bg-white hover:bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-100",
+                                                        ].join(" ")}
+                                                    >
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <div className="text-xs font-semibold text-slate-500">
+                                                                {slotIndex < 6 ? `Class ${slotIndex + 1}` : "Extra"}
+                                                            </div>
+                                                            {note ? relatesPill(note.relatesTo) : <span className="text-[10px] text-slate-400">Empty</span>}
                                                         </div>
-                                                        {note ? relatesPill(note.relatesTo) : <span className="text-[10px] text-slate-400">Empty</span>}
-                                                    </div>
 
-                                                    <div className="mt-1 text-sm font-semibold text-slate-800">
-                                                        {note ? truncateOneLine(note.title || note.body, 28) : <span className="text-slate-400">Click to add…</span>}
-                                                    </div>
-                                                </button>
-                                            );
-                                        })}
+                                                        <div className="mt-1 text-sm font-semibold text-slate-800">
+                                                            {note ? truncateOneLine(note.title || note.body, 28) : <span className="text-slate-400">Click to add…</span>}
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
 
@@ -906,7 +926,7 @@ export default function TeacherPlanner() {
                 )}
 
                 {/* Tasks - sticky bottom-right */}
-                <div className="fixed bottom-5 right-5 z-30 w-[min(270px,92vw)]">
+                <div className="fixed bottom-16 right-3 z-40 w-[min(270px,92vw)]">
                     <div className="rounded-3xl border-2 border-slate-200 bg-white p-3 shadow-lg">
                         <div className="flex items-center justify-between gap-2">
                             <div>
@@ -957,18 +977,27 @@ export default function TeacherPlanner() {
                                     ) : (
                                         activeTasks.map((t) => (
                                             <div key={t.id} className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-2">
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <label className="flex items-start gap-2 min-w-0">
+                                                <div className="flex flex-col gap-2">
+                                                    {/* Top row: checkbox + text gets full width */}
+                                                    <label className="flex items-start gap-2">
                                                         <input
                                                             type="checkbox"
                                                             checked={t.done}
                                                             onChange={() => toggleTaskDone(t.id)}
                                                             className="mt-1"
                                                         />
-                                                        <div className="min-w-0">
-                                                            <div className={`text-sm font-semibold ${t.done ? "line-through text-slate-400" : "text-slate-800"}`}>
+
+                                                        <div className="min-w-0 flex-1">
+                                                            <div
+                                                                title={t.text}
+                                                                className={[
+                                                                    "text-[13px] font-semibold leading-snug whitespace-pre-wrap break-words",
+                                                                    t.done ? "line-through text-slate-400" : "text-slate-800",
+                                                                ].join(" ")}
+                                                            >
                                                                 {t.text}
                                                             </div>
+
                                                             <div className="mt-1 text-xs text-slate-600">
                                                                 {t.dueDateISO ? (
                                                                     <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">
@@ -981,7 +1010,8 @@ export default function TeacherPlanner() {
                                                         </div>
                                                     </label>
 
-                                                    <div className="flex gap-2 shrink-0">
+                                                    {/* Bottom row: buttons no longer steal text width */}
+                                                    <div className="flex justify-end gap-2">
                                                         <button
                                                             type="button"
                                                             onClick={() => archiveTask(t.id)}
@@ -1014,7 +1044,9 @@ export default function TeacherPlanner() {
                                         <div key={t.id} className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
                                             <div className="flex items-start justify-between gap-3">
                                                 <div className="min-w-0">
-                                                    <div className="text-sm font-semibold text-slate-800">{t.text}</div>
+                                                    <div title={t.text} className="text-[13px] font-semibold leading-snug whitespace-pre-wrap break-words text-slate-800">
+                                                        {t.text}
+                                                    </div>
                                                     <div className="mt-1 text-xs text-slate-600">
                                                         {t.dueDateISO ? `Due: ${t.dueDateISO}` : "No due date"}{" "}
                                                         {t.archivedAt ? `• Archived: ${new Date(t.archivedAt).toLocaleDateString("en-IE")}` : ""}
@@ -1043,10 +1075,6 @@ export default function TeacherPlanner() {
                                 )}
                             </div>
                         )}
-
-                        <div className="mt-3 text-[11px] text-slate-500">
-                            Stored locally for now. We can sync to teacher accounts in SQLite later.
-                        </div>
                     </div>
                 </div>
             </div>

@@ -67,10 +67,13 @@ class AuthToken(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
-def _make_token(user_id: int) -> str:
+def _make_token(user_id: int, email: str) -> str:
     exp = datetime.utcnow() + timedelta(days=JWT_EXPIRE_DAYS)
-    return jwt.encode({"sub": str(user_id), "exp": exp}, JWT_SECRET, algorithm=JWT_ALG)
-
+    return jwt.encode(
+        {"sub": str(user_id), "email": email, "exp": exp},
+        JWT_SECRET,
+        algorithm=JWT_ALG,
+    )
 # =========================================================
 # CORS
 # =========================================================
@@ -111,7 +114,7 @@ def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    return {"access_token": _make_token(user.id), "token_type": "bearer"}
+    return {"access_token": _make_token(user.id, user.email), "token_type": "bearer"}
 
 
 @app.post("/auth/login", response_model=AuthToken)
@@ -123,7 +126,7 @@ def auth_login(payload: AuthLogin, db: Session = Depends(get_db)):
     if not user or not PWD_CONTEXT.verify(password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    return {"access_token": _make_token(user.id), "token_type": "bearer"}
+    return {"access_token": _make_token(user.id, user.email), "token_type": "bearer"}
 
 def get_current_user(
     authorization: Optional[str] = Header(default=None),

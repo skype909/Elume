@@ -759,8 +759,10 @@ export default function WhiteBoardPage() {
   const [pdfViewScale, setPdfViewScale] = useState(1.25);
 
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pdfViewerRef = useRef<HTMLDivElement | null>(null); // ✅ the overflow-auto viewer container
   const pdfOverlayRef = useRef<HTMLDivElement | null>(null);
   const [pdfCanvasSize, setPdfCanvasSize] = useState({ w: 0, h: 0 });
+  const pdfPanelRef = useRef<HTMLDivElement | null>(null); // ✅ the scroll viewer container
 
   const clipDragRef = useRef(false);
   const clipStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -825,6 +827,14 @@ export default function WhiteBoardPage() {
     } catch {
       setCalcResult("Error");
     }
+  }
+
+  function forceBoardRedraw() {
+    requestAnimationFrame(() => {
+      void redrawImages();
+      if (gridApplied) drawGridOverlay();
+      else if (axesApplied) drawAxesOverlay();
+    });
   }
 
   function pressCalc(k: string) {
@@ -920,7 +930,7 @@ export default function WhiteBoardPage() {
     const container = containerRef.current;
     if (!ink || !ctx || !container) return;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getBoardDpr();
 
     // Visible viewport in CSS px
     const yCss = Math.max(0, Math.floor(container.scrollTop - pad));
@@ -953,7 +963,16 @@ export default function WhiteBoardPage() {
     setObjRedoStack([]); // clear redo on new action
   }
 
+  // ✅ One DPR rule for the whole whiteboard (performance + consistent coordinates)
+  function getBoardDpr() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = containerRef.current?.clientWidth ?? window.innerWidth;
 
+    // ✅ Large interactive whiteboards: reduce pixel load hard
+    const cap = w >= 1600 ? 1.25 : 1.5;
+
+    return Math.min(dpr, cap);
+  }
 
   /* ---------- Canvas sizing ---------- */
   const syncCanvasSize = () => {
@@ -965,10 +984,23 @@ export default function WhiteBoardPage() {
     if (!container || !bgCanvas || !previewCanvas || !inkCanvas || !imgCanvas)
       return;
 
-    const ratio = window.devicePixelRatio || 1;
+    const ratio = getBoardDpr();
     const width = container.clientWidth;
     const widthCss = container.clientWidth;
     const heightCss = canvasHeight;
+
+    // ✅ During fullscreen/tablet transitions the container can momentarily be 0px.
+    // If we resize the imgCanvas to 0, it wipes snips and redraw() can't paint.
+    if (widthCss < 20 || heightCss < 20) {
+      window.setTimeout(() => {
+        const c = containerRef.current;
+        if (c && c.clientWidth >= 20) {
+          syncCanvasSize();
+          forceBoardRedraw();
+        }
+      }, 80);
+      return;
+    }
 
     // Overlay canvas (grid/axes layer)
     const overlayCanvas = overlayCanvasRef.current;
@@ -1067,10 +1099,17 @@ export default function WhiteBoardPage() {
 
     // always clear preview
     previewCtx.clearRect(0, 0, width, canvasHeight);
+
+    // ✅ Resizing clears canvases → redraw snips + overlays
+    void redrawImages();
+
+    if (gridApplied) drawGridOverlay();
+    else if (axesApplied) drawAxesOverlay();
   };
 
   useEffect(() => {
     syncCanvasSize();
+    forceBoardRedraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasHeight]);
 
@@ -1153,75 +1192,39 @@ export default function WhiteBoardPage() {
   }
 
   async function redrawImages() {
-    const ctx = imgCtxRef.current;
+    const imgCanvas = imgCanvasRef.current;
+    const container = containerRef.current;
+    if (!imgCanvas || !container) return;
+
+    const ctx = imgCanvas.getContext("2d");
     if (!ctx) return;
 
-    const width = containerRef.current?.clientWidth ?? 0;
-    ctx.clearRect(0, 0, width, canvasHeight);
+    const widthCss = container.clientWidth;
+    const heightCss = canvasHeight;
 
+    // clear full board
+    ctx.clearRect(0, 0, widthCss, heightCss);
+
+    // ✅ If width is temporarily 0 during fullscreen transitions, wait and retry.
+    if (widthCss < 20 || heightCss < 20) {
+      window.setTimeout(() => {
+        void redrawImages();
+      }, 80);
+      return;
+    }
+
+    // draw everything at absolute board coordinates
     for (const p of placedImages) {
-      const img = await getCachedImage(p.src);
-      ctx.drawImage(img, p.x, p.y, p.w, p.h);
-
-      if (p.id === selectedImageId) {
-        // selection outline
-        ctx.save();
-        ctx.strokeStyle = "#2563eb";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(p.x, p.y, p.w, p.h);
-
-        const HANDLE = 14; // size of corner squares
-        const half = HANDLE / 2;
-
-        // corner handles (white fill, blue border)
-        const corners: Array<[number, number]> = [
-          [p.x, p.y],                 // nw
-          [p.x + p.w, p.y],           // ne
-          [p.x, p.y + p.h],           // sw
-          [p.x + p.w, p.y + p.h],     // se
-        ];
-
-        ctx.fillStyle = "white";
-        ctx.strokeStyle = "#2563eb";
-        ctx.lineWidth = 2;
-        for (const [cx, cy] of corners) {
-          ctx.beginPath();
-          ctx.rect(cx - half, cy - half, HANDLE, HANDLE);
-          ctx.fill();
-          ctx.stroke();
-        }
-
-        // delete box (top-right)
-        const XBOX = 22;
-        const xbx = p.x + p.w - XBOX;
-        const xby = p.y - XBOX; // slightly above top edge feels nicer
-        ctx.fillStyle = "rgba(239,68,68,0.95)"; // red-500-ish
-        ctx.strokeStyle = "white";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect(xbx, xby, XBOX, XBOX, 6);
-        ctx.fill();
-        ctx.stroke();
-
-        // X glyph
-        ctx.strokeStyle = "white";
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(xbx + 6, xby + 6);
-        ctx.lineTo(xbx + XBOX - 6, xby + XBOX - 6);
-        ctx.moveTo(xbx + XBOX - 6, xby + 6);
-        ctx.lineTo(xbx + 6, xby + XBOX - 6);
-        ctx.stroke();
-
-        ctx.restore();
-      }
-
+      try {
+        const img = await getCachedImage(p.src);
+        ctx.drawImage(img, p.x, p.y, p.w, p.h);
+      } catch { }
     }
   }
 
   useEffect(() => {
     redrawImages();
-  }, [placedImages, selectedImageId, canvasHeight]);
+  }, [placedImages, selectedImageId]);
 
   function stampTextToBoard(text: string) {
     const bgCtx = bgCtxRef.current;
@@ -1735,7 +1738,7 @@ export default function WhiteBoardPage() {
     const container = containerRef.current;
     if (!ink || !ctx || !container) return;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getBoardDpr();
 
     // Visible viewport on the scroll container (CSS px)
     const yCss = Math.max(0, Math.floor(container.scrollTop - pad));
@@ -1809,6 +1812,15 @@ export default function WhiteBoardPage() {
     });
   }
 
+  const repaintAfterLayout = () => {
+    requestAnimationFrame(() => {
+      // same as scroll repaint, but without changing scrollTop
+      if (gridApplied) drawGridOverlay();
+      else if (axesApplied) drawAxesOverlay();
+      if (placedImages.length) void redrawImages();
+    });
+  };
+
   /* ---------- Infinite-ish scroll / add pages ---------- */
   const onScroll = () => {
     const el = containerRef.current;
@@ -1816,8 +1828,12 @@ export default function WhiteBoardPage() {
     const nearBottom = el.scrollTop + el.clientHeight > el.scrollHeight - 500;
     if (nearBottom) setCanvasHeight((h) => Math.min(h + 2000, 30000));
     requestAnimationFrame(() => {
+      // ✅ keep overlays pinned
       if (gridApplied) drawGridOverlay();
       else if (axesApplied) drawAxesOverlay();
+
+      // ✅ scrolling currently “fixes” missing snips — make that explicit
+      if (placedImages.length) void redrawImages();
     });
   };
 
@@ -1882,6 +1898,7 @@ export default function WhiteBoardPage() {
   }
 
   /* ---------- Save ---------- */
+  /* ---------- Save ---------- */
   async function doSave() {
     const bg = bgCanvasRef.current;
     const ink = inkCanvasRef.current;
@@ -1892,6 +1909,7 @@ export default function WhiteBoardPage() {
 
     try {
       const width = container.clientWidth;
+
       const out = document.createElement("canvas");
       out.width = width;
       out.height = canvasHeight;
@@ -1899,7 +1917,134 @@ export default function WhiteBoardPage() {
       const outCtx = out.getContext("2d");
       if (!outCtx) throw new Error("Could not create export canvas");
 
+      // 1) Background
       outCtx.drawImage(bg, 0, 0, width, canvasHeight);
+
+      // 2) Placed images (PDF inserts + snips) — draw ALL, not just viewport
+      for (const p of placedImages) {
+        try {
+          const img = await getCachedImage(p.src);
+          outCtx.drawImage(img, p.x, p.y, p.w, p.h);
+        } catch {
+          // ignore a single broken image
+        }
+      }
+
+      // 3) Grid / XY overlays (draw directly into export)
+      if (gridApplied) {
+        const fullW = width;
+        const top = gridTop ?? 0;
+        const viewH = container.clientHeight;
+
+        const drawW = gridMode === "half" ? Math.floor(fullW / 2) : fullW;
+        const left = gridMode === "half" ? Math.floor(fullW / 2) : 0;
+
+        const cols = Math.max(2, Math.min(80, Math.floor(gridX)));
+        const rows = Math.max(2, Math.min(80, Math.floor(gridY)));
+
+        const cellW = drawW / cols;
+        const cellH = viewH / rows;
+
+        outCtx.save();
+        outCtx.globalCompositeOperation = "source-over";
+        outCtx.strokeStyle = "rgba(15,23,42,0.18)";
+        outCtx.lineWidth = 1;
+
+        for (let c = 0; c <= cols; c++) {
+          const x = left + c * cellW;
+          outCtx.beginPath();
+          outCtx.moveTo(x, top);
+          outCtx.lineTo(x, top + viewH);
+          outCtx.stroke();
+        }
+        for (let r = 0; r <= rows; r++) {
+          const y = top + r * cellH;
+          outCtx.beginPath();
+          outCtx.moveTo(left, y);
+          outCtx.lineTo(left + drawW, y);
+          outCtx.stroke();
+        }
+        outCtx.restore();
+      } else if (axesApplied) {
+        const fullW = width;
+        const viewH = container.clientHeight;
+        const top = axesTop ?? 0;
+
+        const left = axesMode === "half" ? Math.floor(fullW / 2) : 0;
+        const drawW = axesMode === "half" ? Math.floor(fullW / 2) : fullW;
+
+        const x0 = left;
+        const y0 = top;
+        const x1 = left + drawW;
+        const y1 = top + viewH;
+
+        const mapX = (x: number) => x0 + ((x - domMin) / (domMax - domMin)) * (x1 - x0);
+        const mapY = (y: number) => y1 - ((y - rngMin) / (rngMax - rngMin)) * (y1 - y0);
+
+        outCtx.save();
+        outCtx.globalCompositeOperation = "source-over";
+
+        // dots
+        outCtx.fillStyle = "rgba(15,23,42,0.25)";
+        const dotR = 1.2;
+        for (let x = domMin; x <= domMax + 1e-9; x += domStep) {
+          for (let y = rngMin; y <= rngMax + 1e-9; y += rngStep) {
+            const px = mapX(x);
+            const py = mapY(y);
+            outCtx.beginPath();
+            outCtx.arc(px, py, dotR, 0, Math.PI * 2);
+            outCtx.fill();
+          }
+        }
+
+        // axes + labels
+        outCtx.strokeStyle = "rgba(15,23,42,0.6)";
+        outCtx.lineWidth = 2;
+        outCtx.fillStyle = "#0f172a";
+        outCtx.font = "12px sans-serif";
+
+        const xAxisY = Math.min(y1 - 18, Math.max(y0 + 2, mapY(0)));
+        const yAxisX = Math.min(x1 - 6, Math.max(x0 + 18, mapX(0)));
+
+        outCtx.textAlign = "center";
+        outCtx.textBaseline = "top";
+        for (let x = domMin; x <= domMax + 1e-9; x += domStep) {
+          if (Math.abs(x) < 1e-9) continue;
+          const px = mapX(x);
+          outCtx.fillText(String(x), px, xAxisY + 6);
+        }
+
+        outCtx.textAlign = "right";
+        outCtx.textBaseline = "middle";
+        for (let y = rngMin; y <= rngMax + 1e-9; y += rngStep) {
+          if (Math.abs(y) < 1e-9) continue;
+          const py = mapY(y);
+          outCtx.fillText(String(y), yAxisX - 8, py);
+        }
+
+        const zeroYPx = mapY(0);
+
+        if (domMin <= 0 && 0 <= domMax) {
+          const px = mapX(0);
+          outCtx.fillText("0", px, zeroYPx + 4);
+          outCtx.beginPath();
+          outCtx.moveTo(px, y0);
+          outCtx.lineTo(px, y1);
+          outCtx.stroke();
+        }
+
+        if (rngMin <= 0 && 0 <= rngMax) {
+          const py = mapY(0);
+          outCtx.beginPath();
+          outCtx.moveTo(x0, py);
+          outCtx.lineTo(x1, py);
+          outCtx.stroke();
+        }
+
+        outCtx.restore();
+      }
+
+      // 4) Ink
       outCtx.drawImage(ink, 0, 0, width, canvasHeight);
 
       const blob: Blob = await new Promise((resolve, reject) => {
@@ -1931,7 +2076,6 @@ export default function WhiteBoardPage() {
       setSaving(false);
     }
   }
-
   /* ---------- Import list ---------- */
   async function loadImportList() {
     setImportLoading(true);
@@ -1970,16 +2114,58 @@ export default function WhiteBoardPage() {
 
   useEffect(() => {
     if (!importedPdf || !showPdfPanel) return;
-    renderPdfToViewer(pdfPageNum);
+
+    let rafId: number | null = null;
+    let tId: number | null = null;
+    let ro: ResizeObserver | null = null;
+
+    const schedule = () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        if (tId != null) window.clearTimeout(tId);
+        tId = window.setTimeout(() => {
+          renderPdfToViewer(pdfPageNum);
+        }, 60);
+      });
+    };
+
+    const onResize = () => schedule();
+    const onFs = () => {
+      schedule();
+      // ✅ keepalive burst (panels can miss resize events)
+      let n = 0;
+      const burst = window.setInterval(() => {
+        n += 1;
+        renderPdfToViewer(pdfPageNum);
+        if (n >= 10) window.clearInterval(burst);
+      }, 120);
+    };
+
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    document.addEventListener("fullscreenchange", onFs);
+    window.visualViewport?.addEventListener("resize", onResize);
+
+    // ✅ Observe the actual overflow-auto viewer (the thing renderPdfToViewer measures)
+    if (pdfViewerRef.current) {
+      ro = new ResizeObserver(() => schedule());
+      ro.observe(pdfViewerRef.current);
+    }
+
+    // initial
+    schedule();
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+      document.removeEventListener("fullscreenchange", onFs);
+      window.visualViewport?.removeEventListener("resize", onResize);
+      if (rafId != null) cancelAnimationFrame(rafId);
+      if (tId != null) window.clearTimeout(tId);
+      ro?.disconnect();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importedPdf, showPdfPanel, pdfPageNum, pdfViewScale]);
-
-  useEffect(() => {
-    if (!importedPdf) return;
-    setPdfPageNum(1);
-    setClipRect(null);
-  }, [importedPdf]);
-
   /* ---------- Insert PDF onto board (page 1 as image) ---------- */
   async function insertPdfPage1() {
     if (!importedPdf) return;
@@ -2001,7 +2187,7 @@ export default function WhiteBoardPage() {
       const width = container.clientWidth;
       const viewport0 = page.getViewport({ scale: 1.0 });
       const fitScale = (width / viewport0.width) * pdfInsertScale;
-      const dpr = Math.min(3, window.devicePixelRatio || 1); // cap to avoid huge memory use
+      const dpr = getBoardDpr();// cap to avoid huge memory use
       const viewportCss = page.getViewport({ scale: fitScale });          // size you want on the board
       const viewportHiDpi = page.getViewport({ scale: fitScale * dpr });  // extra pixels for sharpness
 
@@ -2047,43 +2233,94 @@ export default function WhiteBoardPage() {
     }
   }
 
+  // Cache the currently loaded PDF doc so resize/fullscreen rerenders are instant
+  const pdfDocRef = useRef<any>(null);
+  const pdfUrlRef = useRef<string | null>(null);
+  const pdfRenderTokenRef = useRef(0); // cancels stale async renders
+
   async function renderPdfToViewer(pageNum: number) {
     if (!importedPdf) return;
 
     const canvas = pdfCanvasRef.current;
     if (!canvas) return;
 
+    const viewer = pdfViewerRef.current;
+    if (!viewer) return;
+
+    // During fullscreen/orientation/tablet-mode transitions the panel can be 0px for a moment.
+    // If we render then, the canvas gets cleared and stays blank.
+    const parentW = viewer.clientWidth;
+    const parentH = viewer.clientHeight;
+    if (parentW < 20 || parentH < 20) {
+      // Fullscreen/tablet/orientation transitions often make the panel 0px temporarily.
+      // Retry a few times so the PDF reappears once layout stabilises.
+      const tries = 10;
+      let n = 0;
+
+      const retry = () => {
+        n += 1;
+
+        const c = pdfCanvasRef.current;
+        const v = pdfViewerRef.current;
+        if (!c || !v) return;
+
+        if (v.clientWidth >= 20 && v.clientHeight >= 20) {
+          renderPdfToViewer(pageNum);
+          return;
+        }
+        if (n < tries) {
+          setTimeout(retry, 80);
+        }
+      };
+
+      setTimeout(retry, 80);
+      return;
+    }
+
+    const token = ++pdfRenderTokenRef.current;
+
     const pdfjsLib = await loadPdfJs();
     const pdfUrl = resolveFileUrl(importedPdf.item.file_url);
 
-    const loadingTask = pdfjsLib.getDocument(pdfUrl);
-    const pdf = await loadingTask.promise;
+    // Load once per PDF
+    if (!pdfDocRef.current || pdfUrlRef.current !== pdfUrl) {
+      pdfUrlRef.current = pdfUrl;
+      const loadingTask = pdfjsLib.getDocument(pdfUrl);
+      pdfDocRef.current = await loadingTask.promise;
+    }
 
+    if (token !== pdfRenderTokenRef.current) return;
+
+    const pdf = pdfDocRef.current;
     setPdfNumPages(pdf.numPages);
 
     const p = Math.max(1, Math.min(pageNum, pdf.numPages));
     const page = await pdf.getPage(p);
 
-    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    // Fit to panel width but keep your zoom control (pdfViewScale)
+    const viewport1 = page.getViewport({ scale: 1 });
+    const fitScale = (parentW / viewport1.width) * pdfViewScale;
 
-    const viewportCss = page.getViewport({ scale: pdfViewScale });
-    const viewportHiDpi = page.getViewport({ scale: pdfViewScale * dpr });
+    const dpr = getBoardDpr();
+    const viewportCss = page.getViewport({ scale: fitScale });
+    const viewportHiDpi = page.getViewport({ scale: fitScale * dpr });
 
+    canvas.style.width = `${Math.floor(viewportCss.width)}px`;
+    canvas.style.height = `${Math.floor(viewportCss.height)}px`;
     canvas.width = Math.floor(viewportHiDpi.width);
     canvas.height = Math.floor(viewportHiDpi.height);
 
-    // keep the on-screen size the same
-    canvas.style.width = `${Math.floor(viewportCss.width)}px`;
-    canvas.style.height = `${Math.floor(viewportCss.height)}px`;
     setPdfCanvasSize({ w: Math.floor(viewportCss.width), h: Math.floor(viewportCss.height) });
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     await page.render({ canvasContext: ctx, viewport: viewportHiDpi }).promise;
 
+    if (token !== pdfRenderTokenRef.current) return;
 
     setPdfPageNum(p);
     setClipRect(null);
@@ -2214,7 +2451,13 @@ export default function WhiteBoardPage() {
     const ctx = overlayCtxRef.current;
     const container = containerRef.current;
     if (!ctx || !container) return;
-    ctx.clearRect(0, 0, container.clientWidth, canvasHeight);
+
+    // Only clear the visible area (+ padding) instead of the full tall canvas
+    const pad = 300;
+    const y0 = Math.max(0, Math.floor(container.scrollTop - pad));
+    const h = Math.floor(container.clientHeight + pad * 2);
+
+    ctx.clearRect(0, y0, container.clientWidth, h);
   }
 
   function drawGridOverlay() {
@@ -2423,9 +2666,24 @@ export default function WhiteBoardPage() {
   }
 
   useEffect(() => {
-    const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    const onFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+
+      // ✅ Force a resize/redraw after fullscreen transition settles
+      setTimeout(() => {
+        syncCanvasSize();
+        forceBoardRedraw();
+      }, 120);
+
+      setTimeout(() => {
+        syncCanvasSize();
+        forceBoardRedraw();
+      }, 600);
+    };
+
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Ensure scrolling still works in fullscreen (some layouts/global css can force overflow hidden)
@@ -2733,6 +2991,7 @@ export default function WhiteBoardPage() {
                     </div>
 
                     <div
+                      ref={pdfViewerRef}
                       className="relative flex-1 min-h-0 overflow-auto overscroll-contain rounded-xl border border-slate-200 bg-white"
                       onWheel={(e) => {
                         // Ensure trackpad/mouse wheel scrolls THIS viewer, not the page behind it
