@@ -1494,9 +1494,6 @@ def delete_test(test_id: int, db: Session = Depends(get_db)):
     return {"message": "Test deleted"}
 
 # -------------------------
-# Calendar Routes
-# -------------------------
-# -------------------------
 # Calendar Routes (single canonical source of truth)
 # - class_id = NULL => global event
 # - class_id = <int> => class event
@@ -1507,33 +1504,74 @@ def list_calendar_events(
     class_id: Optional[int] = None,
     global_only: bool = False,
     db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
 ):
-    q = db.query(models.CalendarEvent)
+    # Base query: ONLY this user's events
+    q = db.query(models.CalendarEvent).filter(
+        models.CalendarEvent.owner_user_id == user.id
+    )
 
+    # Global only (personal/global events for this user)
     if global_only:
         return q.filter(models.CalendarEvent.class_id.is_(None)).all()
 
-    # If class_id provided, return (global + this class). Otherwise return all.
+    # If class_id provided, return (global + this class) for this user
     if class_id is not None:
+        # ✅ Optional hardening: ensure the class belongs to this user
+        cls = db.query(ClassModel).filter(
+            ClassModel.id == class_id,
+            ClassModel.owner_user_id == user.id
+        ).first()
+        if not cls:
+            raise HTTPException(status_code=404, detail="Class not found")
+
         return q.filter(
             (models.CalendarEvent.class_id.is_(None))
             | (models.CalendarEvent.class_id == class_id)
         ).all()
 
+    # Otherwise: all events for this user
     return q.all()
 
 
 # Backwards-compatible endpoint (used by older pages)
 @app.get("/classes/{class_id}/calendar-events", response_model=list[schemas.CalendarEventOut])
-def get_calendar_events_for_class(class_id: int, db: Session = Depends(get_db)):
+def get_calendar_events_for_class(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    # ✅ Ensure class belongs to this user
+    cls = db.query(ClassModel).filter(
+        ClassModel.id == class_id,
+        ClassModel.owner_user_id == user.id
+    ).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    # Return only THIS user's events for that class
     return db.query(models.CalendarEvent).filter(
+        models.CalendarEvent.owner_user_id == user.id,
         models.CalendarEvent.class_id == class_id
     ).all()
 
 
 @app.post("/calendar-events", response_model=schemas.CalendarEventOut)
-def create_calendar_event(event: schemas.CalendarEventCreate, db: Session = Depends(get_db)):
-    new_event = models.CalendarEvent(**event.dict())
+def create_calendar_event(
+    event: schemas.CalendarEventCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    # ✅ Optional hardening: if class_id set, ensure it belongs to this user
+    if event.class_id is not None:
+        cls = db.query(ClassModel).filter(
+            ClassModel.id == event.class_id,
+            ClassModel.owner_user_id == user.id
+        ).first()
+        if not cls:
+            raise HTTPException(status_code=404, detail="Class not found")
+
+    new_event = models.CalendarEvent(**event.dict(), owner_user_id=user.id)
     db.add(new_event)
     db.commit()
     db.refresh(new_event)
@@ -1541,11 +1579,29 @@ def create_calendar_event(event: schemas.CalendarEventCreate, db: Session = Depe
 
 
 @app.put("/calendar-events/{event_id}", response_model=schemas.CalendarEventOut)
-def update_calendar_event(event_id: int, event: schemas.CalendarEventCreate, db: Session = Depends(get_db)):
-    db_event = db.query(models.CalendarEvent).get(event_id)
+def update_calendar_event(
+    event_id: int,
+    event: schemas.CalendarEventCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    # ✅ Only allow editing your own events
+    db_event = db.query(models.CalendarEvent).filter(
+        models.CalendarEvent.id == event_id,
+        models.CalendarEvent.owner_user_id == user.id
+    ).first()
 
     if not db_event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # ✅ Optional hardening: if moving to a class, ensure class belongs to this user
+    if event.class_id is not None:
+        cls = db.query(ClassModel).filter(
+            ClassModel.id == event.class_id,
+            ClassModel.owner_user_id == user.id
+        ).first()
+        if not cls:
+            raise HTTPException(status_code=404, detail="Class not found")
 
     for key, value in event.dict().items():
         setattr(db_event, key, value)
@@ -1555,6 +1611,24 @@ def update_calendar_event(event_id: int, event: schemas.CalendarEventCreate, db:
     return db_event
 
 
+@app.delete("/calendar-events/{event_id}")
+def delete_calendar_event(
+    event_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    # ✅ Only allow deleting your own events
+    db_event = db.query(models.CalendarEvent).filter(
+        models.CalendarEvent.id == event_id,
+        models.CalendarEvent.owner_user_id == user.id
+    ).first()
+
+    if not db_event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    db.delete(db_event)
+    db.commit()
+    return {"message": "Deleted"}
 
 @app.post("/student-access/{class_id}")
 def create_student_access(
@@ -1781,18 +1855,6 @@ def create_students_bulk(class_id: int, payload: StudentBulkCreate, db: Session 
         db.refresh(s)
 
     return to_create
-
-@app.delete("/calendar-events/{event_id}")
-def delete_calendar_event(event_id: int, db: Session = Depends(get_db)):
-    event = db.query(models.CalendarEvent).get(event_id)
-
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    db.delete(event)
-    db.commit()
-
-    return {"message": "Deleted"}
 
 # =========================================================
 # ASSESSMENTS (class tests/results tracker) — separate from PDF "tests"

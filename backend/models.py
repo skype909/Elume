@@ -162,6 +162,10 @@ class CalendarEvent(Base):
     event_type = Column(String, default="general")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    owner_user_id = Column(Integer, nullable=False, index=True)
+
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
 
 class SchoolDay(Base):
     __tablename__ = "school_days"
