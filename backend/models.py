@@ -17,6 +17,22 @@ class UserModel(Base):
 
     classes = relationship("ClassModel", back_populates="owner")
 
+# =========================================================
+# Teacher Admin (Profile + Timetable) persistent state
+# One row per user
+# =========================================================
+class TeacherAdminStateModel(Base):
+    __tablename__ = "teacher_admin_state"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+
+    # store the entire TeacherAdminPage state as JSON text
+    state_json = Column(Text, nullable=False)
+
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
 class ClassModel(Base):
     __tablename__ = "classes"
 

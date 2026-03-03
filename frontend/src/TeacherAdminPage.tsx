@@ -230,6 +230,41 @@ export default function TeacherAdminPage() {
     }
   });
 
+  const [loadedFromServer, setLoadedFromServer] = useState(false);
+
+  // Load synced state from server once (so timetable follows you across devices)
+  useEffect(() => {
+    let cancelled = false;
+
+    apiFetch("/teacher-admin/state")
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+
+        const serverState = data?.state;
+        // If server has a valid saved state, prefer it over localStorage
+        if (serverState?.profile && serverState?.schedule) {
+          setState(serverState as StoredAdminState);
+          // also refresh local cache so future loads are instant
+          try {
+            localStorage.setItem(storageKey(), JSON.stringify(serverState));
+          } catch { }
+        }
+
+        setLoadedFromServer(true);
+      })
+      .catch(() => {
+        // If offline / request blocked, just keep localStorage version
+        if (!cancelled) setLoadedFromServer(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
   const [savedToast, setSavedToast] = useState<string | null>(null);
 
   const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -259,10 +294,28 @@ export default function TeacherAdminPage() {
   }, [editing, state.schedule]);
 
   function saveState(next: StoredAdminState) {
-    localStorage.setItem(storageKey(), JSON.stringify(next));
+    // 1) local instant cache (works offline)
+    try {
+      localStorage.setItem(storageKey(), JSON.stringify(next));
+    } catch { }
+
+    // 2) update UI immediately
     setState(next);
+
+    // 3) toast
     setSavedToast("Saved ✓");
     window.setTimeout(() => setSavedToast(null), 1200);
+
+    // 4) sync to server (only after we've tried loading once to avoid overwriting newer server data on first paint)
+    if (loadedFromServer) {
+      apiFetch("/teacher-admin/state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: next }),
+      }).catch(() => {
+        // silent fail (offline etc). localStorage still holds it.
+      });
+    }
   }
 
   function touch(next: StoredAdminState) {
@@ -1045,10 +1098,10 @@ function DayCell({
         type="button"
         onClick={() => setEditing({ day, slotId: slot.id })}
         className={`w-full text-left rounded-2xl border-2 p-2 ${note
-            ? "border-red-400 bg-red-50"
-            : slot.kind === "lunch"
-              ? "border-amber-200 bg-amber-50"
-              : "border-slate-200 bg-slate-50"
+          ? "border-red-400 bg-red-50"
+          : slot.kind === "lunch"
+            ? "border-amber-200 bg-amber-50"
+            : "border-slate-200 bg-slate-50"
           } ${isActive ? "ring-2 ring-emerald-300" : ""}`}
       >
         <div className="flex items-start justify-between gap-2">

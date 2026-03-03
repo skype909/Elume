@@ -134,3 +134,14 @@ class AIParseEventRequest(BaseModel):
 class AIParseEventResponse(BaseModel):
     draft: CalendarEventCreate
     warnings: List[str] = []
+
+# -------------------------
+# Teacher Admin State
+# -------------------------
+
+class TeacherAdminStateOut(BaseModel):
+    state: dict
+    updated_at: Optional[datetime] = None
+
+class TeacherAdminStateSave(BaseModel):
+    state: dict

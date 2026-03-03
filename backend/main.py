@@ -154,6 +154,86 @@ def get_current_user(
 # =========================================================
 Base.metadata.create_all(bind=engine)
 
+# =========================================================
+# TEACHER ADMIN STATE (Profile + Timetable) — synced across devices
+# =========================================================
+from sqlalchemy.exc import IntegrityError  # add near imports if you prefer
+
+@app.get("/teacher-admin/state", response_model=schemas.TeacherAdminStateOut)
+def get_teacher_admin_state(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    row = (
+        db.query(models.TeacherAdminStateModel)
+        .filter(models.TeacherAdminStateModel.owner_user_id == user.id)
+        .first()
+    )
+    if not row:
+        return {"state": {}, "updated_at": None}
+
+    try:
+        parsed = json.loads(row.state_json or "{}")
+    except Exception:
+        parsed = {}
+
+    return {"state": parsed, "updated_at": row.updated_at}
+
+
+@app.put("/teacher-admin/state", response_model=schemas.TeacherAdminStateOut)
+def save_teacher_admin_state(
+    payload: schemas.TeacherAdminStateSave,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    # validate it is JSON-serialisable
+    try:
+        raw = json.dumps(payload.state, ensure_ascii=False)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"State must be JSON-serialisable: {e}")
+
+    row = (
+        db.query(models.TeacherAdminStateModel)
+        .filter(models.TeacherAdminStateModel.owner_user_id == user.id)
+        .first()
+    )
+
+    now = datetime.utcnow()
+
+    if row:
+        row.state_json = raw
+        row.updated_at = now
+        db.commit()
+        db.refresh(row)
+    else:
+        row = models.TeacherAdminStateModel(
+            owner_user_id=user.id,
+            state_json=raw,
+            updated_at=now,
+        )
+        db.add(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            # rare race: if two devices create simultaneously
+            db.rollback()
+            row = (
+                db.query(models.TeacherAdminStateModel)
+                .filter(models.TeacherAdminStateModel.owner_user_id == user.id)
+                .first()
+            )
+            if row:
+                row.state_json = raw
+                row.updated_at = now
+                db.commit()
+                db.refresh(row)
+            else:
+                raise
+        else:
+            db.refresh(row)
+
+    return {"state": json.loads(row.state_json), "updated_at": row.updated_at}
+
 
 # =========================================================
 # ADMIN (Students + Assessments/Results)
