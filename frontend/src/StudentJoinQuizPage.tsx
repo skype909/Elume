@@ -33,6 +33,36 @@ type StoredParticipant = {
   nickname?: string;
 };
 
+function hashStringToInt(s: string) {
+  // simple deterministic hash
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed: number) {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffledChoices(keys: ChoiceKey[], seedStr: string) {
+  const seed = hashStringToInt(seedStr);
+  const rand = mulberry32(seed);
+  const arr = [...keys];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function safeJsonParse<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
   try {
@@ -73,6 +103,17 @@ export default function StudentJoinQuizPage() {
   const title = current?.title || "Live Quiz";
   const state = current?.state || "lobby";
   const q = current?.question || null;
+  const displayOrder = useMemo(() => {
+    if (!q) return [] as ChoiceKey[];
+
+    const base: ChoiceKey[] = ["A", "B", "C", "D"];
+    const valid = base.filter((k) => (q.choices?.[k] ?? "").trim().length > 0);
+
+    // stable per student per question
+    const seedStr = `${sessionCode}::${anonId || "anon"}::${q.id || ""}`;
+    return shuffledChoices(valid, seedStr);
+  }, [q?.id, q?.choices, anonId, sessionCode]);
+
   const isAnonymousSession = Boolean(current?.anonymous);
 
   const questionNumberText = useMemo(() => {
@@ -390,32 +431,34 @@ export default function StudentJoinQuizPage() {
               <>
                 <div className="text-lg font-extrabold text-slate-900">{q.prompt}</div>
                 <div className="mt-4 grid grid-cols-1 gap-3">
-                  {(["A", "B", "C", "D"] as ChoiceKey[]).map((k) => {
+                  {displayOrder.map((k, idx) => {
                     const label = q.choices?.[k] || "";
                     const disabled = !label.trim();
                     const isSelected = selectedChoice === k;
+
+                    // show A/B/C/D as the *display* letter (not the underlying key)
+                    const shownLetter = (["A", "B", "C", "D"] as const)[idx] ?? "A";
 
                     return (
                       <button
                         key={k}
                         type="button"
                         disabled={disabled}
-                        onClick={() => submitAnswer(k)}
-                        className={`w-full rounded-3xl border-2 px-4 py-4 text-left text-base font-bold transition ${
-                          disabled
-                            ? "border-slate-200 bg-slate-50 text-slate-300"
-                            : isSelected
-                              ? "border-slate-900 bg-slate-900 text-white"
-                              : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
-                        }`}
+                        onClick={() => submitAnswer(k)} // IMPORTANT: submit the ORIGINAL key for scoring
+                        className={`w-full rounded-3xl border-2 px-4 py-4 text-left text-base font-bold transition ${disabled
+                          ? "border-slate-200 bg-slate-50 text-slate-300"
+                          : isSelected
+                            ? "border-emerald-600 bg-emerald-50 text-emerald-900"
+                            : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                          }`}
                       >
                         <span
-                          className={`mr-3 inline-block w-7 rounded-xl px-2 py-1 text-center text-sm ${
-                            isSelected ? "bg-white/15 text-white" : "bg-slate-100 text-slate-700"
-                          }`}
+                          className={`mr-3 inline-block w-7 rounded-xl px-2 py-1 text-center text-sm ${isSelected ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"
+                            }`}
                         >
-                          {k}
+                          {shownLetter}
                         </span>
+
                         {label || <span className="text-slate-400">Empty</span>}
                       </button>
                     );

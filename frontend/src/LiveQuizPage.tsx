@@ -189,13 +189,30 @@ function normaliseSavedQuiz(q: SavedQuizAny): NormalisedQuiz | null {
       if (rawCorrect === null || rawCorrect === undefined || rawCorrect === "") {
         correct = null;
       } else if (typeof rawCorrect === "string") {
-        const up = rawCorrect.trim().toUpperCase();
-        if (up === "A" || up === "B" || up === "C" || up === "D") correct = up as ChoiceKey;
+        const s = rawCorrect.trim();
+
+        // Letter form: A/B/C/D
+        const up = s.toUpperCase();
+        if (up === "A" || up === "B" || up === "C" || up === "D") {
+          correct = up as ChoiceKey;
+        } else {
+          // Numeric string form: "0".."3" or "1".."4"
+          const n = Number(s);
+          if (Number.isFinite(n)) {
+            const map: ChoiceKey[] = ["A", "B", "C", "D"];
+            // If stored as 0-based (0..3)
+            if (n >= 0 && n <= 3) correct = map[n] ?? null;
+            // If stored as 1-based (1..4)
+            else if (n >= 1 && n <= 4) correct = map[n - 1] ?? null;
+          }
+        }
       } else if (typeof rawCorrect === "number") {
         const map: ChoiceKey[] = ["A", "B", "C", "D"];
-        correct = map[rawCorrect] ?? null;
+        // support both 0-based and 1-based numbers
+        if (rawCorrect >= 0 && rawCorrect <= 3) correct = map[rawCorrect] ?? null;
+        else if (rawCorrect >= 1 && rawCorrect <= 4) correct = map[rawCorrect - 1] ?? null;
+        else correct = null;
       }
-
       const nonEmptyCount = Object.values(choicesObj).filter((v) => String(v).trim().length > 0).length;
       if (nonEmptyCount < 2) return null;
 
