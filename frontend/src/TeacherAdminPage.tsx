@@ -232,29 +232,57 @@ export default function TeacherAdminPage() {
 
   const [loadedFromServer, setLoadedFromServer] = useState(false);
 
-  // Load synced state from server once (so timetable follows you across devices)
+
+  // Load synced state from server once (profile + timetable follow you across devices)
   useEffect(() => {
     let cancelled = false;
 
+    // grab local snapshot (what user may have just typed)
+    const localRaw = localStorage.getItem(storageKey());
+    let localState: StoredAdminState | null = null;
+    try {
+      localState = localRaw ? (JSON.parse(localRaw) as StoredAdminState) : null;
+    } catch {
+      localState = null;
+    }
+
     apiFetch("/teacher-admin/state")
-      .then((r) => r.json())
-      .then((data) => {
+      .then((data: any) => {
         if (cancelled) return;
 
-        const serverState = data?.state;
-        // If server has a valid saved state, prefer it over localStorage
-        if (serverState?.profile && serverState?.schedule) {
+        const serverState = (data?.state ?? null) as StoredAdminState | null;
+        const serverUpdatedAt = data?.updated_at ? String(data.updated_at) : null;
+
+        // If server returned a complete state, write it to local.
+        // BUT if local is newer (user typed quickly), keep local and push it up.
+        const localTs = localState?.updatedAt ? Date.parse(localState.updatedAt) : 0;
+        const serverTs =
+          serverState?.updatedAt ? Date.parse(serverState.updatedAt) : (serverUpdatedAt ? Date.parse(serverUpdatedAt) : 0);
+
+        const serverValid = !!(serverState?.profile && serverState?.schedule);
+
+        if (serverValid && serverTs >= localTs) {
           setState(serverState as StoredAdminState);
-          // also refresh local cache so future loads are instant
           try {
             localStorage.setItem(storageKey(), JSON.stringify(serverState));
           } catch { }
+        } else if (localState?.profile && localState?.schedule) {
+          // keep local (newer or server empty), and push to server once we're "loaded"
+          setState(localState);
         }
 
         setLoadedFromServer(true);
+
+        // If we kept local because it's newer / server empty, sync it now
+        if ((!serverValid || localTs > serverTs) && localState?.profile && localState?.schedule) {
+          apiFetch("/teacher-admin/state", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ state: localState }),
+          }).catch(() => { });
+        }
       })
       .catch(() => {
-        // If offline / request blocked, just keep localStorage version
         if (!cancelled) setLoadedFromServer(true);
       });
 
@@ -712,15 +740,15 @@ export default function TeacherAdminPage() {
                 ))}
               </div>
 
-              {/* Timetable grid (NO internal scrollbar) */}
+              {/* Timetable */}
               <div className="mt-4 rounded-3xl border-2 border-slate-200 bg-white print:border-0 print:mt-0">
-                <div className="min-w-[980px] md:min-w-0">
-                  {/* Header row */}
-                  <div className="grid grid-cols-6 border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700">
-                    <div className="p-3">Time</div>
 
-                    {/* Desktop: show all days */}
-                    <div className="hidden md:contents">
+                {/* ✅ Desktop table */}
+                <div className="hidden md:block">
+                  <div className="md:min-w-[980px]">
+                    {/* Header row */}
+                    <div className="grid grid-cols-6 border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700">
+                      <div className="p-3">Time</div>
                       {DAYS.map((d) => (
                         <div key={d} className={`p-3 ${today === d ? "text-emerald-800" : ""}`}>
                           {fmtDay(d)}
@@ -729,50 +757,57 @@ export default function TeacherAdminPage() {
                       ))}
                     </div>
 
-                    {/* Mobile: only active day */}
-                    <div className="md:hidden col-span-5 p-3 text-emerald-800">
-                      {fmtDay(dayView)}
-                      {today === dayView ? " • Today" : ""}
-                    </div>
-                  </div>
-
-                  {/* Use Monday as master row labels; all days have same slot ids now incl PRE/POST */}
-                  {state.schedule["Mon"].slots.map((rowSlot) => {
-                    return (
-                      <div
-                        key={rowSlot.id}
-                        className="grid grid-cols-6 border-b border-slate-100 last:border-b-0"
-                      >
-                        {/* Time column */}
+                    {state.schedule["Mon"].slots.map((rowSlot) => (
+                      <div key={rowSlot.id} className="grid grid-cols-6 border-b border-slate-100 last:border-b-0">
                         <div className="p-3 text-xs text-slate-600">
                           <div className="font-semibold text-slate-700">{rowSlot.label}</div>
-                          <div>
-                            {rowSlot.start}–{rowSlot.end}
-                          </div>
+                          <div>{rowSlot.start}–{rowSlot.end}</div>
                         </div>
 
-                        {/* Desktop day columns */}
-                        <div className="hidden md:contents">
-                          {DAYS.map((day) => (
-                            <DayCell
-                              key={day}
-                              day={day}
-                              rowSlotId={rowSlot.id}
-                              state={state}
-                              meta={meta}
-                              tileBgForClassId={tileBgForClassId}
-                              setEditing={setEditing}
-                              slotIsActive={slotIsActive}
-                              today={today}
-                            />
-                          ))}
-                        </div>
-
-                        {/* Mobile single day column */}
-                        <div className="md:hidden col-span-5 p-3">
-                          <MobileDayCell
-                            day={dayView}
+                        {DAYS.map((day) => (
+                          <DayCell
+                            key={day}
+                            day={day}
                             rowSlotId={rowSlot.id}
+                            state={state}
+                            meta={meta}
+                            tileBgForClassId={tileBgForClassId}
+                            setEditing={setEditing}
+                            slotIsActive={slotIsActive}
+                            today={today}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ✅ Mobile: “Today / selected day” as a stacked list (super glanceable) */}
+                <div className="md:hidden">
+                  <div className="divide-y divide-slate-100">
+                    {state.schedule[dayView].slots.map((slot) => (
+                      <div key={slot.id} className="px-3 py-3">
+                        {/* Small time/label strip */}
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="text-xs font-bold text-slate-700">
+                            {slot.label}
+                            <span className="ml-2 font-semibold text-slate-500">
+                              {slot.start}–{slot.end}
+                            </span>
+                          </div>
+
+                          {slotIsActive(dayView, slot) && (
+                            <span className="rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-900">
+                              Now
+                            </span>
+                          )}
+                        </div>
+
+                        {/* The actual tile (reuse your existing renderer) */}
+                        <div className="-mx-1">
+                          <DayCell
+                            day={dayView}
+                            rowSlotId={slot.id}
                             state={state}
                             meta={meta}
                             tileBgForClassId={tileBgForClassId}
@@ -782,8 +817,8 @@ export default function TeacherAdminPage() {
                           />
                         </div>
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
               </div>
 

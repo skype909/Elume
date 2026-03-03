@@ -265,7 +265,7 @@ export default function LiveQuizPage() {
   // Settings
   const [anonymous, setAnonymous] = useState<boolean>(false);
   const [shuffleQuestions, setShuffleQuestions] = useState<boolean>(false);
-  const [autoEndWhenAllAnswered, setAutoEndWhenAllAnswered] = useState<boolean>(true);
+  const [autoEndWhenAllAnswered, setAutoEndWhenAllAnswered] = useState<boolean>(false);
   const [secondsPerQuestion, setSecondsPerQuestion] = useState<number>(20);
   const [useTimer, setUseTimer] = useState<boolean>(true);
 

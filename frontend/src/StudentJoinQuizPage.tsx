@@ -193,7 +193,8 @@ export default function StudentJoinQuizPage() {
       // When the teacher advances to a new question, reset local selection
       const newQid = data.question?.id || "";
       if (newQid && newQid !== lastQuestionId) {
-        setSelectedChoice(null);
+        // Only clear if we were already on a question (prevents “flash then clear” on Q1 load)
+        if (lastQuestionId) setSelectedChoice(null);
         setLastQuestionId(newQid);
       }
 
@@ -208,24 +209,21 @@ export default function StudentJoinQuizPage() {
     if (!q?.id) return;
     if (answeringRef.current) return;
 
+    // ✅ instant UI feedback
+    setSelectedChoice(choice);
+
     answeringRef.current = true;
     try {
       const res = await fetch(`${API_BASE}/livequiz/${sessionCode}/answer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          anon_id: anonId,
-          question_id: q.id,
-          choice,
-        }),
+        body: JSON.stringify({ anon_id: anonId, question_id: q.id, choice }),
       });
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(txt || "Failed to submit answer.");
       }
-
-      setSelectedChoice(choice);
     } catch (e: any) {
       setPollError(e?.message || "Failed to submit answer.");
     } finally {
