@@ -236,306 +236,311 @@ export default function TeacherAdminPage() {
   useEffect(() => {
     let cancelled = false;
 
-    apiFetch("/teacher-admin/state")
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
+    // Load synced state from server once (so timetable + profile follow you across devices)
+    useEffect(() => {
+      let cancelled = false;
 
-        const serverState = data?.state;
-        // If server has a valid saved state, prefer it over localStorage
-        if (serverState?.profile && serverState?.schedule) {
-          setState(serverState as StoredAdminState);
-          // also refresh local cache so future loads are instant
-          try {
-            localStorage.setItem(storageKey(), JSON.stringify(serverState));
-          } catch { }
-        }
+      apiFetch("/teacher-admin/state")
+        .then((data: any) => {
+          if (cancelled) return;
 
-        setLoadedFromServer(true);
-      })
-      .catch(() => {
-        // If offline / request blocked, just keep localStorage version
-        if (!cancelled) setLoadedFromServer(true);
-      });
+          const serverState = data?.state;
 
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+          // If server has a valid saved state, prefer it over localStorage
+          if (serverState?.profile && serverState?.schedule) {
+            setState(serverState as StoredAdminState);
 
-
-  const [savedToast, setSavedToast] = useState<string | null>(null);
-
-  const [classes, setClasses] = useState<ClassItem[]>([]);
-  const [meta, setMeta] = useState<MetaStore>(() => loadMeta());
-
-  const today = dayKeyToday();
-  const nowMins = nowLocalMinutes();
-
-  // Mobile: show one day at a time
-  const [dayView, setDayView] = useState<DayKey>(() => today ?? "Mon");
-
-  // Editor modal state
-  const [editing, setEditing] = useState<{
-    day: DayKey;
-    slotId: string;
-  } | null>(null);
-
-  const editingSlot = useMemo(() => {
-    if (!editing) return null;
-    return state.schedule[editing.day].slots.find((s) => s.id === editing.slotId) ?? null;
-  }, [editing, state.schedule]);
-
-  const editingEntry = useMemo(() => {
-    if (!editing) return null;
-    const daySch = state.schedule[editing.day];
-    return daySch.entries[editing.slotId] ?? defaultEntry();
-  }, [editing, state.schedule]);
-
-  function saveState(next: StoredAdminState) {
-    // 1) local instant cache (works offline)
-    try {
-      localStorage.setItem(storageKey(), JSON.stringify(next));
-    } catch { }
-
-    // 2) update UI immediately
-    setState(next);
-
-    // 3) toast
-    setSavedToast("Saved ✓");
-    window.setTimeout(() => setSavedToast(null), 1200);
-
-    // 4) sync to server (only after we've tried loading once to avoid overwriting newer server data on first paint)
-    if (loadedFromServer) {
-      apiFetch("/teacher-admin/state", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ state: next }),
-      }).catch(() => {
-        // silent fail (offline etc). localStorage still holds it.
-      });
-    }
-  }
-
-  function touch(next: StoredAdminState) {
-    saveState({ ...next, updatedAt: new Date().toISOString() });
-  }
-
-  function updateProfile(patch: Partial<TeacherProfile>) {
-    touch({
-      ...state,
-      profile: { ...state.profile, ...patch },
-    });
-  }
-
-  function updateEntry(day: DayKey, slotId: string, patch: Partial<TimetableEntry>) {
-    const daySch = state.schedule[day];
-    const prev = daySch.entries[slotId] ?? defaultEntry();
-    const nextEntries = { ...daySch.entries, [slotId]: { ...prev, ...patch } };
-    touch({
-      ...state,
-      schedule: { ...state.schedule, [day]: { ...daySch, entries: nextEntries } },
-    });
-  }
-
-  function updateSlotTime(day: DayKey, slotId: string, field: "start" | "end", val: string) {
-    const daySch = state.schedule[day];
-    const nextSlots = daySch.slots.map((s) => (s.id === slotId ? { ...s, [field]: val } : s));
-    touch({
-      ...state,
-      schedule: { ...state.schedule, [day]: { ...daySch, slots: nextSlots } },
-    });
-  }
-
-  function clearEntry(day: DayKey, slotId: string) {
-    updateEntry(day, slotId, defaultEntry());
-  }
-
-  function slotIsActive(day: DayKey, slot: Slot) {
-    if (today !== day) return false;
-    const a = toMinutes(slot.start);
-    const b = toMinutes(slot.end);
-    return nowMins >= a && nowMins < b;
-  }
-
-  function exportPdf() {
-    window.print();
-  }
-
-  function autoRankUnusedToday() {
-    const d = today ?? dayView;
-    const daySch = state.schedule[d];
-    let r = 1;
-    const nextEntries = { ...daySch.entries };
-
-    // candidates: periods with no class assigned
-    const candidates = daySch.slots.filter((s) => s.kind === "period");
-
-    for (const slot of candidates) {
-      const e = nextEntries[slot.id] ?? defaultEntry();
-      const isFree = !e.classId && !e.classLabel;
-      if (isFree) {
-        nextEntries[slot.id] = { ...e, supervisionRank: r++ };
-      }
-    }
-
-    touch({
-      ...state,
-      schedule: { ...state.schedule, [d]: { ...daySch, entries: nextEntries } },
-    });
-  }
-
-  // Pull real classes + refresh colour meta (dashboard tile colours)
-  useEffect(() => {
-    // Refresh meta now
-    setMeta(loadMeta());
-
-    // Refresh meta again when returning to this tab (common: teacher edits colours on dashboard then comes back)
-    const onFocus = () => setMeta(loadMeta());
-
-    // Refresh meta if another tab updates it (or if dashboard updates and triggers storage event)
-    const onStorage = (e: StorageEvent) => {
-      // If you want to be extra strict, you can check e.key === metaKeyForUser()
-      setMeta(loadMeta());
-    };
-
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("storage", onStorage);
-
-    let cancelled = false;
-
-    apiFetch("/classes")
-      .then((data) => {
-        if (cancelled) return;
-        const arr = Array.isArray(data) ? (data as any[]) : [];
-        const cleaned: ClassItem[] = arr
-          .map((c) => ({
-            id: Number(c.id),
-            name: String(c.name ?? ""),
-            subject: String(c.subject ?? ""),
-          }))
-          .filter((c) => Number.isFinite(c.id) && c.id > 0);
-
-        setClasses(cleaned);
-
-        // ✅ Backfill missing colour meta for any class ids not yet stored (old classes)
-        const currentMeta = loadMeta();
-        let changed = false;
-
-        for (const cls of cleaned) {
-          const key = String(cls.id);
-          if (!currentMeta[key]?.color) {
-            currentMeta[key] = {
-              color: defaultBgForClassId(cls.id),
-              order: currentMeta[key]?.order ?? cls.id,
-            };
-            changed = true;
+            // also refresh local cache so Dashboard welcome updates instantly
+            try {
+              localStorage.setItem(storageKey(), JSON.stringify(serverState));
+            } catch { }
           }
-        }
 
-        if (changed) {
-          // Save + refresh state
-          localStorage.setItem(metaKeyForUser(), JSON.stringify(currentMeta));
-          setMeta(currentMeta);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setClasses([]);
-      });
+          setLoadedFromServer(true);
+        })
+        .catch(() => {
+          // If offline / request blocked, just keep localStorage version
+          if (!cancelled) setLoadedFromServer(true);
+        });
 
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("storage", onStorage);
-    };
-  }, []);
+      return () => {
+        cancelled = true;
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-  const classOptions = useMemo(() => {
-    return [
-      { id: 0, label: "— Free / Unused" },
-      ...classes.map((c) => ({
-        id: c.id,
-        label: `${c.name}${c.subject ? ` — ${c.subject}` : ""}`,
-      })),
-    ];
-  }, [classes]);
 
-  useEffect(() => {
-    if (classes.length === 0) return;
+    const [savedToast, setSavedToast] = useState<string | null>(null);
 
-    // Build a fast lookup from label -> id
-    const labelToId = new Map<string, number>();
-    for (const c of classes) {
-      const label = `${c.name}${c.subject ? ` — ${c.subject}` : ""}`.trim();
-      labelToId.set(label, c.id);
-    }
+    const [classes, setClasses] = useState<ClassItem[]>([]);
+    const [meta, setMeta] = useState<MetaStore>(() => loadMeta());
 
-    let changed = false;
+    const today = dayKeyToday();
+    const nowMins = nowLocalMinutes();
 
-    // Create a deep-ish copy only if we actually change something
-    const next: StoredAdminState = {
-      ...state,
-      schedule: { ...state.schedule },
-    };
+    // Mobile: show one day at a time
+    const [dayView, setDayView] = useState<DayKey>(() => today ?? "Mon");
 
-    for (const day of DAYS) {
-      const daySch = state.schedule[day];
-      let dayChanged = false;
+    // Editor modal state
+    const [editing, setEditing] = useState<{
+      day: DayKey;
+      slotId: string;
+    } | null>(null);
 
-      const nextEntries = { ...daySch.entries };
+    const editingSlot = useMemo(() => {
+      if (!editing) return null;
+      return state.schedule[editing.day].slots.find((s) => s.id === editing.slotId) ?? null;
+    }, [editing, state.schedule]);
 
-      for (const slot of daySch.slots) {
-        const e = nextEntries[slot.id];
-        if (!e) continue;
+    const editingEntry = useMemo(() => {
+      if (!editing) return null;
+      const daySch = state.schedule[editing.day];
+      return daySch.entries[editing.slotId] ?? defaultEntry();
+    }, [editing, state.schedule]);
 
-        // If old saved entry has label but no id, recover id from label
-        if ((e.classId == null || e.classId === 0) && e.classLabel?.trim()) {
-          const recovered = labelToId.get(e.classLabel.trim());
-          if (recovered) {
-            nextEntries[slot.id] = { ...e, classId: recovered };
-            dayChanged = true;
-            changed = true;
-          }
-        }
-      }
+    function saveState(next: StoredAdminState) {
+      // 1) local instant cache (works offline)
+      try {
+        localStorage.setItem(storageKey(), JSON.stringify(next));
+      } catch { }
 
-      if (dayChanged) {
-        next.schedule[day] = { ...daySch, entries: nextEntries };
+      // 2) update UI immediately
+      setState(next);
+
+      // 3) toast
+      setSavedToast("Saved ✓");
+      window.setTimeout(() => setSavedToast(null), 1200);
+
+      // 4) sync to server (only after we've tried loading once to avoid overwriting newer server data on first paint)
+      if (loadedFromServer) {
+        apiFetch("/teacher-admin/state", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: next }),
+        }).catch(() => {
+          // silent fail (offline etc). localStorage still holds it.
+        });
       }
     }
 
-    if (changed) {
-      // Save once — this will permanently fix "old" timetable data
+    function touch(next: StoredAdminState) {
       saveState({ ...next, updatedAt: new Date().toISOString() });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classes]);
 
-  function tileBgForClassId(classId: number | null) {
-    if (!classId) return "bg-white";
-    const m = meta[String(classId)];
-    // If meta missing, fall back to Dashboard-style deterministic colour (not grey)
-    return m?.color ?? defaultBgForClassId(classId);
-  }
+    function updateProfile(patch: Partial<TeacherProfile>) {
+      touch({
+        ...state,
+        profile: { ...state.profile, ...patch },
+      });
+    }
 
-  const card =
-    "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)] print:shadow-none";
-  const btn =
-    "rounded-full border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50";
-  const input =
-    "w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm";
+    function updateEntry(day: DayKey, slotId: string, patch: Partial<TimetableEntry>) {
+      const daySch = state.schedule[day];
+      const prev = daySch.entries[slotId] ?? defaultEntry();
+      const nextEntries = { ...daySch.entries, [slotId]: { ...prev, ...patch } };
+      touch({
+        ...state,
+        schedule: { ...state.schedule, [day]: { ...daySch, entries: nextEntries } },
+      });
+    }
 
-  // When dayView changes and today exists, keep it aligned unless user chose otherwise
-  useEffect(() => {
-    if (today) setDayView(today);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    function updateSlotTime(day: DayKey, slotId: string, field: "start" | "end", val: string) {
+      const daySch = state.schedule[day];
+      const nextSlots = daySch.slots.map((s) => (s.id === slotId ? { ...s, [field]: val } : s));
+      touch({
+        ...state,
+        schedule: { ...state.schedule, [day]: { ...daySch, slots: nextSlots } },
+      });
+    }
 
-  return (
-    <div className="min-h-screen bg-emerald-100 p-6 print:bg-white print:p-0">
-      <style>
-        {`
+    function clearEntry(day: DayKey, slotId: string) {
+      updateEntry(day, slotId, defaultEntry());
+    }
+
+    function slotIsActive(day: DayKey, slot: Slot) {
+      if (today !== day) return false;
+      const a = toMinutes(slot.start);
+      const b = toMinutes(slot.end);
+      return nowMins >= a && nowMins < b;
+    }
+
+    function exportPdf() {
+      window.print();
+    }
+
+    function autoRankUnusedToday() {
+      const d = today ?? dayView;
+      const daySch = state.schedule[d];
+      let r = 1;
+      const nextEntries = { ...daySch.entries };
+
+      // candidates: periods with no class assigned
+      const candidates = daySch.slots.filter((s) => s.kind === "period");
+
+      for (const slot of candidates) {
+        const e = nextEntries[slot.id] ?? defaultEntry();
+        const isFree = !e.classId && !e.classLabel;
+        if (isFree) {
+          nextEntries[slot.id] = { ...e, supervisionRank: r++ };
+        }
+      }
+
+      touch({
+        ...state,
+        schedule: { ...state.schedule, [d]: { ...daySch, entries: nextEntries } },
+      });
+    }
+
+    // Pull real classes + refresh colour meta (dashboard tile colours)
+    useEffect(() => {
+      // Refresh meta now
+      setMeta(loadMeta());
+
+      // Refresh meta again when returning to this tab (common: teacher edits colours on dashboard then comes back)
+      const onFocus = () => setMeta(loadMeta());
+
+      // Refresh meta if another tab updates it (or if dashboard updates and triggers storage event)
+      const onStorage = (e: StorageEvent) => {
+        // If you want to be extra strict, you can check e.key === metaKeyForUser()
+        setMeta(loadMeta());
+      };
+
+      window.addEventListener("focus", onFocus);
+      window.addEventListener("storage", onStorage);
+
+      let cancelled = false;
+
+      apiFetch("/classes")
+        .then((data) => {
+          if (cancelled) return;
+          const arr = Array.isArray(data) ? (data as any[]) : [];
+          const cleaned: ClassItem[] = arr
+            .map((c) => ({
+              id: Number(c.id),
+              name: String(c.name ?? ""),
+              subject: String(c.subject ?? ""),
+            }))
+            .filter((c) => Number.isFinite(c.id) && c.id > 0);
+
+          setClasses(cleaned);
+
+          // ✅ Backfill missing colour meta for any class ids not yet stored (old classes)
+          const currentMeta = loadMeta();
+          let changed = false;
+
+          for (const cls of cleaned) {
+            const key = String(cls.id);
+            if (!currentMeta[key]?.color) {
+              currentMeta[key] = {
+                color: defaultBgForClassId(cls.id),
+                order: currentMeta[key]?.order ?? cls.id,
+              };
+              changed = true;
+            }
+          }
+
+          if (changed) {
+            // Save + refresh state
+            localStorage.setItem(metaKeyForUser(), JSON.stringify(currentMeta));
+            setMeta(currentMeta);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setClasses([]);
+        });
+
+      return () => {
+        cancelled = true;
+        window.removeEventListener("focus", onFocus);
+        window.removeEventListener("storage", onStorage);
+      };
+    }, []);
+
+    const classOptions = useMemo(() => {
+      return [
+        { id: 0, label: "— Free / Unused" },
+        ...classes.map((c) => ({
+          id: c.id,
+          label: `${c.name}${c.subject ? ` — ${c.subject}` : ""}`,
+        })),
+      ];
+    }, [classes]);
+
+    useEffect(() => {
+      if (classes.length === 0) return;
+
+      // Build a fast lookup from label -> id
+      const labelToId = new Map<string, number>();
+      for (const c of classes) {
+        const label = `${c.name}${c.subject ? ` — ${c.subject}` : ""}`.trim();
+        labelToId.set(label, c.id);
+      }
+
+      let changed = false;
+
+      // Create a deep-ish copy only if we actually change something
+      const next: StoredAdminState = {
+        ...state,
+        schedule: { ...state.schedule },
+      };
+
+      for (const day of DAYS) {
+        const daySch = state.schedule[day];
+        let dayChanged = false;
+
+        const nextEntries = { ...daySch.entries };
+
+        for (const slot of daySch.slots) {
+          const e = nextEntries[slot.id];
+          if (!e) continue;
+
+          // If old saved entry has label but no id, recover id from label
+          if ((e.classId == null || e.classId === 0) && e.classLabel?.trim()) {
+            const recovered = labelToId.get(e.classLabel.trim());
+            if (recovered) {
+              nextEntries[slot.id] = { ...e, classId: recovered };
+              dayChanged = true;
+              changed = true;
+            }
+          }
+        }
+
+        if (dayChanged) {
+          next.schedule[day] = { ...daySch, entries: nextEntries };
+        }
+      }
+
+      if (changed) {
+        // Save once — this will permanently fix "old" timetable data
+        saveState({ ...next, updatedAt: new Date().toISOString() });
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [classes]);
+
+    function tileBgForClassId(classId: number | null) {
+      if (!classId) return "bg-white";
+      const m = meta[String(classId)];
+      // If meta missing, fall back to Dashboard-style deterministic colour (not grey)
+      return m?.color ?? defaultBgForClassId(classId);
+    }
+
+    const card =
+      "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)] print:shadow-none";
+    const btn =
+      "rounded-full border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50";
+    const input =
+      "w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm";
+
+    // When dayView changes and today exists, keep it aligned unless user chose otherwise
+    useEffect(() => {
+      if (today) setDayView(today);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    return (
+      <div className="min-h-screen bg-emerald-100 p-6 print:bg-white print:p-0">
+        <style>
+          {`
           @media print {
             @page { size: A4 landscape; margin: 10mm; }
 
@@ -552,211 +557,226 @@ export default function TeacherAdminPage() {
             .print-tight { padding: 0 !important; }
           }
         `}
-      </style>
+        </style>
 
-      <div className="mx-auto max-w-7xl px-4 py-6 print:px-0 print:py-0">
-        {/* Header + Profile strip (hidden in print via visibility rule above anyway) */}
-        <div className={`${card} p-4 print:border-0 print:shadow-none print-tight`}>
-          <div className="flex flex-wrap items-start justify-between gap-3 print-hide">
-            <div>
-              <div className="text-2xl font-extrabold tracking-tight text-slate-900">
-                Teacher Admin
+        <div className="mx-auto max-w-7xl px-4 py-6 print:px-0 print:py-0">
+          {/* Header + Profile strip (hidden in print via visibility rule above anyway) */}
+          <div className={`${card} p-4 print:border-0 print:shadow-none print-tight`}>
+            <div className="flex flex-wrap items-start justify-between gap-3 print-hide">
+              <div>
+                <div className="text-2xl font-extrabold tracking-tight text-slate-900">
+                  Teacher Admin
+                </div>
+                <div className="text-sm text-slate-600">
+                  Quick reference timetable • editable profile • print-ready
+                </div>
               </div>
-              <div className="text-sm text-slate-600">
-                Quick reference timetable • editable profile • print-ready
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button className={btn} type="button" onClick={() => navigate("/")}>
+                  Back to Dashboard
+                </button>
+                <button className={btn} type="button" onClick={exportPdf}>
+                  Export PDF
+                </button>
+                {savedToast && (
+                  <span className="rounded-full border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
+                    {savedToast}
+                  </span>
+                )}
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <button className={btn} type="button" onClick={() => navigate("/")}>
-                Back to Dashboard
-              </button>
-              <button className={btn} type="button" onClick={exportPdf}>
-                Export PDF
-              </button>
-              {savedToast && (
-                <span className="rounded-full border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
-                  {savedToast}
-                </span>
-              )}
+            <div className="mt-4 grid gap-3 md:grid-cols-12 print:mt-2">
+              <div className="md:col-span-2">
+                <label className="text-xs font-bold text-slate-600">
+                  Title
+                  <select
+                    className={`${input} mt-1`}
+                    value={state.profile.title}
+                    onChange={(e) => updateProfile({ title: e.target.value })}
+                  >
+                    {["Mr", "Mrs", "Ms", "Miss", "Mx", "Dr"].map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="md:col-span-3">
+                <label className="text-xs font-bold text-slate-600">
+                  First name
+                  <input
+                    className={`${input} mt-1`}
+                    value={state.profile.firstName}
+                    onChange={(e) => updateProfile({ firstName: e.target.value })}
+                    placeholder="e.g. Peter"
+                  />
+                </label>
+              </div>
+
+              <div className="md:col-span-3">
+                <label className="text-xs font-bold text-slate-600">
+                  Surname
+                  <input
+                    className={`${input} mt-1`}
+                    value={state.profile.surname}
+                    onChange={(e) => updateProfile({ surname: e.target.value })}
+                    placeholder="e.g. Fitzgerald"
+                  />
+                </label>
+              </div>
+
+              <div className="md:col-span-4">
+                <label className="text-xs font-bold text-slate-600">
+                  School name
+                  <input
+                    className={`${input} mt-1`}
+                    value={state.profile.schoolName}
+                    onChange={(e) => updateProfile({ schoolName: e.target.value })}
+                    placeholder="School name"
+                  />
+                </label>
+              </div>
+
+              <div className="md:col-span-8">
+                <label className="text-xs font-bold text-slate-600">
+                  School address
+                  <input
+                    className={`${input} mt-1`}
+                    value={state.profile.schoolAddress}
+                    onChange={(e) => updateProfile({ schoolAddress: e.target.value })}
+                    placeholder="School address"
+                  />
+                </label>
+              </div>
+
+              <div className="md:col-span-4">
+                <label className="text-xs font-bold text-slate-600">
+                  Roll number
+                  <input
+                    className={`${input} mt-1`}
+                    value={state.profile.rollNumber}
+                    onChange={(e) => updateProfile({ rollNumber: e.target.value })}
+                    placeholder="e.g. 12345A"
+                  />
+                </label>
+              </div>
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-12 print:mt-2">
-            <div className="md:col-span-2">
-              <label className="text-xs font-bold text-slate-600">
-                Title
-                <select
-                  className={`${input} mt-1`}
-                  value={state.profile.title}
-                  onChange={(e) => updateProfile({ title: e.target.value })}
-                >
-                  {["Mr", "Mrs", "Ms", "Miss", "Mx", "Dr"].map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
+          {/* Main layout */}
+          <div className="mt-6 grid gap-4 md:grid-cols-12 print:mt-0">
+            {/* Timetable full width */}
+            <div className="md:col-span-12">
+              <div id="timetablePrint" className={`${card} p-4 print-tight`}>
+                <div className="flex items-center justify-between print-hide">
+                  <div>
+                    <div className="text-lg font-extrabold tracking-tight text-slate-900">
+                      Weekly Timetable
+                    </div>
+                    <div className="text-sm text-slate-600">
+                      Click a slot to edit. “Now” highlights the current period.
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button className={btn} type="button" onClick={autoRankUnusedToday}>
+                      Auto-rank unused (today)
+                    </button>
+                    <button
+                      className={btn}
+                      type="button"
+                      onClick={() => {
+                        touch(makeDefaultState());
+                        setMeta(loadMeta());
+                      }}
+                    >
+                      Reset template
+                    </button>
+                  </div>
+                </div>
+
+                {/* Mobile day tabs */}
+                <div className="mt-3 flex flex-wrap gap-2 md:hidden print-hide">
+                  {DAYS.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${dayView === d
+                        ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                        : "border-slate-200 bg-white text-slate-800"
+                        }`}
+                      onClick={() => setDayView(d)}
+                    >
+                      {fmtDay(d)}
+                      {today === d ? " • Today" : ""}
+                    </button>
                   ))}
-                </select>
-              </label>
-            </div>
-
-            <div className="md:col-span-3">
-              <label className="text-xs font-bold text-slate-600">
-                First name
-                <input
-                  className={`${input} mt-1`}
-                  value={state.profile.firstName}
-                  onChange={(e) => updateProfile({ firstName: e.target.value })}
-                  placeholder="e.g. Peter"
-                />
-              </label>
-            </div>
-
-            <div className="md:col-span-3">
-              <label className="text-xs font-bold text-slate-600">
-                Surname
-                <input
-                  className={`${input} mt-1`}
-                  value={state.profile.surname}
-                  onChange={(e) => updateProfile({ surname: e.target.value })}
-                  placeholder="e.g. Fitzgerald"
-                />
-              </label>
-            </div>
-
-            <div className="md:col-span-4">
-              <label className="text-xs font-bold text-slate-600">
-                School name
-                <input
-                  className={`${input} mt-1`}
-                  value={state.profile.schoolName}
-                  onChange={(e) => updateProfile({ schoolName: e.target.value })}
-                  placeholder="School name"
-                />
-              </label>
-            </div>
-
-            <div className="md:col-span-8">
-              <label className="text-xs font-bold text-slate-600">
-                School address
-                <input
-                  className={`${input} mt-1`}
-                  value={state.profile.schoolAddress}
-                  onChange={(e) => updateProfile({ schoolAddress: e.target.value })}
-                  placeholder="School address"
-                />
-              </label>
-            </div>
-
-            <div className="md:col-span-4">
-              <label className="text-xs font-bold text-slate-600">
-                Roll number
-                <input
-                  className={`${input} mt-1`}
-                  value={state.profile.rollNumber}
-                  onChange={(e) => updateProfile({ rollNumber: e.target.value })}
-                  placeholder="e.g. 12345A"
-                />
-              </label>
-            </div>
-          </div>
-        </div>
-
-        {/* Main layout */}
-        <div className="mt-6 grid gap-4 md:grid-cols-12 print:mt-0">
-          {/* Timetable full width */}
-          <div className="md:col-span-12">
-            <div id="timetablePrint" className={`${card} p-4 print-tight`}>
-              <div className="flex items-center justify-between print-hide">
-                <div>
-                  <div className="text-lg font-extrabold tracking-tight text-slate-900">
-                    Weekly Timetable
-                  </div>
-                  <div className="text-sm text-slate-600">
-                    Click a slot to edit. “Now” highlights the current period.
-                  </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button className={btn} type="button" onClick={autoRankUnusedToday}>
-                    Auto-rank unused (today)
-                  </button>
-                  <button
-                    className={btn}
-                    type="button"
-                    onClick={() => {
-                      touch(makeDefaultState());
-                      setMeta(loadMeta());
-                    }}
-                  >
-                    Reset template
-                  </button>
-                </div>
-              </div>
+                {/* Timetable grid (NO internal scrollbar) */}
+                <div className="mt-4 rounded-3xl border-2 border-slate-200 bg-white print:border-0 print:mt-0">
+                  <div className="min-w-[980px] md:min-w-0">
+                    {/* Header row */}
+                    <div className="grid grid-cols-6 border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700">
+                      <div className="p-3">Time</div>
 
-              {/* Mobile day tabs */}
-              <div className="mt-3 flex flex-wrap gap-2 md:hidden print-hide">
-                {DAYS.map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${dayView === d
-                      ? "border-emerald-400 bg-emerald-50 text-emerald-900"
-                      : "border-slate-200 bg-white text-slate-800"
-                      }`}
-                    onClick={() => setDayView(d)}
-                  >
-                    {fmtDay(d)}
-                    {today === d ? " • Today" : ""}
-                  </button>
-                ))}
-              </div>
-
-              {/* Timetable grid (NO internal scrollbar) */}
-              <div className="mt-4 rounded-3xl border-2 border-slate-200 bg-white print:border-0 print:mt-0">
-                <div className="min-w-[980px] md:min-w-0">
-                  {/* Header row */}
-                  <div className="grid grid-cols-6 border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700">
-                    <div className="p-3">Time</div>
-
-                    {/* Desktop: show all days */}
-                    <div className="hidden md:contents">
-                      {DAYS.map((d) => (
-                        <div key={d} className={`p-3 ${today === d ? "text-emerald-800" : ""}`}>
-                          {fmtDay(d)}
-                          {today === d ? " • Today" : ""}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Mobile: only active day */}
-                    <div className="md:hidden col-span-5 p-3 text-emerald-800">
-                      {fmtDay(dayView)}
-                      {today === dayView ? " • Today" : ""}
-                    </div>
-                  </div>
-
-                  {/* Use Monday as master row labels; all days have same slot ids now incl PRE/POST */}
-                  {state.schedule["Mon"].slots.map((rowSlot) => {
-                    return (
-                      <div
-                        key={rowSlot.id}
-                        className="grid grid-cols-6 border-b border-slate-100 last:border-b-0"
-                      >
-                        {/* Time column */}
-                        <div className="p-3 text-xs text-slate-600">
-                          <div className="font-semibold text-slate-700">{rowSlot.label}</div>
-                          <div>
-                            {rowSlot.start}–{rowSlot.end}
+                      {/* Desktop: show all days */}
+                      <div className="hidden md:contents">
+                        {DAYS.map((d) => (
+                          <div key={d} className={`p-3 ${today === d ? "text-emerald-800" : ""}`}>
+                            {fmtDay(d)}
+                            {today === d ? " • Today" : ""}
                           </div>
-                        </div>
+                        ))}
+                      </div>
 
-                        {/* Desktop day columns */}
-                        <div className="hidden md:contents">
-                          {DAYS.map((day) => (
-                            <DayCell
-                              key={day}
-                              day={day}
+                      {/* Mobile: only active day */}
+                      <div className="md:hidden col-span-5 p-3 text-emerald-800">
+                        {fmtDay(dayView)}
+                        {today === dayView ? " • Today" : ""}
+                      </div>
+                    </div>
+
+                    {/* Use Monday as master row labels; all days have same slot ids now incl PRE/POST */}
+                    {state.schedule["Mon"].slots.map((rowSlot) => {
+                      return (
+                        <div
+                          key={rowSlot.id}
+                          className="grid grid-cols-6 border-b border-slate-100 last:border-b-0"
+                        >
+                          {/* Time column */}
+                          <div className="p-3 text-xs text-slate-600">
+                            <div className="font-semibold text-slate-700">{rowSlot.label}</div>
+                            <div>
+                              {rowSlot.start}–{rowSlot.end}
+                            </div>
+                          </div>
+
+                          {/* Desktop day columns */}
+                          <div className="hidden md:contents">
+                            {DAYS.map((day) => (
+                              <DayCell
+                                key={day}
+                                day={day}
+                                rowSlotId={rowSlot.id}
+                                state={state}
+                                meta={meta}
+                                tileBgForClassId={tileBgForClassId}
+                                setEditing={setEditing}
+                                slotIsActive={slotIsActive}
+                                today={today}
+                              />
+                            ))}
+                          </div>
+
+                          {/* Mobile single day column */}
+                          <div className="md:hidden col-span-5 p-3">
+                            <MobileDayCell
+                              day={dayView}
                               rowSlotId={rowSlot.id}
                               state={state}
                               meta={meta}
@@ -765,367 +785,352 @@ export default function TeacherAdminPage() {
                               slotIsActive={slotIsActive}
                               today={today}
                             />
-                          ))}
+                          </div>
                         </div>
+                      );
+                    })}
+                  </div>
+                </div>
 
-                        {/* Mobile single day column */}
-                        <div className="md:hidden col-span-5 p-3">
-                          <MobileDayCell
-                            day={dayView}
-                            rowSlotId={rowSlot.id}
-                            state={state}
-                            meta={meta}
-                            tileBgForClassId={tileBgForClassId}
-                            setEditing={setEditing}
-                            slotIsActive={slotIsActive}
-                            today={today}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="mt-3 text-xs text-slate-500 print-hide">
+                  Export tip: Click <b>Export PDF</b> → choose <b>Save as PDF</b> in the printer dropdown.
                 </div>
               </div>
+            </div>
 
-              <div className="mt-3 text-xs text-slate-500 print-hide">
-                Export tip: Click <b>Export PDF</b> → choose <b>Save as PDF</b> in the printer dropdown.
+            {/* Class list moved to bottom (full width) */}
+            <div className="md:col-span-12 print-hide">
+              <div className={`${card} p-4`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-extrabold text-slate-900">My class groups</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      These come from your live Elume classes.
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+                    onClick={() => alert("Archived classes coming soon (wired stub).")}
+                  >
+                    Archived classes
+                  </button>
+                </div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {classes.length === 0 ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-600">
+                      No classes found (or still loading).
+                    </div>
+                  ) : (
+                    classes.map((c) => {
+                      const bg = tileBgForClassId(c.id);
+                      const tc = tileTextClass(bg);
+                      return (
+                        <div key={c.id} className={`rounded-2xl border-2 border-black px-3 py-2 ${bg} ${tc}`}>
+                          <div className="text-sm font-extrabold leading-tight">{c.name}</div>
+                          <div className={`text-xs ${tc === "text-white" ? "text-white/90" : "text-slate-800/80"}`}>
+                            {c.subject}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Class list moved to bottom (full width) */}
-          <div className="md:col-span-12 print-hide">
-            <div className={`${card} p-4`}>
-              <div className="flex items-start justify-between gap-3">
+          {/* Print footer (won’t show now because we print timetable only) */}
+        </div>
+
+        {/* EDIT MODAL */}
+        {editing && editingSlot && editingEntry && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-4 md:items-center print-hide">
+            <div className="w-full max-w-xl rounded-3xl border-2 border-slate-200 bg-white shadow-xl">
+              <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4">
                 <div>
-                  <div className="text-sm font-extrabold text-slate-900">My class groups</div>
-                  <div className="mt-1 text-sm text-slate-600">
-                    These come from your live Elume classes.
+                  <div className="text-sm font-extrabold text-slate-900">
+                    {fmtDay(editing.day)} • {editingSlot.label} ({editingSlot.start}–{editingSlot.end})
+                  </div>
+                  <div className="text-xs text-slate-600">
+                    Edit this slot. Changes save instantly.
                   </div>
                 </div>
 
                 <button
                   type="button"
-                  className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-                  onClick={() => alert("Archived classes coming soon (wired stub).")}
+                  className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                  onClick={() => setEditing(null)}
                 >
-                  Archived classes
+                  Close
                 </button>
               </div>
 
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {classes.length === 0 ? (
-                  <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-600">
-                    No classes found (or still loading).
-                  </div>
-                ) : (
-                  classes.map((c) => {
-                    const bg = tileBgForClassId(c.id);
-                    const tc = tileTextClass(bg);
-                    return (
-                      <div key={c.id} className={`rounded-2xl border-2 border-black px-3 py-2 ${bg} ${tc}`}>
-                        <div className="text-sm font-extrabold leading-tight">{c.name}</div>
-                        <div className={`text-xs ${tc === "text-white" ? "text-white/90" : "text-slate-800/80"}`}>
-                          {c.subject}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+              <div className="p-4">
+                {/* PERIOD EDITOR */}
+                {editingSlot.kind === "period" && (
+                  <>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="text-xs font-bold text-slate-600">
+                        Class
+                        <select
+                          className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                          value={editingEntry.classId ?? 0}
+                          onChange={(e) => {
+                            const picked = Number(e.target.value);
+                            const opt = classOptions.find((o) => o.id === picked);
+                            if (!opt || picked === 0) {
+                              updateEntry(editing.day, editing.slotId, {
+                                classId: null,
+                                classLabel: "",
+                              });
+                            } else {
+                              updateEntry(editing.day, editing.slotId, {
+                                classId: picked,
+                                classLabel: opt.label,
+                                supervisionRank: null,
+                              });
+                            }
+                          }}
+                        >
+                          {classOptions.map((o) => (
+                            <option key={o.id} value={o.id}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
 
-        {/* Print footer (won’t show now because we print timetable only) */}
-      </div>
-
-      {/* EDIT MODAL */}
-      {editing && editingSlot && editingEntry && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-4 md:items-center print-hide">
-          <div className="w-full max-w-xl rounded-3xl border-2 border-slate-200 bg-white shadow-xl">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4">
-              <div>
-                <div className="text-sm font-extrabold text-slate-900">
-                  {fmtDay(editing.day)} • {editingSlot.label} ({editingSlot.start}–{editingSlot.end})
-                </div>
-                <div className="text-xs text-slate-600">
-                  Edit this slot. Changes save instantly.
-                </div>
-              </div>
-
-              <button
-                type="button"
-                className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-                onClick={() => setEditing(null)}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="p-4">
-              {/* PERIOD EDITOR */}
-              {editingSlot.kind === "period" && (
-                <>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <label className="text-xs font-bold text-slate-600">
-                      Class
-                      <select
-                        className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                        value={editingEntry.classId ?? 0}
-                        onChange={(e) => {
-                          const picked = Number(e.target.value);
-                          const opt = classOptions.find((o) => o.id === picked);
-                          if (!opt || picked === 0) {
-                            updateEntry(editing.day, editing.slotId, {
-                              classId: null,
-                              classLabel: "",
-                            });
-                          } else {
-                            updateEntry(editing.day, editing.slotId, {
-                              classId: picked,
-                              classLabel: opt.label,
-                              supervisionRank: null,
-                            });
+                      <label className="text-xs font-bold text-slate-600">
+                        Room
+                        <input
+                          className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                          value={editingEntry.room}
+                          onChange={(e) =>
+                            updateEntry(editing.day, editing.slotId, { room: e.target.value })
                           }
-                        }}
-                      >
-                        {classOptions.map((o) => (
-                          <option key={o.id} value={o.id}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                          placeholder="e.g. Lab 1"
+                        />
+                      </label>
+                    </div>
 
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <label className="text-xs font-bold text-slate-600">
+                        Supervision rank (only if Free/Unused)
+                        <input
+                          type="number"
+                          min={0}
+                          className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                          value={editingEntry.supervisionRank ?? 0}
+                          onChange={(e) => {
+                            const v = Math.max(0, Math.trunc(Number(e.target.value || 0)));
+                            updateEntry(editing.day, editing.slotId, { supervisionRank: v === 0 ? null : v });
+                          }}
+                          disabled={!!editingEntry.classId || !!editingEntry.classLabel}
+                        />
+                      </label>
+
+                      <div className="flex items-end gap-2">
+                        <button
+                          type="button"
+                          className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+                          onClick={() => clearEntry(editing.day, editing.slotId)}
+                        >
+                          Clear slot
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* BREAK / LUNCH EDITOR */}
+                {(editingSlot.kind === "break" || editingSlot.kind === "lunch") && (
+                  <>
                     <label className="text-xs font-bold text-slate-600">
-                      Room
+                      Duty / Note
                       <input
                         className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                        value={editingEntry.room}
+                        value={editingEntry.dutyNote}
                         onChange={(e) =>
-                          updateEntry(editing.day, editing.slotId, { room: e.target.value })
+                          updateEntry(editing.day, editing.slotId, { dutyNote: e.target.value })
                         }
-                        placeholder="e.g. Lab 1"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <label className="text-xs font-bold text-slate-600">
-                      Supervision rank (only if Free/Unused)
-                      <input
-                        type="number"
-                        min={0}
-                        className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                        value={editingEntry.supervisionRank ?? 0}
-                        onChange={(e) => {
-                          const v = Math.max(0, Math.trunc(Number(e.target.value || 0)));
-                          updateEntry(editing.day, editing.slotId, { supervisionRank: v === 0 ? null : v });
-                        }}
-                        disabled={!!editingEntry.classId || !!editingEntry.classLabel}
+                        placeholder="e.g. Lunch supervision / Corridor duty / Yard duty"
                       />
                     </label>
 
-                    <div className="flex items-end gap-2">
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <label className="text-xs font-bold text-slate-600">
+                        Start time
+                        <input
+                          type="time"
+                          className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                          value={editingSlot.start}
+                          onChange={(e) =>
+                            updateSlotTime(editing.day, editing.slotId, "start", e.target.value)
+                          }
+                        />
+                      </label>
+
+                      <label className="text-xs font-bold text-slate-600">
+                        End time
+                        <input
+                          type="time"
+                          className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                          value={editingSlot.end}
+                          onChange={(e) =>
+                            updateSlotTime(editing.day, editing.slotId, "end", e.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-3">
                       <button
                         type="button"
                         className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
                         onClick={() => clearEntry(editing.day, editing.slotId)}
                       >
-                        Clear slot
+                        Clear note
                       </button>
                     </div>
-                  </div>
-                </>
-              )}
-
-              {/* BREAK / LUNCH EDITOR */}
-              {(editingSlot.kind === "break" || editingSlot.kind === "lunch") && (
-                <>
-                  <label className="text-xs font-bold text-slate-600">
-                    Duty / Note
-                    <input
-                      className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                      value={editingEntry.dutyNote}
-                      onChange={(e) =>
-                        updateEntry(editing.day, editing.slotId, { dutyNote: e.target.value })
-                      }
-                      placeholder="e.g. Lunch supervision / Corridor duty / Yard duty"
-                    />
-                  </label>
-
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <label className="text-xs font-bold text-slate-600">
-                      Start time
-                      <input
-                        type="time"
-                        className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                        value={editingSlot.start}
-                        onChange={(e) =>
-                          updateSlotTime(editing.day, editing.slotId, "start", e.target.value)
-                        }
-                      />
-                    </label>
-
-                    <label className="text-xs font-bold text-slate-600">
-                      End time
-                      <input
-                        type="time"
-                        className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                        value={editingSlot.end}
-                        onChange={(e) =>
-                          updateSlotTime(editing.day, editing.slotId, "end", e.target.value)
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  <div className="mt-3">
-                    <button
-                      type="button"
-                      className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-                      onClick={() => clearEntry(editing.day, editing.slotId)}
-                    >
-                      Clear note
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Desktop cell component */
-function DayCell({
-  day,
-  rowSlotId,
-  state,
-  meta,
-  tileBgForClassId,
-  setEditing,
-  slotIsActive,
-  today,
-}: {
-  day: DayKey;
-  rowSlotId: string;
-  state: StoredAdminState;
-  meta: MetaStore;
-  tileBgForClassId: (id: number | null) => string;
-  setEditing: React.Dispatch<React.SetStateAction<{ day: DayKey; slotId: string } | null>>;
-  slotIsActive: (d: DayKey, s: Slot) => boolean;
-  today: DayKey | null;
-}) {
-  const daySch = state.schedule[day];
-  const slot = daySch.slots.find((s) => s.id === rowSlotId);
-  if (!slot) {
-    return <div className="p-3 text-xs text-slate-400">—</div>;
-  }
-
-  const entry = daySch.entries[slot.id] ?? defaultEntry();
-  const isActive = slotIsActive(day, slot);
-
-  // Period tiles look like dashboard; break/lunch are slim and calm.
-  if (slot.kind === "period") {
-    const hasClass = !!entry.classId || !!entry.classLabel;
-    const bg = hasClass ? tileBgForClassId(entry.classId) : "bg-white";
-    const tc = hasClass ? tileTextClass(bg) : "text-slate-900";
-
-    const tile =
-      hasClass
-        ? `border-[4px] border-black ${bg} ${tc} shadow-[0_4px_0_rgba(15,23,42,0.16)]`
-        : "border-2 border-slate-200 bg-white text-slate-900";
-
-    const showRank = !hasClass && (entry.supervisionRank ?? 0) > 0;
-
-    // Split label into two lines: "Class name" and "Subject"
-    const parts = (entry.classLabel || "").split(" — ");
-    const clsName = parts[0] || "";
-    const subj = parts[1] || "";
-
-    return (
-      <div className="p-3">
-        <button
-          type="button"
-          onClick={() => setEditing({ day, slotId: slot.id })}
-          className={`w-full text-left rounded-3xl p-3 ${tile} ${isActive ? "ring-2 ring-emerald-300" : ""
-            }`}
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              {isActive && (
-                <div className="mb-2 inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-900">
-                  Now
-                </div>
-              )}
-
-              <div className="text-lg font-extrabold leading-tight truncate">
-                {hasClass ? clsName : "Free"}
-              </div>
-
-              {hasClass && subj && (
-                <div className={`text-sm font-semibold leading-tight truncate ${tc === "text-white" ? "text-white/90" : "text-slate-700"}`}>
-                  {subj}
-                </div>
-              )}
-
-              <div className={`text-sm ${tc === "text-white" ? "text-white/90" : "text-slate-700"}`}>
-                {slot.start}–{slot.end}
-                {entry.room ? ` • ${entry.room}` : ""}
+                  </>
+                )}
               </div>
             </div>
-
-            {showRank && (
-              <div className="grid h-12 w-12 place-items-center rounded-3xl border-[4px] border-black bg-white text-2xl font-extrabold text-slate-900 shadow-[0_4px_0_rgba(15,23,42,0.16)]">
-                {entry.supervisionRank}
-              </div>
-            )}
           </div>
-        </button>
+        )}
       </div>
     );
   }
 
-  // Break/Lunch: small, not “tile-y”
-  const note = entry.dutyNote?.trim();
-  return (
-    <div className="p-3">
-      <button
-        type="button"
-        onClick={() => setEditing({ day, slotId: slot.id })}
-        className={`w-full text-left rounded-2xl border-2 p-2 ${note
-          ? "border-red-400 bg-red-50"
-          : slot.kind === "lunch"
-            ? "border-amber-200 bg-amber-50"
-            : "border-slate-200 bg-slate-50"
-          } ${isActive ? "ring-2 ring-emerald-300" : ""}`}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            {isActive && (
-              <div className="mb-1 inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-900">
-                Now
+/** Desktop cell component */
+function DayCell({
+    day,
+    rowSlotId,
+    state,
+    meta,
+    tileBgForClassId,
+    setEditing,
+    slotIsActive,
+    today,
+  }: {
+    day: DayKey;
+    rowSlotId: string;
+    state: StoredAdminState;
+    meta: MetaStore;
+    tileBgForClassId: (id: number | null) => string;
+    setEditing: React.Dispatch<React.SetStateAction<{ day: DayKey; slotId: string } | null>>;
+    slotIsActive: (d: DayKey, s: Slot) => boolean;
+    today: DayKey | null;
+  }) {
+      const daySch = state.schedule[day];
+      const slot = daySch.slots.find((s) => s.id === rowSlotId);
+      if (!slot) {
+        return <div className="p-3 text-xs text-slate-400">—</div>;
+      }
+
+      const entry = daySch.entries[slot.id] ?? defaultEntry();
+      const isActive = slotIsActive(day, slot);
+
+      // Period tiles look like dashboard; break/lunch are slim and calm.
+      if (slot.kind === "period") {
+        const hasClass = !!entry.classId || !!entry.classLabel;
+        const bg = hasClass ? tileBgForClassId(entry.classId) : "bg-white";
+        const tc = hasClass ? tileTextClass(bg) : "text-slate-900";
+
+        const tile =
+          hasClass
+            ? `border-[4px] border-black ${bg} ${tc} shadow-[0_4px_0_rgba(15,23,42,0.16)]`
+            : "border-2 border-slate-200 bg-white text-slate-900";
+
+        const showRank = !hasClass && (entry.supervisionRank ?? 0) > 0;
+
+        // Split label into two lines: "Class name" and "Subject"
+        const parts = (entry.classLabel || "").split(" — ");
+        const clsName = parts[0] || "";
+        const subj = parts[1] || "";
+
+        return (
+          <div className="p-3">
+            <button
+              type="button"
+              onClick={() => setEditing({ day, slotId: slot.id })}
+              className={`w-full text-left rounded-3xl p-3 ${tile} ${isActive ? "ring-2 ring-emerald-300" : ""
+                }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  {isActive && (
+                    <div className="mb-2 inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-900">
+                      Now
+                    </div>
+                  )}
+
+                  <div className="text-lg font-extrabold leading-tight truncate">
+                    {hasClass ? clsName : "Free"}
+                  </div>
+
+                  {hasClass && subj && (
+                    <div className={`text-sm font-semibold leading-tight truncate ${tc === "text-white" ? "text-white/90" : "text-slate-700"}`}>
+                      {subj}
+                    </div>
+                  )}
+
+                  <div className={`text-sm ${tc === "text-white" ? "text-white/90" : "text-slate-700"}`}>
+                    {slot.start}–{slot.end}
+                    {entry.room ? ` • ${entry.room}` : ""}
+                  </div>
+                </div>
+
+                {showRank && (
+                  <div className="grid h-12 w-12 place-items-center rounded-3xl border-[4px] border-black bg-white text-2xl font-extrabold text-slate-900 shadow-[0_4px_0_rgba(15,23,42,0.16)]">
+                    {entry.supervisionRank}
+                  </div>
+                )}
               </div>
-            )}
-            <div className="text-xs font-extrabold text-slate-900">{slot.label}</div>
-            <div className="text-[11px] text-slate-600">
-              {slot.start}–{slot.end}
-            </div>
-            <div className="mt-1 text-[11px] font-semibold text-slate-800 truncate">
-              {note ? note : "No duty"}
-            </div>
+            </button>
           </div>
+        );
+      }
+
+      // Break/Lunch: small, not “tile-y”
+      const note = entry.dutyNote?.trim();
+      return (
+        <div className="p-3">
+          <button
+            type="button"
+            onClick={() => setEditing({ day, slotId: slot.id })}
+            className={`w-full text-left rounded-2xl border-2 p-2 ${note
+              ? "border-red-400 bg-red-50"
+              : slot.kind === "lunch"
+                ? "border-amber-200 bg-amber-50"
+                : "border-slate-200 bg-slate-50"
+              } ${isActive ? "ring-2 ring-emerald-300" : ""}`}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                {isActive && (
+                  <div className="mb-1 inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-900">
+                    Now
+                  </div>
+                )}
+                <div className="text-xs font-extrabold text-slate-900">{slot.label}</div>
+                <div className="text-[11px] text-slate-600">
+                  {slot.start}–{slot.end}
+                </div>
+                <div className="mt-1 text-[11px] font-semibold text-slate-800 truncate">
+                  {note ? note : "No duty"}
+                </div>
+              </div>
+            </div>
+          </button>
         </div>
-      </button>
-    </div>
-  );
-}
+      );
+    }
 
 /** Mobile cell wrapper (same rendering but already inside correct column span) */
 function MobileDayCell(props: React.ComponentProps<typeof DayCell>) {
-  return <DayCell {...props} />;
-}
+      return <DayCell {...props} />;
+    }
