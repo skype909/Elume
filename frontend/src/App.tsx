@@ -322,10 +322,16 @@ function Dashboard() {
     "after:bg-gradient-to-r after:from-transparent after:via-white/40 after:to-transparent " +
     "after:rotate-12 hover:after:left-[120%] after:transition-all after:duration-700";
   const btnPrimary =
-    "rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-6 py-3 text-base font-semibold text-white shadow-sm hover:bg-emerald-700 active:translate-y-[1px] disabled:opacity-50";
+    "rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-6 py-3 text-base font-semibold text-white shadow-sm hover:bg-emerald-700 active:translate-y-[1px] disabled:opacity-50 ";
 
   const pill =
     "rounded-full border-2 border-slate-200 bg-slate-50 px-4 py-2 text-sm hover:bg-slate-100 active:translate-y-[1px]";
+
+  const headerBtn =
+  "w-32 text-center rounded-2xl border border-slate-200 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur transition-all hover:bg-slate-100 hover:shadow-md hover:-translate-y-[1px] active:translate-y-[0px] w-32 text-center";
+
+  const headerBtnPrimary =
+  "w-32 text-center rounded-2xl border border-emerald-600 bg-emerald-600/90 px-4 py-2 text-sm font-semibold text-white shadow-sm backdrop-blur transition-all hover:bg-emerald-700 hover:border-emerald-700 hover:shadow-md hover:-translate-y-[1px] active:translate-y-[0px] w-32 text-center";
 
   function swapOrder(dragId: number, overId: number) {
     if (dragId === overId) return;
@@ -498,11 +504,7 @@ function Dashboard() {
 
           {/* Right controls */}
           <div className="ml-auto flex items-center gap-4">
-            <button className={btn} type="button" onClick={() => navigate("/admin")}>
-              Admin
-            </button>
-
-            {/* Desktop-only: Create Resources (3-panel workspace is not mobile-friendly) */}
+            {/* Desktop-only: Create Resources (primary) */}
             <button
               className={`hidden md:inline-flex ${btnGlow}`}
               type="button"
@@ -519,17 +521,26 @@ function Dashboard() {
                 </span>
               </span>
 
-              <span className="drop-shadow-[0_0_8px_rgba(236,72,153,0.9)]">
-                Create Resources
-              </span>
+              {/* ✅ stronger readability on the white text */}
+              <span className="drop-shadow-[0_2px_2px_rgba(0,0,0,0.55)]">Create Resources</span>
 
               <span className="ml-1 rounded-full bg-white/20 px-2 py-[2px] text-[10px] font-bold tracking-wide text-white border border-white/40">
                 AI
               </span>
             </button>
-            <button className={btnPrimary} type="button" onClick={() => navigate("/calendar")}>
-              Calendar
-            </button>
+
+            {/* Admin + Calendar stacked to the right (desktop) */}
+            <div className="hidden md:flex flex-col gap-2 items-end">
+              <button className={headerBtn} type="button" onClick={() => navigate("/admin")}>
+                Admin
+              </button>
+
+              <button className={headerBtn} type="button" onClick={() => navigate("/calendar")}>
+                Calendar
+              </button>
+            </div>
+
+            {/* Date card */}
             <div className="hidden md:block rounded-3xl border-2 border-slate-200 bg-slate-50 px-6 py-4 text-right shadow-sm">
               <div className="text-sm font-semibold text-slate-600">{headerDay}</div>
               <div className="text-lg font-extrabold text-slate-800">{headerDate}</div>
