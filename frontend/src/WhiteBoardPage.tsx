@@ -648,6 +648,22 @@ export default function WhiteBoardPage() {
   // Scroll container
   const containerRef = useRef<HTMLDivElement | null>(null);
 
+  // ✅ Unsaved-changes guard
+  const dirtyRef = useRef(false);
+  const [isDirty, setIsDirty] = useState(false);
+
+  const markDirty = () => {
+    if (!dirtyRef.current) {
+      dirtyRef.current = true;
+      setIsDirty(true);
+    }
+  };
+
+  const markClean = () => {
+    dirtyRef.current = false;
+    setIsDirty(false);
+  };
+
   // Fullscreen
   const fsRootRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -1127,6 +1143,78 @@ export default function WhiteBoardPage() {
     ctx.restore();
   }, []);
 
+  // ✅ Warn if leaving with unsaved whiteboard changes (refresh/close/tab)
+  // ✅ Also catches browser Back/Forward gestures (popstate)
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      e.returnValue = ""; // required for Chrome/Edge
+    };
+
+    const onPopState = () => {
+      if (!dirtyRef.current) return;
+
+      const ok = window.confirm(
+        "You have unsaved whiteboard changes. Leave this page and lose them?"
+      );
+
+      if (!ok) {
+        // stay on page: push state back so the URL doesn't change
+        window.history.pushState(null, "", window.location.href);
+      }
+      // if ok, allow navigation naturally
+    };
+
+    // Create a history “buffer” so swipe-back triggers popstate we can intercept
+    window.history.pushState(null, "", window.location.href);
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("popstate", onPopState);
+
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("popstate", onPopState);
+    };
+  }, []);
+
+  // ✅ Prevent horizontal swipe gestures from triggering browser Back/Forward
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    let sx = 0;
+    let sy = 0;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      sx = e.touches[0].clientX;
+      sy = e.touches[0].clientY;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+
+      const dx = e.touches[0].clientX - sx;
+      const dy = e.touches[0].clientY - sy;
+
+      // If the user is swiping more horizontally than vertically → block it
+      if (Math.abs(dx) > Math.abs(dy) + 6) {
+        if (e.cancelable) e.preventDefault();
+      }
+    };
+
+    // passive:false is REQUIRED or preventDefault() is ignored
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart as any);
+      el.removeEventListener("touchmove", onTouchMove as any);
+    };
+  }, []);
+
+
   useEffect(() => {
     const onResize = () => syncCanvasSize();
     window.addEventListener("resize", onResize);
@@ -1295,6 +1383,7 @@ export default function WhiteBoardPage() {
       // If tap delete box -> delete immediately
       if (inRect(x, y, xbx, xby, XBOX, XBOX)) {
         snapshotObjects(); // keep undo working
+        markDirty();
         setPlacedImages((arr) => arr.filter((p) => p.id !== hit.id));
         setSelectedImageId(null);
         return;
@@ -1334,6 +1423,7 @@ export default function WhiteBoardPage() {
   const onImgPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!imgDragRef.current) return;
 
+    markDirty();
     const { x, y } = getImgCanvasPoint(e);
     const dx = x - imgDragRef.current.startX;
     const dy = y - imgDragRef.current.startY;
@@ -1614,6 +1704,7 @@ export default function WhiteBoardPage() {
     if (!snappedThisStrokeRef.current) {
       snappedThisStrokeRef.current = true;
       snapshotInkViewport();
+      markDirty();
     }
 
     const { x, y } = getLocalXY(e);
@@ -2069,6 +2160,7 @@ export default function WhiteBoardPage() {
         throw new Error(txt || `Save failed (${r.status})`);
       }
 
+      markClean();
       navigate(`/class/${classId}`);
     } catch (e: any) {
       alert(e?.message || "Save failed");
@@ -2210,6 +2302,7 @@ export default function WhiteBoardPage() {
 
       const dataUrl = tmp.toDataURL("image/png");
 
+      markDirty();
       setPlacedImages((arr) => [
         ...arr,
         {
@@ -2842,7 +2935,7 @@ export default function WhiteBoardPage() {
                 onPointerUp={tool === "hand" ? onHandUp : undefined}
                 onPointerCancel={tool === "hand" ? onHandUp : undefined}
 
-                className="h-[70vh] overflow-y-scroll overflow-x-hidden rounded-2xl border-2 border-slate-200 bg-white relative"
+                className="h-[70vh] overflow-y-scroll overflow-x-hidden overscroll-contain overscroll-x-none touch-pan-y rounded-2xl border-2 border-slate-200 bg-white relative"
               >
 
                 <canvas ref={bgCanvasRef} className="absolute left-0 top-0 pointer-events-none" />

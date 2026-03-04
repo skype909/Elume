@@ -36,6 +36,12 @@ function toISODate(value: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+const todayISO = new Date().toISOString().slice(0, 10);
+
+function isTodayISO(iso: string) {
+  return iso === todayISO;
+}
+
 function toLocalTimeHHMM(value?: string | null): string {
   if (!value) return "";
   const d = new Date(value);
@@ -93,6 +99,10 @@ export default function CalendarPage() {
   const [draftAllDay, setDraftAllDay] = useState(false);
   const [draftType, setDraftType] = useState("general");
   const [draftDesc, setDraftDesc] = useState("");
+
+  type DraftScope = "global" | "class";
+  const [draftScope, setDraftScope] = useState<DraftScope>("global");
+  const [draftClassId, setDraftClassId] = useState<number>(1);
 
   // AI assistant
   const [aiText, setAiText] = useState("");
@@ -160,6 +170,19 @@ export default function CalendarPage() {
     return map;
   }, [events]);
 
+  const classById = useMemo(() => {
+    const m = new Map<number, ClassItem>();
+    for (const c of classes) m.set(c.id, c);
+    return m;
+  }, [classes]);
+
+  function classLabel(classId: number | null) {
+    if (!classId) return "";
+    const c = classById.get(classId);
+    if (!c) return `Class ${classId}`;
+    return c.subject ? `${c.name} • ${c.subject}` : c.name;
+  }
+
   const year = new Date().getFullYear();
 
   // --------- modal helpers ---------
@@ -172,6 +195,8 @@ export default function CalendarPage() {
     setDraftDate(todayISO);
     setDraftTime("09:30");
     setDraftEndTime("");
+    setDraftScope("global");
+    setDraftClassId(classes?.[0]?.id ?? 1);
   }
 
   function openCreate(prefillISO?: string) {
@@ -216,7 +241,7 @@ export default function CalendarPage() {
       return;
     }
 
-    const classIdToSave = currentTargetClassId();
+    const classIdToSave = draftScope === "class" ? draftClassId : null;
 
     const startISO = draftAllDay
       ? combineDateTime(draftDate, "09:00")
@@ -382,11 +407,10 @@ export default function CalendarPage() {
 
             <div className="flex flex-wrap gap-2">
               <button
-                className={`rounded-full border-2 px-4 py-2 text-sm ${
-                  filterMode === "all"
-                    ? "border-emerald-700 bg-emerald-50"
-                    : "border-slate-200 bg-white"
-                }`}
+                className={`rounded-full border-2 px-4 py-2 text-sm ${filterMode === "all"
+                  ? "border-emerald-700 bg-emerald-50"
+                  : "border-slate-200 bg-white"
+                  }`}
                 type="button"
                 onClick={() => setFilterMode("all")}
               >
@@ -394,11 +418,10 @@ export default function CalendarPage() {
               </button>
 
               <button
-                className={`rounded-full border-2 px-4 py-2 text-sm ${
-                  filterMode === "global"
-                    ? "border-emerald-700 bg-emerald-50"
-                    : "border-slate-200 bg-white"
-                }`}
+                className={`rounded-full border-2 px-4 py-2 text-sm ${filterMode === "global"
+                  ? "border-emerald-700 bg-emerald-50"
+                  : "border-slate-200 bg-white"
+                  }`}
                 type="button"
                 onClick={() => setFilterMode("global")}
               >
@@ -406,11 +429,10 @@ export default function CalendarPage() {
               </button>
 
               <button
-                className={`rounded-full border-2 px-4 py-2 text-sm ${
-                  filterMode === "class"
-                    ? "border-emerald-700 bg-emerald-50"
-                    : "border-slate-200 bg-white"
-                }`}
+                className={`rounded-full border-2 px-4 py-2 text-sm ${filterMode === "class"
+                  ? "border-emerald-700 bg-emerald-50"
+                  : "border-slate-200 bg-white"
+                  }`}
                 type="button"
                 onClick={() => setFilterMode("class")}
               >
@@ -428,7 +450,7 @@ export default function CalendarPage() {
                 >
                   {classes.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name}
+                      {c.subject ? `${c.name} • ${c.subject}` : c.name}
                     </option>
                   ))}
                 </select>
@@ -542,17 +564,17 @@ export default function CalendarPage() {
 
                   {Array.from({ length: daysInMonth }).map((__, dayIndex) => {
                     const day = dayIndex + 1;
-                    const dateISO = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(
-                      day
-                    ).padStart(2, "0")}`;
+                    const dateISO = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
                     const dayEvents = eventsByDay.get(dateISO) || [];
+                    const isToday = dateISO === todayISO;
 
                     return (
                       <button
                         key={dateISO}
                         type="button"
                         onClick={() => openCreate(dateISO)}
-                        className="group relative rounded-lg border border-slate-200 bg-white p-2 text-left hover:bg-slate-50"
+                        className={`group relative rounded-lg border border-slate-200 p-2 text-left hover:bg-slate-50 h-[80px] overflow-hidden ${isToday ? "bg-emerald-50 ring-4 ring-emerald-200" : ""
+                          }`}
                         title="Click to add event"
                       >
                         <div className="flex items-center justify-between">
@@ -563,7 +585,7 @@ export default function CalendarPage() {
                                 <span
                                   key={e.id}
                                   className={`h-1.5 w-1.5 rounded-full ${typeDotClass(e.event_type)}`}
-                                  title={e.title}
+                                  title={e.class_id ? `${e.title} — ${classLabel(e.class_id)}` : e.title}
                                   onClick={(ev) => {
                                     ev.stopPropagation();
                                     openEdit(e);
@@ -575,7 +597,17 @@ export default function CalendarPage() {
                         </div>
 
                         {dayEvents.length > 0 && (
-                          <div className="mt-1 text-[10px] text-slate-500">{dayEvents[0].title}</div>
+                          <div className="mt-1">
+                            <div className="text-[10px] text-slate-700 font-medium">
+                              {dayEvents[0].title}
+                            </div>
+
+                            {dayEvents[0].class_id && (
+                              <div className="text-[10px] text-slate-500">
+                                {classLabel(dayEvents[0].class_id)}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </button>
                     );
@@ -600,6 +632,47 @@ export default function CalendarPage() {
               >
                 Close
               </button>
+            </div>
+
+            <div className="grid gap-2 md:grid-cols-2">
+              <div>
+                <div className="text-xs font-semibold text-slate-600 mb-1">Event visibility</div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDraftScope("global")}
+                    className={`rounded-full border-2 px-4 py-2 text-sm ${draftScope === "global" ? "border-emerald-700 bg-emerald-50" : "border-slate-200 bg-white"
+                      }`}
+                  >
+                    Global
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDraftScope("class")}
+                    className={`rounded-full border-2 px-4 py-2 text-sm ${draftScope === "class" ? "border-emerald-700 bg-emerald-50" : "border-slate-200 bg-white"
+                      }`}
+                  >
+                    Class
+                  </button>
+                </div>
+              </div>
+
+              {draftScope === "class" && (
+                <div>
+                  <div className="text-xs font-semibold text-slate-600 mb-1">Class</div>
+                  <select
+                    value={draftClassId}
+                    onChange={(e) => setDraftClassId(Number(e.target.value))}
+                    className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                  >
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.subject ? `${c.name} • ${c.subject}` : c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="mt-4 grid gap-3">
@@ -726,9 +799,17 @@ export default function CalendarPage() {
                         onClick={() => openEdit(e)}
                         className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50"
                       >
-                        <div className="flex items-center gap-2">
-                          <span className={`h-2 w-2 rounded-full ${typeDotClass(e.event_type)}`} />
-                          <div className="text-sm font-semibold">{e.title}</div>
+                        <div className="flex items-start gap-2">
+                          <span className={`mt-1 h-2 w-2 rounded-full ${typeDotClass(e.event_type)}`} />
+                          <div>
+                            <div className="text-sm font-semibold">{e.title}</div>
+
+                            {e.class_id && (
+                              <div className="text-xs text-slate-500">
+                                {classLabel(e.class_id)}
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         {/* Right side: time + bin */}

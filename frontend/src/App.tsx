@@ -20,6 +20,7 @@ import { apiFetch } from "./api";
 import WhiteBoardPage from "./WhiteBoardPage";
 import TeacherAdminPage from "./TeacherAdminPage";
 import TeacherPlanner from "./TeacherPlanner";
+import CreateResources from "./CreateResources";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -308,8 +309,21 @@ function Dashboard() {
     "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)]";
   const btn =
     "rounded-2xl border-2 border-slate-300 bg-white px-6 py-3 text-base font-semibold shadow-sm hover:bg-slate-50 active:translate-y-[1px]";
+  const btnGlow =
+    "relative inline-flex items-center gap-3 rounded-2xl border-2 border-fuchsia-600 " +
+    "bg-gradient-to-r from-yellow-400 via-emerald-500 to-pink-500 " +
+    "px-7 py-3 text-base font-extrabold text-white " +
+    "shadow-[0_0_18px_rgba(236,72,153,0.75)] " +
+    "ring-4 ring-pink-300/70 " +
+    "hover:shadow-[0_0_40px_rgba(236,72,153,1)] hover:ring-pink-300 " +
+    "hover:-translate-y-[2px] hover:scale-[1.03] active:scale-[0.98] " +
+    "transition-all duration-200 overflow-hidden " +
+    "after:absolute after:top-0 after:left-[-60%] after:h-full after:w-[60%] " +
+    "after:bg-gradient-to-r after:from-transparent after:via-white/40 after:to-transparent " +
+    "after:rotate-12 hover:after:left-[120%] after:transition-all after:duration-700";
   const btnPrimary =
     "rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-6 py-3 text-base font-semibold text-white shadow-sm hover:bg-emerald-700 active:translate-y-[1px] disabled:opacity-50";
+
   const pill =
     "rounded-full border-2 border-slate-200 bg-slate-50 px-4 py-2 text-sm hover:bg-slate-100 active:translate-y-[1px]";
 
@@ -488,10 +502,34 @@ function Dashboard() {
               Admin
             </button>
 
+            {/* Desktop-only: Create Resources (3-panel workspace is not mobile-friendly) */}
+            <button
+              className={`hidden md:inline-flex ${btnGlow}`}
+              type="button"
+              onClick={() => navigate("/create-resources")}
+              title="AI-powered lesson planning and resource creation"
+            >
+              <span className="relative flex items-center justify-center">
+                {/* pulsing AI halo */}
+                <span className="absolute inline-flex h-6 w-6 rounded-full bg-pink-400 opacity-60 animate-[ping_2.2s_ease-out_infinite]"></span>
+
+                {/* brain icon */}
+                <span className="relative text-lg leading-none drop-shadow-[0_0_6px_rgba(255,255,255,0.9)]">
+                  🧠
+                </span>
+              </span>
+
+              <span className="drop-shadow-[0_0_8px_rgba(236,72,153,0.9)]">
+                Create Resources
+              </span>
+
+              <span className="ml-1 rounded-full bg-white/20 px-2 py-[2px] text-[10px] font-bold tracking-wide text-white border border-white/40">
+                AI
+              </span>
+            </button>
             <button className={btnPrimary} type="button" onClick={() => navigate("/calendar")}>
               Calendar
             </button>
-
             <div className="hidden md:block rounded-3xl border-2 border-slate-200 bg-slate-50 px-6 py-4 text-right shadow-sm">
               <div className="text-sm font-semibold text-slate-600">{headerDay}</div>
               <div className="text-lg font-extrabold text-slate-800">{headerDate}</div>
@@ -904,6 +942,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/admin" element={<TeacherAdminPage />} />
         <Route path="/planner" element={<TeacherPlanner />} />
+        <Route path="/create-resources" element={<CreateResources />} />
       </Routes>
       {userEmail && (
         <div className="fixed bottom-3 right-3 z-50 rounded-lg border border-slate-200 bg-white/90 px-2 py-1 text-[10px] leading-tight text-slate-600 shadow-sm">

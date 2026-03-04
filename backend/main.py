@@ -24,6 +24,9 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 import secrets
 
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+
 
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
 import schemas
@@ -74,6 +77,116 @@ def _make_token(user_id: int, email: str) -> str:
         JWT_SECRET,
         algorithm=JWT_ALG,
     )
+
+# -------------------------
+# DOCX Export (editable Word doc)
+# -------------------------
+
+class ExportDocxRequest(BaseModel):
+    title: str
+    content: str
+    teacher: str | None = None
+    meta: dict | None = None  # optional: scope/level/template/date etc.
+
+
+def _docx_from_markdownish(title: str, content: str, teacher: str | None = None, meta: dict | None = None) -> bytes:
+    """
+    Very simple parser:
+    - Lines starting with ### / ## / # become headings
+    - Lines starting with "- " become bullet points
+    - Blank lines separate paragraphs
+    """
+    try:
+        from docx import Document
+        from docx.shared import Pt
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"python-docx not installed/available: {e}")
+
+    doc = Document()
+
+    # Title
+    doc.add_heading(title.strip() or "ELume Resource", level=0)
+
+    # Subheader
+    sub = []
+    if teacher:
+        sub.append(f"Teacher: {teacher}")
+    if meta:
+        # keep it neat: only show a few common fields if present
+        for k in ["template", "level", "tone", "scopeLabel", "createdAt"]:
+            if meta.get(k):
+                label = {
+                    "scopeLabel": "Scope",
+                    "createdAt": "Created",
+                }.get(k, k.capitalize())
+                sub.append(f"{label}: {meta.get(k)}")
+    if sub:
+        p = doc.add_paragraph(" • ".join(sub))
+        for run in p.runs:
+            run.font.size = Pt(10)
+
+    doc.add_paragraph("")  # spacer
+
+    lines = (content or "").replace("\r\n", "\n").split("\n")
+    in_bullets = False
+
+    for raw in lines:
+        line = raw.rstrip()
+
+        if not line.strip():
+            doc.add_paragraph("")
+            in_bullets = False
+            continue
+
+        # headings
+        if line.startswith("### "):
+            doc.add_heading(line[4:].strip(), level=2)
+            in_bullets = False
+            continue
+        if line.startswith("## "):
+            doc.add_heading(line[3:].strip(), level=1)
+            in_bullets = False
+            continue
+        if line.startswith("# "):
+            doc.add_heading(line[2:].strip(), level=0)
+            in_bullets = False
+            continue
+
+        # bullets
+        if line.lstrip().startswith("- "):
+            text = line.lstrip()[2:].strip()
+            doc.add_paragraph(text, style="List Bullet")
+            in_bullets = True
+            continue
+
+        # normal paragraph
+        doc.add_paragraph(line)
+        in_bullets = False
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+@app.post("/exports/docx")
+def export_docx(payload: ExportDocxRequest):
+    title = (payload.title or "").strip() or "ELume Resource"
+    content = payload.content or ""
+    teacher = (payload.teacher or "").strip() or None
+
+    data = _docx_from_markdownish(title, content, teacher=teacher, meta=payload.meta or {})
+
+    filename_safe = re.sub(r"[^a-zA-Z0-9_\- ]+", "", title).strip().replace(" ", "_")
+    if not filename_safe:
+        filename_safe = "ELume_Resource"
+    filename = f"{filename_safe}.docx"
+
+    return StreamingResponse(
+        BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 # =========================================================
 # CORS
 # =========================================================
@@ -2394,6 +2507,144 @@ def ai_parse_event(payload: schemas.AIParseEventRequest):
         )
 
     return schemas.AIParseEventResponse(draft=draft, warnings=warnings)
+
+# -------------------------
+# AI CreateResources (draft generator - DOES NOT write to DB)
+# -------------------------
+
+from typing import Any, Literal
+
+class AICreateResourcesSource(BaseModel):
+    id: str
+    title: str
+    pages: Any | None = None   # front-end sends array or null; keep flexible
+    text: str
+
+class AICreateResourcesScope(BaseModel):
+    mode: Literal["general", "single", "group"]
+    classId: int | None = None
+    classIds: list[int] | None = None
+    groupName: str | None = None
+
+class AICreateResourcesRequest(BaseModel):
+    kind: str                       # e.g. "lesson_plan", "scheme", "dept_plan", "worksheet", "ideas"
+    template: str                   # your template dropdown value
+    tone: str                       # e.g. "Professional", "Friendly" etc
+    level: str                      # e.g. "Junior Cycle"
+    scope: AICreateResourcesScope
+    prompt: str
+    sources: list[AICreateResourcesSource] = []
+    timezone: str = "Europe/Dublin"
+
+class AICreateResourcesResponse(BaseModel):
+    title: str
+    content: str
+
+@app.post("/ai/create-resources", response_model=AICreateResourcesResponse)
+def ai_create_resources(
+    payload: AICreateResourcesRequest,
+    user: models.UserModel = Depends(get_current_user),  # keep it teacher-only
+):
+    p = (payload.prompt or "").strip()
+    if not p:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    # Lazy import so backend still runs without openai installed
+    try:
+        from openai import OpenAI  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI client not available: {e}")
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="OPENAI_API_KEY is missing. Check backend .env and that load_dotenv() runs on startup.",
+        )
+
+    client = OpenAI(api_key=api_key)
+
+    # Build a compact "allowed sources" bundle (ONLY what teacher ticked)
+    # Keep it short to avoid token blowups.
+    sources_txt = ""
+    if payload.sources:
+        chunks = []
+        for s in payload.sources[:20]:
+            t = (s.text or "").strip()
+            if not t:
+                continue
+            # hard-trim each snippet
+            t = t[:2000]
+            pages = ""
+            if s.pages:
+                pages = f" (pages: {s.pages})"
+            chunks.append(f"---\nSOURCE: {s.title}{pages}\n{t}")
+        sources_txt = "\n".join(chunks)
+
+    scope_desc = ""
+    if payload.scope.mode == "general":
+        scope_desc = "General (not tied to a specific class)"
+    elif payload.scope.mode == "single":
+        scope_desc = f"Single class_id: {payload.scope.classId}"
+    else:
+        scope_desc = f"Group class_ids: {payload.scope.classIds} | groupName: {payload.scope.groupName}"
+
+    system = (
+        f"Today is {datetime.now().date().isoformat()} in timezone {payload.timezone}. "
+        "You are an assistant for teachers writing classroom resources. "
+        "CRITICAL RULE: You may ONLY use the provided SOURCE EXCERPTS as factual grounding. "
+        "If something is not in the sources, write it as a sensible teaching suggestion, not as a quoted fact. "
+        "Return ONLY valid JSON (no markdown, no backticks). "
+        "JSON must have exactly these keys: title, content. "
+        "content should be plain text with clear headings and bullet points where useful. "
+        "Do not include any extra keys."
+    )
+
+    user_msg = (
+        f"Teacher: {user.email}\n"
+        f"kind: {payload.kind}\n"
+        f"template: {payload.template}\n"
+        f"tone: {payload.tone}\n"
+        f"level: {payload.level}\n"
+        f"scope: {scope_desc}\n"
+        f"prompt: {p}\n"
+        "\n"
+        "SOURCE EXCERPTS (allowed):\n"
+        f"{sources_txt if sources_txt else '[No sources selected]'}\n"
+        "\n"
+        "Write the best possible resource for the teacher."
+    )
+
+    resp = client.chat.completions.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        temperature=0.3,
+    )
+
+    content = (resp.choices[0].message.content or "").strip()
+
+    # Extract JSON defensively (handles occasional extra text)
+    m = re.search(r"\{[\s\S]*\}", content)
+    if not m:
+        raise HTTPException(status_code=500, detail=f"AI did not return JSON. Got: {content[:200]}")
+
+    try:
+        data = json.loads(m.group(0))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not parse AI JSON: {e}")
+
+    title = (data.get("title") or "").strip()
+    body = (data.get("content") or "").strip()
+
+    if not title:
+        title = f"{payload.template} • {p}"[:80]
+    if not body:
+        raise HTTPException(status_code=500, detail="AI returned empty content")
+
+    return {"title": title, "content": body}
 
 
 # ================= AI QUIZ GENERATION =================

@@ -95,10 +95,24 @@ export default function StudentJoinQuizPage() {
   const [pollError, setPollError] = useState<string | null>(null);
 
   const [selectedChoice, setSelectedChoice] = useState<ChoiceKey | null>(null);
+  const [hasAnswered, setHasAnswered] = useState(false);
+
+  // Track last question by BOTH id + index (index is more reliable if id is missing/unchanged)
   const [lastQuestionId, setLastQuestionId] = useState<string>("");
+  const [lastQuestionIndex, setLastQuestionIndex] = useState<number | null>(null);
+
+  // Brief "Next question…" transition so students notice the change
+  const [transitioning, setTransitioning] = useState(false);
+  const transitionTimerRef = useRef<number | null>(null);
 
   const pollRef = useRef<number | null>(null);
   const answeringRef = useRef(false);
+
+  function triggerTransition() {
+    setTransitioning(true);
+    if (transitionTimerRef.current) window.clearTimeout(transitionTimerRef.current);
+    transitionTimerRef.current = window.setTimeout(() => setTransitioning(false), 450);
+  }
 
   const title = current?.title || "Live Quiz";
   const state = current?.state || "lobby";
@@ -192,10 +206,23 @@ export default function StudentJoinQuizPage() {
 
       // When the teacher advances to a new question, reset local selection
       const newQid = data.question?.id || "";
-      if (newQid && newQid !== lastQuestionId) {
-        // Only clear if we were already on a question (prevents “flash then clear” on Q1 load)
-        if (lastQuestionId) setSelectedChoice(null);
+      const newIdx = typeof data.current_index === "number" ? data.current_index : null;
+
+      const idChanged = Boolean(newQid) && newQid !== lastQuestionId;
+      const idxChanged = newIdx !== null && newIdx !== lastQuestionIndex;
+
+      const questionChanged = idChanged || idxChanged;
+
+      if (questionChanged) {
+        // Only clear if we were already on a question (prevents “flash then clear” on first load)
+        if (lastQuestionId || lastQuestionIndex !== null) {
+          setSelectedChoice(null);
+          setHasAnswered(false);
+          triggerTransition();
+        }
+
         setLastQuestionId(newQid);
+        setLastQuestionIndex(newIdx);
       }
 
       if (data.state === "ended") stopPolling();
@@ -211,6 +238,7 @@ export default function StudentJoinQuizPage() {
 
     // ✅ instant UI feedback
     setSelectedChoice(choice);
+    setHasAnswered(true);
 
     answeringRef.current = true;
     try {
@@ -275,7 +303,10 @@ export default function StudentJoinQuizPage() {
   }, [sessionCode]);
 
   useEffect(() => {
-    return () => stopPolling();
+    return () => {
+      stopPolling();
+      if (transitionTimerRef.current) window.clearTimeout(transitionTimerRef.current);
+    };
   }, []);
 
   async function joinWithName() {
@@ -420,7 +451,12 @@ export default function StudentJoinQuizPage() {
 
         {state === "live" && (
           <div className="rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-sm">
-            {!q ? (
+            {transitioning ? (
+              <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 p-10 text-center">
+                <div className="text-xl font-extrabold text-slate-900">Next question…</div>
+                <div className="mt-2 text-sm font-semibold text-slate-600">Get ready 👀</div>
+              </div>
+            ) : !q ? (
               <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
                 <div className="text-base font-extrabold text-slate-900">Starting…</div>
                 <div className="mt-2 text-sm text-slate-600">Loading the question.</div>
@@ -428,6 +464,20 @@ export default function StudentJoinQuizPage() {
             ) : (
               <>
                 <div className="text-lg font-extrabold text-slate-900">{q.prompt}</div>
+
+                {hasAnswered && selectedChoice ? (
+                  <div className="mt-3 rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-3 text-sm font-extrabold text-emerald-900">
+                    Answer recorded ✓{" "}
+                    <span className="text-xs font-semibold text-emerald-800">
+                      (You can still change it until the teacher moves on.)
+                    </span>
+                  </div>
+                ) : (
+                  <div className="mt-3 text-sm font-semibold text-slate-600">
+                    Tap an option to submit your answer.
+                  </div>
+                )}
+
                 <div className="mt-4 grid grid-cols-1 gap-3">
                   {displayOrder.map((k, idx) => {
                     const label = q.choices?.[k] || "";
@@ -446,7 +496,7 @@ export default function StudentJoinQuizPage() {
                         className={`w-full rounded-3xl border-2 px-4 py-4 text-left text-base font-bold transition ${disabled
                           ? "border-slate-200 bg-slate-50 text-slate-300"
                           : isSelected
-                            ? "border-emerald-600 bg-emerald-50 text-emerald-900"
+                            ? "border-emerald-600 bg-emerald-50 text-emerald-900 ring-4 ring-emerald-200"
                             : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
                           }`}
                       >
@@ -458,13 +508,14 @@ export default function StudentJoinQuizPage() {
                         </span>
 
                         {label || <span className="text-slate-400">Empty</span>}
+                        {isSelected ? <span className="ml-2 text-sm">✓</span> : null}
                       </button>
                     );
                   })}
                 </div>
 
                 <div className="mt-4 text-xs text-slate-600">
-                  Tip: Tap an option to answer. You can change your answer until the teacher moves on.
+                  Tip: You can change your answer until the teacher moves on.
                 </div>
               </>
             )}

@@ -750,34 +750,41 @@ export default function ClassPage() {
 
   const classEvents = calendarEvents;
 
-  const eventsToday = classEvents.filter((e: any) => normYMD(getEventDate(e)) === todayYMD);
-  const eventsTomorrow = classEvents.filter((e: any) => normYMD(getEventDate(e)) === tomorrowYMD);
+  const start = new Date(today);
+  start.setHours(0, 0, 0, 0);
 
-  const next7 = (() => {
-    const start = new Date(today);
-    start.setHours(0, 0, 0, 0);
+  const end3 = new Date(start);
+  end3.setDate(start.getDate() + 3);
 
-    const end = new Date(start);
-    end.setDate(start.getDate() + 7);
+  const end7 = new Date(start);
+  end7.setDate(start.getDate() + 7);
 
-    return classEvents
-      .filter((e: any) => {
-        const d = new Date(normYMD(getEventDate(e)) + "T00:00:00");
-        return d >= start && d < end;
-      })
-      .slice()
-      .sort((a: any, b: any) =>
-        normYMD(getEventDate(a)).localeCompare(normYMD(getEventDate(b)))
-      );
-  })();
+  const eventsToday = classEvents.filter((e: any) =>
+    normYMD(getEventDate(e)) === todayYMD
+  );
 
-  const bellMode: "none" | "tomorrow" | "today" | "both" =
-    eventsToday.length && eventsTomorrow.length
+  const eventsNext3 = classEvents.filter((e: any) => {
+    const d = new Date(normYMD(getEventDate(e)) + "T00:00:00");
+    return d > start && d <= end3;
+  });
+
+  const next7 = classEvents
+    .filter((e: any) => {
+      const d = new Date(normYMD(getEventDate(e)) + "T00:00:00");
+      return d >= start && d < end7;
+    })
+    .slice()
+    .sort((a: any, b: any) =>
+      normYMD(getEventDate(a)).localeCompare(normYMD(getEventDate(b)))
+    );
+
+  const bellMode: "none" | "soon" | "today" | "both" =
+    eventsToday.length && eventsNext3.length
       ? "both"
       : eventsToday.length
         ? "today"
-        : eventsTomorrow.length
-          ? "tomorrow"
+        : eventsNext3.length
+          ? "soon"
           : "none";
 
   const bellColor =
@@ -785,10 +792,9 @@ export default function ClassPage() {
       ? "ring-4 ring-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.65)]"
       : bellMode === "today"
         ? "ring-4 ring-red-400 shadow-[0_0_18px_rgba(248,113,113,0.65)]"
-        : bellMode === "tomorrow"
+        : bellMode === "soon"
           ? "ring-4 ring-yellow-300 shadow-[0_0_18px_rgba(253,224,71,0.75)]"
           : "";
-
 
 
   // ---------- Tailwind "design tokens" ----------
@@ -1398,7 +1404,7 @@ export default function ClassPage() {
                     <span className="absolute -bottom-1 left-1/2 h-1.5 w-6 -translate-x-1/2 rounded-full bg-red-500" />
                   )}
 
-                  {bellMode === "tomorrow" && (
+                  {bellMode === "soon" && (
                     <span className="absolute -bottom-1 left-1/2 h-1.5 w-6 -translate-x-1/2 rounded-full bg-yellow-400" />
                   )}
 

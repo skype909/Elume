@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ClassCreate(BaseModel):
@@ -41,9 +41,7 @@ class ClassOut(BaseModel):
     name: str
     subject: str
 
-    class Config:
-        orm_mode = True
-
+    model_config = ConfigDict(from_attributes=True)
 
 # -------------------------
 # Tests
@@ -116,9 +114,7 @@ class CalendarEventOut(BaseModel):
     all_day: bool
     event_type: str
 
-    class Config:
-        orm_mode = True
-
+    model_config = ConfigDict(from_attributes=True)
 
 # -------------------------
 # AI calendar parsing
