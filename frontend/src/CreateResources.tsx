@@ -902,33 +902,48 @@ export default function CreateResources() {
         <div className="min-h-screen bg-[#dff3df]">
             <div className="mx-auto max-w-7xl px-4 pt-6 pb-10">
                 {/* Top bar */}
-                <div className="flex items-center gap-3">
-                    <button
-                        onClick={() => navigate(`/`)}
-                        className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                        type="button"
-                    >
-                        ← Back
-                    </button>
+                <div className="flex items-center justify-between gap-4">
 
-                    <div className="flex-1 min-w-0">
+                    {/* Left side – Title */}
+                    <div className="min-w-0">
                         <div className="text-2xl font-extrabold tracking-tight text-slate-800">
                             Create Resources
                         </div>
+
                         <div className="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-slate-600">
                             <span className="truncate">
                                 Working on: <span className="font-semibold text-slate-800">{scopeLabel}</span>
                             </span>
+
                             <span className="hidden sm:inline text-slate-400">•</span>
+
                             <span className="text-xs text-slate-500">
                                 Library + Snippets + AI Studio (saved per scope)
                             </span>
                         </div>
                     </div>
 
-                    <button className={pill} type="button" onClick={openScopeModal}>
-                        Change class
-                    </button>
+                    {/* Right side – Actions */}
+                    <div className="flex items-center gap-2">
+
+                        <button
+                            onClick={() => navigate(`/`)}
+                            className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-slate-50 active:scale-[0.98]"
+                            type="button"
+                        >
+                            ← Back
+                        </button>
+
+                        <button
+                            className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-slate-50 active:scale-[0.98]"
+                            type="button"
+                            onClick={openScopeModal}
+                        >
+                            Change class
+                        </button>
+
+                    </div>
+
                 </div>
 
                 {/* 3-panel layout */}
@@ -1534,9 +1549,9 @@ export default function CreateResources() {
                                             </div>
                                         </div>
 
-                                        <pre className="mt-3 whitespace-pre-wrap rounded-2xl border-2 border-slate-200 bg-slate-50 p-3 text-xs text-slate-800 max-h-[42vh] overflow-auto">
-                                            {aiPreview.content}
-                                        </pre>
+                                        <div className="mt-3 max-h-[42vh] overflow-auto">
+                                            <RenderDoc text={aiPreview.content} />
+                                        </div>
 
                                         <div className="mt-3 text-xs text-slate-600">
                                             Tip: Select curriculum snippets first so the ideas are properly linked to learning outcomes.

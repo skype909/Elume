@@ -2,14 +2,21 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 const API_BASE = "/api";
+const META_KEY = "elume_class_layout_v1";
 
-type Topic = {
+type ClassItem = {
+  id: number;
+  name: string;
+  subject: string;
+};
+
+type TopicItem = {
   id: number;
   class_id: number;
   name: string;
 };
 
-type Note = {
+type NoteItem = {
   id: number;
   class_id: number;
   topic_id: number;
@@ -22,537 +29,731 @@ type Note = {
 function resolveFileUrl(u: string) {
   if (!u) return u;
   if (u.startsWith("http://") || u.startsWith("https://")) return u;
-  if (u.startsWith("/")) return `${API_BASE}${u}`; // "/uploads/.." -> "/api/uploads/.."
+  if (u.startsWith("/")) return `${API_BASE}${u}`;
   return `${API_BASE}/${u}`;
 }
 
-function extOf(name: string) {
-  const i = name.lastIndexOf(".");
-  return i >= 0 ? name.slice(i + 1).toLowerCase() : "";
+function formatStamp(ts?: string) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+
+  const day = d.getDate();
+  const month = d.toLocaleString("en-IE", { month: "short" });
+  let h = d.getHours();
+  const m = d.getMinutes().toString().padStart(2, "0");
+  const ampm = h >= 12 ? "pm" : "am";
+  h = h % 12 || 12;
+
+  return `${day} ${month}, ${h}:${m}${ampm}`;
 }
 
-function isAudio(nameOrUrl: string) {
-  const ext = extOf((nameOrUrl || "").split("?")[0] || "");
-  return ["mp3", "wav", "m4a", "ogg"].includes(ext);
+function getTileCols(count: number) {
+  if (count <= 6) return 3;
+  if (count <= 8) return 4;
+  return 5;
 }
 
-function prettyBytes(bytes: number) {
-  if (!Number.isFinite(bytes)) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  const gb = mb / 1024;
-  return `${gb.toFixed(2)} GB`;
-}
-
-async function safeText(res: Response) {
-  try {
-    return await res.text();
-  } catch {
-    return "";
-  }
+function pickTileTone(index: number) {
+  const tones = [
+    "bg-amber-300 text-slate-900",
+    "bg-violet-600 text-white",
+    "bg-lime-500 text-white",
+    "bg-fuchsia-600 text-white",
+    "bg-orange-600 text-white",
+    "bg-slate-800 text-white",
+    "bg-emerald-600 text-white",
+    "bg-blue-600 text-white",
+    "bg-rose-600 text-white",
+    "bg-cyan-600 text-white",
+  ];
+  return tones[index % tones.length];
 }
 
 export default function NotesPage() {
   const navigate = useNavigate();
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const classId = useMemo(() => Number(id), [id]);
+  const validClassId = Number.isFinite(classId) && classId > 0;
 
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [classInfo, setClassInfo] = useState<ClassItem | null>(null);
+  const [classColour, setClassColour] = useState("bg-emerald-500");
 
-  const [showUpload, setShowUpload] = useState(false);
-  const [selectedTopicId, setSelectedTopicId] = useState<string>("new");
-  const [newTopicName, setNewTopicName] = useState("");
+  const [topics, setTopics] = useState<TopicItem[]>([]);
+  const [notes, setNotes] = useState<NoteItem[]>([]);
 
-  // ✅ multi-file
-  const [files, setFiles] = useState<File[]>([]);
-  const [uploading, setUploading] = useState(false);
-
+  const [loadingClass, setLoadingClass] = useState(true);
+  const [loadingTopics, setLoadingTopics] = useState(true);
+  const [loadingNotes, setLoadingNotes] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ✅ search
-  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedTopicId, setSelectedTopicId] = useState<number | null>(null);
+
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadMode, setUploadMode] = useState<"existing" | "new">("existing");
+  const [uploadTopicId, setUploadTopicId] = useState<number | "">("");
+  const [newTopicName, setNewTopicName] = useState("");
+  const [pickedFiles, setPickedFiles] = useState<File[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  async function loadAll() {
-    if (!Number.isFinite(classId)) return;
-    setLoading(true);
-    setError(null);
-
+  useEffect(() => {
     try {
-      const [tRes, nRes] = await Promise.all([
-        fetch(`${API_BASE}/topics/${classId}`),
-        fetch(`${API_BASE}/notes/${classId}`),
-      ]);
+      const raw = localStorage.getItem(META_KEY);
+      if (!raw) return;
+      const meta = JSON.parse(raw);
+      const entry = meta?.[String(classId)] || {};
+      if (typeof entry?.color === "string" && entry.color.trim()) {
+        setClassColour(entry.color);
+      }
+    } catch {
+      // ignore local meta problems
+    }
+  }, [classId]);
 
-      if (!tRes.ok) throw new Error("Failed to load topics");
-      if (!nRes.ok) throw new Error("Failed to load notes");
+  useEffect(() => {
+    if (!validClassId) {
+      setLoadingClass(false);
+      setClassInfo(null);
+      return;
+    }
 
-      const tData = await tRes.json();
-      const nData = await nRes.json();
+    const controller = new AbortController();
+    setLoadingClass(true);
 
-      setTopics(Array.isArray(tData) ? tData : []);
-      setNotes(Array.isArray(nData) ? nData : []);
+    fetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Class fetch failed (${r.status})`);
+        return (await r.json()) as ClassItem;
+      })
+      .then((data) => setClassInfo(data ?? null))
+      .catch((e: any) => {
+        if (e?.name === "AbortError") return;
+        setError(e?.message || "Failed to load class");
+        setClassInfo(null);
+      })
+      .finally(() => setLoadingClass(false));
+
+    return () => controller.abort();
+  }, [classId, validClassId]);
+
+  async function loadTopics() {
+    if (!validClassId) return;
+    setLoadingTopics(true);
+    try {
+      const r = await fetch(`${API_BASE}/topics/${classId}?kind=notes`);
+      if (!r.ok) throw new Error(`Topics fetch failed (${r.status})`);
+      const data = await r.json();
+      setTopics(Array.isArray(data) ? data : []);
     } catch (e: any) {
-      setError(e?.message ?? "Something went wrong");
+      setError(e?.message || "Failed to load categories");
+      setTopics([]);
     } finally {
-      setLoading(false);
+      setLoadingTopics(false);
+    }
+  }
+
+  async function loadNotes() {
+    if (!validClassId) return;
+    setLoadingNotes(true);
+    try {
+      const r = await fetch(`${API_BASE}/notes/${classId}?kind=notes`);
+      if (!r.ok) throw new Error(`Notes fetch failed (${r.status})`);
+      const data = await r.json();
+      setNotes(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load files");
+      setNotes([]);
+    } finally {
+      setLoadingNotes(false);
     }
   }
 
   useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classId]);
-
-  const filteredNotes = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return notes;
-    return notes.filter((n) => {
-      const a = (n.filename || "").toLowerCase();
-      const b = (n.topic_name || "").toLowerCase();
-      return a.includes(q) || b.includes(q);
-    });
-  }, [notes, query]);
-
-  const grouped = useMemo(() => {
-    const map = new Map<string, Note[]>();
-    for (const note of filteredNotes) {
-      const key = (note.topic_name || "Unsorted").trim() || "Unsorted";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(note);
+    if (!validClassId) {
+      setLoadingTopics(false);
+      setLoadingNotes(false);
+      setTopics([]);
+      setNotes([]);
+      return;
     }
 
-    // sort topics A-Z; within topic newest first
-    const out = Array.from(map.entries()).map(([k, items]) => {
-      const sorted = [...items].sort((a, b) => {
-        const ta = new Date(a.uploaded_at).getTime();
-        const tb = new Date(b.uploaded_at).getTime();
-        return tb - ta;
-      });
-      return [k, sorted] as const;
-    });
+    setError(null);
+    void loadTopics();
+    void loadNotes();
+  }, [classId, validClassId]);
 
-    out.sort((a, b) => a[0].localeCompare(b[0]));
-    return out;
-  }, [filteredNotes]);
+  const notesByTopic = useMemo(() => {
+    const map = new Map<number, NoteItem[]>();
+    for (const n of notes) {
+      const arr = map.get(n.topic_id) || [];
+      arr.push(n);
+      map.set(n.topic_id, arr);
+    }
+    return map;
+  }, [notes]);
 
-  async function ensureTopic(): Promise<number> {
-    if (selectedTopicId !== "new") return Number(selectedTopicId);
+  const topicCards = useMemo(() => {
+    const q = search.trim().toLowerCase();
 
-    const name = newTopicName.trim();
-    if (!name) throw new Error("Please enter a topic name");
+    return topics
+      .map((t) => {
+        const files = notesByTopic.get(t.id) || [];
+        const latest = files[0]?.uploaded_at || "";
+        const haystack = `${t.name} ${files.map((f) => f.filename).join(" ")}`.toLowerCase();
 
-    const res = await fetch(`${API_BASE}/topics`, {
+        return {
+          ...t,
+          fileCount: files.length,
+          latest,
+          files,
+          matches: !q || haystack.includes(q),
+        };
+      })
+      .filter((t) => t.matches);
+  }, [topics, notesByTopic, search]);
+
+  const selectedTopic = useMemo(
+    () => topics.find((t) => t.id === selectedTopicId) || null,
+    [topics, selectedTopicId]
+  );
+
+  const selectedNotes = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const base = selectedTopicId ? notes.filter((n) => n.topic_id === selectedTopicId) : [];
+    if (!q) return base;
+    return base.filter((n) => `${n.filename} ${n.topic_name}`.toLowerCase().includes(q));
+  }, [notes, selectedTopicId, search]);
+
+  const cols = getTileCols(topicCards.length || 1);
+
+  async function createTopicIfNeeded(): Promise<number> {
+    if (uploadMode === "existing") {
+      if (!uploadTopicId) throw new Error("Choose a category first");
+      return Number(uploadTopicId);
+    }
+
+    const title = newTopicName.trim();
+    if (!title) throw new Error("Enter a category name");
+
+    const r = await fetch(`${API_BASE}/topics?kind=notes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ class_id: classId, name }),
+      body: JSON.stringify({
+        class_id: classId,
+        name: title,
+      }),
     });
 
-    if (!res.ok) {
-      const t = await safeText(res);
-      throw new Error(t || "Failed to create topic");
+    if (!r.ok) {
+      const msg = await r.text().catch(() => "");
+      throw new Error(msg || `Category create failed (${r.status})`);
     }
 
-    const created = await res.json();
+    const created = (await r.json()) as TopicItem;
+    setTopics((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
     return created.id;
   }
 
-  function onPickFiles(fl: FileList | null) {
-    if (!fl) return;
-    const incoming = Array.from(fl);
-
-    // de-dupe by name+size+lastModified
-    const key = (f: File) => `${f.name}__${f.size}__${f.lastModified}`;
-    const existing = new Set(files.map(key));
-    const merged = [...files];
-
-    for (const f of incoming) {
-      if (!existing.has(key(f))) merged.push(f);
-    }
-
-    setFiles(merged);
-  }
-
-  function removePicked(i: number) {
-    setFiles((prev) => prev.filter((_, idx) => idx !== i));
-  }
-
-  function resetUploadModal() {
-    setSelectedTopicId("new");
-    setNewTopicName("");
-    setFiles([]);
-    setError(null);
-    try {
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    } catch {}
-  }
-
-  async function uploadAll() {
-    setError(null);
-
-    if (files.length === 0) {
-      setError("Please choose one or more files.");
+  async function handleUpload() {
+    if (!validClassId) return;
+    if (pickedFiles.length === 0) {
+      setError("Pick at least one file");
       return;
     }
 
     try {
-      setUploading(true);
-      const topicId = await ensureTopic();
+      setBusy(true);
+      setError(null);
 
-      // ✅ sequential uploads (safe + simple)
-      for (const f of files) {
-        const form = new FormData();
-        form.append("class_id", String(classId));
-        form.append("topic_id", String(topicId));
-        form.append("file", f);
+      const topicId = await createTopicIfNeeded();
 
-        const res = await fetch(`${API_BASE}/notes/upload`, {
+      for (const file of pickedFiles) {
+        const fd = new FormData();
+        fd.append("class_id", String(classId));
+        fd.append("topic_id", String(topicId));
+        fd.append("file", file);
+
+        const r = await fetch(`${API_BASE}/notes/upload`, {
           method: "POST",
-          body: form,
+          body: fd,
         });
 
-        if (!res.ok) {
-          const t = await safeText(res);
-          throw new Error(t || `Upload failed for ${f.name}`);
+        if (!r.ok) {
+          const msg = await r.text().catch(() => "");
+          throw new Error(msg || `Upload failed (${r.status})`);
         }
       }
 
-      setShowUpload(false);
-      resetUploadModal();
-      await loadAll();
+      await Promise.all([loadTopics(), loadNotes()]);
+
+      setSelectedTopicId(topicId);
+      setShowUploadModal(false);
+      setUploadMode("existing");
+      setUploadTopicId("");
+      setNewTopicName("");
+      setPickedFiles([]);
     } catch (e: any) {
-      setError(e?.message ?? "Upload failed");
+      setError(e?.message || "Upload failed");
     } finally {
-      setUploading(false);
+      setBusy(false);
     }
   }
 
-  async function deleteNote(noteId: number) {
-    const ok = window.confirm("Delete this resource? This cannot be undone.");
+  async function handleDeleteNote(noteId: number) {
+    const ok = window.confirm("Delete this file?");
     if (!ok) return;
 
-    setError(null);
     try {
-      const res = await fetch(`${API_BASE}/notes/${noteId}`, { method: "DELETE" });
-      if (!res.ok) {
-        const t = await safeText(res);
-        throw new Error(t || "Failed to delete");
-      }
-      await loadAll();
+      setBusy(true);
+      setError(null);
+
+      const r = await fetch(`${API_BASE}/notes/${noteId}`, {
+        method: "DELETE",
+      });
+
+      if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+
+      setNotes((prev) => prev.filter((n) => n.id !== noteId));
     } catch (e: any) {
-      setError(e?.message ?? "Delete failed");
+      setError(e?.message || "Failed to delete file");
+    } finally {
+      setBusy(false);
     }
   }
 
-  // UI styles
-  const card =
-    "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)]";
-  const soft = "bg-gradient-to-b from-emerald-50 via-slate-50 to-slate-100";
-  const pill =
-    "rounded-full border-2 border-slate-200 bg-white px-4 py-2 text-sm hover:bg-slate-50";
-  const btn =
-    "rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-60";
-  const btnDark =
-    "rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60";
+  async function handleDeleteTopic(topicId: number) {
+    const ok = window.confirm("Delete this category and all files inside it?");
+    if (!ok) return;
+
+    try {
+      setBusy(true);
+      setError(null);
+
+      const r = await fetch(`${API_BASE}/topics/${topicId}`, {
+        method: "DELETE",
+      });
+
+      if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+
+      setTopics((prev) => prev.filter((t) => t.id !== topicId));
+      setNotes((prev) => prev.filter((n) => n.topic_id !== topicId));
+      if (selectedTopicId === topicId) setSelectedTopicId(null);
+    } catch (e: any) {
+      setError(e?.message || "Failed to delete category");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openUploadForTopic(topicId?: number) {
+    setShowUploadModal(true);
+    setUploadMode(topicId ? "existing" : topics.length ? "existing" : "new");
+    setUploadTopicId(topicId ?? (topics[0]?.id ?? ""));
+    setNewTopicName("");
+    setPickedFiles([]);
+  }
+
+  const pageTitle = loadingClass
+    ? "Notes"
+    : classInfo?.name
+      ? `${classInfo.name} Notes`
+      : "Notes";
 
   return (
-    <div className={`min-h-screen ${soft}`}>
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        {/* Page header (NOT global header) */}
-        <div className={`${card} p-5`}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-900 drop-shadow-[0_6px_14px_rgba(16,185,129,0.25)]">
-                Notes
+    <div className="min-h-screen bg-[#dff3df] px-4 py-6 md:px-6">
+      <div className="mx-auto max-w-7xl">
+        {error && (
+          <div className="mb-4 rounded-3xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {error}
+          </div>
+        )}
+
+        <div className="rounded-[1.6rem] border border-slate-200 bg-white/95 px-6 py-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="inline-flex items-center rounded-full bg-emerald-600 px-6 py-2 text-3xl font-bold tracking-wide text-white">
+                <span style={{ textShadow: "0 2px 4px rgba(0,0,0,0.35)" }}>
+                  Notes
+                </span>
               </div>
-              <div className="mt-2 h-1 w-24 rounded-full bg-gradient-to-r from-emerald-500 to-emerald-200" />
-              <div className="mt-2 text-sm text-slate-600">
-                PDFs, slides, worksheets, audio, and anything else you use in class.
+
+              <div className="mt-1 text-sm text-slate-500">
+                Organise PDFs, slides, worksheets, audio and classroom files.
+              </div>
+
+              <div className="mt-2 text-xs font-medium text-slate-400">
+                {pageTitle}
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button className={pill} type="button" onClick={() => navigate(`/class/${classId}`)}>
-                Back to Class
-              </button>
-              <button className={btnDark} type="button" onClick={() => setShowUpload(true)}>
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedTopic ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedTopicId(null)}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  All Categories
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/class/${classId}`)}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Back to Class
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => openUploadForTopic(selectedTopicId ?? undefined)}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+              >
                 Upload
               </button>
             </div>
           </div>
 
-          {/* Error */}
-          {error && (
-            <div className="mt-4 rounded-2xl border-2 border-red-200 bg-white p-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-
-          {/* Search */}
-          <div className="mt-4">
+          <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <input
-              className="w-full md:w-[420px] rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
-              placeholder="Search by filename or topic…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={
+                selectedTopic
+                  ? `Search inside ${selectedTopic.name}...`
+                  : "Search categories or files..."
+              }
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-emerald-200 lg:max-w-xl"
             />
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+              {selectedTopic
+                ? `${selectedNotes.length} file${selectedNotes.length === 1 ? "" : "s"} in ${selectedTopic.name}`
+                : `${topicCards.length} categor${topicCards.length === 1 ? "y" : "ies"} • ${notes.length} total files`}
+            </div>
           </div>
         </div>
 
-        {/* Content */}
-        <div className="mt-5">
-          {loading ? (
-            <div className="text-sm text-slate-600">Loading…</div>
-          ) : notes.length === 0 ? (
-            <div className={`${card} p-6`}>
-              <div className="text-lg font-extrabold text-slate-900">No resources yet</div>
-              <div className="mt-2 text-sm text-slate-600">
-                Upload notes, worksheets, slides, or audio files. Keep everything organised by topic.
+        {!selectedTopic && (
+          <div className="mt-6 rounded-[2rem] border-2 border-slate-200 bg-white/90 p-5 shadow-[0_6px_0_rgba(15,23,42,0.06)]">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-lg font-black tracking-tight text-slate-900">
+                  Categories
+                </div>
+                <div className="text-sm text-slate-500">
+                  Dashboard-style topic tiles for fast classroom access
+                </div>
               </div>
-              <div className="mt-4">
-                <button className={btnDark} type="button" onClick={() => setShowUpload(true)}>
-                  Upload your first files
+
+              <button
+                type="button"
+                onClick={() => openUploadForTopic()}
+                className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                + Add Category / Upload
+              </button>
+            </div>
+
+            {loadingTopics || loadingNotes ? (
+              <div className="rounded-3xl border-2 border-slate-200 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+                Loading notes workspace...
+              </div>
+            ) : topicCards.length === 0 ? (
+              <div className="rounded-3xl border-2 border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center">
+                <div className="text-xl font-bold text-slate-800">No categories yet</div>
+                <div className="mt-2 text-sm text-slate-600">
+                  Create your first category and upload files into it.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openUploadForTopic()}
+                  className="mt-5 rounded-2xl border-2 border-slate-900 bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  Start Notes Library
+                </button>
+              </div>
+            ) : (
+              <div
+                className="grid gap-5"
+                style={{
+                  gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                }}
+              >
+                {topicCards.map((topic, idx) => {
+                  const tone = pickTileTone(idx);
+
+                  return (
+                    <button
+                      key={topic.id}
+                      type="button"
+                      onClick={() => setSelectedTopicId(topic.id)}
+                      className={[
+                        "group relative min-h-[150px] rounded-[1.7rem] border-[4px] border-black px-5 py-4 text-left shadow-[0_8px_0_rgba(0,0,0,0.25)] transition",
+                        "hover:-translate-y-[2px] hover:shadow-[0_12px_0_rgba(0,0,0,0.22)]",
+                        tone,
+                      ].join(" ")}
+                      title={`Open ${topic.name}`}
+                    >
+                      <div className="flex h-full flex-col justify-between">
+                        <div>
+                          <div className="text-3xl font-black tracking-tight leading-tight">
+                            {topic.name}
+                          </div>
+                          <div className="mt-3 text-lg font-semibold opacity-90">
+                            {topic.fileCount} file{topic.fileCount === 1 ? "" : "s"}
+                          </div>
+                        </div>
+
+                        <div className="flex items-end justify-between">
+                          <div className="text-sm font-semibold opacity-80">
+                            {topic.latest ? `Updated ${formatStamp(topic.latest)}` : "Ready to fill"}
+                          </div>
+                          <div className="text-xl opacity-70">▣</div>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {selectedTopic && (
+          <div className="mt-6 rounded-[2rem] border-2 border-slate-200 bg-white/90 p-5 shadow-[0_6px_0_rgba(15,23,42,0.06)]">
+            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Category
+                </div>
+                <div className="mt-1 text-3xl font-black tracking-tight text-slate-900">
+                  {selectedTopic.name}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => openUploadForTopic(selectedTopic.id)}
+                  className="rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  Add files
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleDeleteTopic(selectedTopic.id)}
+                  className="rounded-2xl border-2 border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
+                >
+                  Delete category
                 </button>
               </div>
             </div>
-          ) : grouped.length === 0 ? (
-            <div className={`${card} p-6`}>
-              <div className="text-lg font-extrabold text-slate-900">No results</div>
-              <div className="mt-2 text-sm text-slate-600">
-                Try a different search term, or clear the search box.
+
+            {loadingNotes ? (
+              <div className="rounded-3xl border-2 border-slate-200 bg-slate-50 px-5 py-8 text-sm text-slate-600">
+                Loading files...
               </div>
-            </div>
-          ) : (
-            <div className="grid gap-4">
-              {grouped.map(([topicName, items]) => (
-                <div key={topicName} className={`${card} p-4`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-extrabold text-slate-900">{topicName}</div>
-                      <div className="mt-1 text-xs text-slate-500">{items.length} file(s)</div>
-                    </div>
-                    <button className={btn} type="button" onClick={() => setShowUpload(true)}>
-                      Add files
-                    </button>
-                  </div>
-
-                  <div className="mt-3 grid gap-2">
-                    {items.map((n) => {
-                      const url = resolveFileUrl(n.file_url);
-                      const audio = isAudio(n.filename) || isAudio(n.file_url);
-
-                      return (
-                        <div
-                          key={n.id}
-                          className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-3 hover:bg-white transition"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <a
-                                href={url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="block min-w-0 hover:underline"
-                                title="Open resource"
-                              >
-                                <div className="truncate text-sm font-semibold text-slate-900">
-                                  {n.filename}
-                                </div>
-                                <div className="mt-1 text-xs text-slate-500">
-                                  Uploaded: {new Date(n.uploaded_at).toLocaleString()}
-                                </div>
-                              </a>
-
-                              {audio && (
-                                <div className="mt-2">
-                                  <audio controls className="w-full">
-                                    <source src={url} />
-                                  </audio>
-                                </div>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <a className={btn} href={url} target="_blank" rel="noreferrer">
-                                Open
-                              </a>
-                              <button
-                                type="button"
-                                onClick={() => deleteNote(n.id)}
-                                className="rounded-2xl border-2 border-red-200 bg-white px-3 py-2 text-sm text-red-700 hover:bg-red-50"
-                                title="Delete"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+            ) : selectedNotes.length === 0 ? (
+              <div className="rounded-3xl border-2 border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+                <div className="text-lg font-bold text-slate-800">No files in this category yet</div>
+                <div className="mt-2 text-sm text-slate-600">
+                  Upload files into {selectedTopic.name} to start building the set.
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <button
+                  type="button"
+                  onClick={() => openUploadForTopic(selectedTopic.id)}
+                  className="mt-5 rounded-2xl border-2 border-slate-900 bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  Upload files
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {selectedNotes.map((n) => (
+                  <div
+                    key={n.id}
+                    className="flex flex-col gap-3 rounded-3xl border-2 border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-xl font-bold text-slate-900">
+                        {n.filename}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        Uploaded: {formatStamp(n.uploaded_at)}
+                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-3">
+                      <a
+                        href={resolveFileUrl(n.file_url)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-2xl border-2 border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100"
+                      >
+                        Open
+                      </a>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteNote(n.id)}
+                        className="rounded-2xl border-2 border-red-200 bg-white px-5 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Upload Modal */}
-      {showUpload && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
-          <div className="w-full max-w-2xl rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
+      {showUploadModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4">
+          <div className="w-full max-w-2xl rounded-[2rem] border-2 border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="text-lg font-extrabold tracking-tight text-slate-900">
-                  Upload Resources
+                <div className="text-2xl font-black tracking-tight text-slate-900">
+                  Upload notes
                 </div>
                 <div className="mt-1 text-sm text-slate-600">
-                  Upload PDFs, slides, worksheets, and audio for language classes.
+                  Choose an existing category or create a new one before uploading.
                 </div>
               </div>
+
               <button
                 type="button"
-                className={btn}
                 onClick={() => {
-                  setShowUpload(false);
-                  resetUploadModal();
+                  setShowUploadModal(false);
+                  setPickedFiles([]);
+                  setNewTopicName("");
                 }}
-                disabled={uploading}
+                className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
               >
                 Close
               </button>
             </div>
 
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              {/* Topic */}
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Topic</label>
-                <select
-                  className="w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-sm"
-                  value={selectedTopicId}
-                  onChange={(e) => setSelectedTopicId(e.target.value)}
-                  disabled={uploading}
+            <div className="mt-5 grid gap-4">
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => setUploadMode("existing")}
+                  className={
+                    uploadMode === "existing"
+                      ? "rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                      : "rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                  }
                 >
-                  <option value="new">+ Create new topic</option>
-                  {topics.map((t) => (
-                    <option key={t.id} value={String(t.id)}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
+                  Existing category
+                </button>
 
-                {selectedTopicId === "new" && (
-                  <div className="mt-3">
-                    <label className="mb-1 block text-xs font-semibold text-slate-600">
-                      New topic name
-                    </label>
-                    <input
-                      className="w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-sm"
-                      value={newTopicName}
-                      onChange={(e) => setNewTopicName(e.target.value)}
-                      placeholder="e.g. Poetry, Oral Irish, Electricity…"
-                      disabled={uploading}
-                    />
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setUploadMode("new")}
+                  className={
+                    uploadMode === "new"
+                      ? "rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                      : "rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                  }
+                >
+                  Create new category
+                </button>
               </div>
 
-              {/* Drop zone */}
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Files</label>
-
-                <div
-                  className="rounded-3xl border-2 border-dashed border-slate-300 bg-slate-50 p-4 text-center"
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onPickFiles(e.dataTransfer.files);
-                  }}
-                >
-                  <div className="text-sm font-semibold text-slate-900">Drag & drop files here</div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    Or click to browse. Supports PDF, DOCX, PPTX, MP3, WAV, M4A, OGG.
-                  </div>
-
-                  <div className="mt-3">
-                    <button
-                      type="button"
-                      className={btnDark}
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploading}
-                    >
-                      Choose files
-                    </button>
-                  </div>
-
+              {uploadMode === "existing" ? (
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-slate-700">
+                    Category
+                  </label>
+                  <select
+                    value={uploadTopicId}
+                    onChange={(e) => setUploadTopicId(e.target.value ? Number(e.target.value) : "")}
+                    className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    <option value="">Choose a category...</option>
+                    {topics.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-slate-700">
+                    New category name
+                  </label>
                   <input
-                    ref={fileInputRef}
-                    className="hidden"
-                    type="file"
-                    multiple
-                    accept=".pdf,.doc,.docx,.ppt,.pptx,.mp3,.wav,.m4a,.ogg,audio/*"
-                    onChange={(e) => onPickFiles(e.target.files)}
+                    value={newTopicName}
+                    onChange={(e) => setNewTopicName(e.target.value)}
+                    placeholder="e.g. Algebra, Biology, Revision, Experiments"
+                    className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
                   />
                 </div>
+              )}
 
-                {/* picked list */}
-                {files.length > 0 && (
-                  <div className="mt-3 rounded-2xl border-2 border-slate-200 bg-white p-3">
-                    <div className="mb-2 text-xs font-semibold text-slate-600">
-                      Selected ({files.length})
-                    </div>
-                    <div className="max-h-40 space-y-2 overflow-auto pr-1">
-                      {files.map((f, i) => (
-                        <div
-                          key={`${f.name}_${f.size}_${f.lastModified}`}
-                          className="flex items-center justify-between gap-2 rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900">{f.name}</div>
-                            <div className="text-xs text-slate-500">{prettyBytes(f.size)}</div>
-                          </div>
-                          <button
-                            type="button"
-                            className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-xs hover:bg-slate-50"
-                            onClick={() => removePicked(i)}
-                            disabled={uploading}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
+              <div>
+                <label className="mb-2 block text-sm font-bold text-slate-700">
+                  Files
+                </label>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => setPickedFiles(Array.from(e.target.files || []))}
+                />
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-100"
+                >
+                  Choose files
+                </button>
+
+                {pickedFiles.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {pickedFiles.map((f, i) => (
+                      <span
+                        key={`${f.name}-${i}`}
+                        className="inline-flex items-center gap-2 rounded-full border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                      >
+                        📎 {f.name}
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
-            </div>
 
-            {/* Actions */}
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                className={btn}
-                type="button"
-                onClick={() => {
-                  setShowUpload(false);
-                  resetUploadModal();
-                }}
-                disabled={uploading}
-              >
-                Cancel
-              </button>
-              <button className={btnDark} type="button" onClick={uploadAll} disabled={uploading}>
-                {uploading ? "Uploading…" : "Upload files"}
-              </button>
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowUploadModal(false)}
+                  className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleUpload}
+                  className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                  disabled={busy}
+                >
+                  {busy ? "Uploading..." : "Upload"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

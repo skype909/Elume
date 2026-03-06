@@ -711,27 +711,37 @@ export default function ClassPage() {
     return () => controller.abort();
   }, [classId, validClassId]);
 
+
   function submitPost() {
     if (!validClassId) return;
-    if (!content.trim()) return;
+
+    const trimmedContent = content.trim();
+    const hasLinks = links.length > 0;
+    const hasFiles = files.length > 0;
+
+    if (!trimmedContent && !hasLinks && !hasFiles) return;
 
     setPosting(true);
     setError(null);
 
     const fd = new FormData();
-    fd.append("author", author);
-    fd.append("content", content);
+    fd.append("author", author || "Teacher");
+    fd.append("content", trimmedContent);
     fd.append("links", JSON.stringify(links || []));
 
-    // Attach files
-    for (const f of files) fd.append("files", f);
+    for (const f of files) {
+      fd.append("files", f);
+    }
 
     fetch(`${API_BASE}/classes/${classId}/posts`, {
       method: "POST",
       body: fd,
     })
-      .then((r) => {
-        if (!r.ok) throw new Error(`Post failed (${r.status})`);
+      .then(async (r) => {
+        if (!r.ok) {
+          const msg = await r.text().catch(() => "");
+          throw new Error(msg || `Post failed (${r.status})`);
+        }
         return r.json();
       })
       .then((created: any) => {
@@ -1273,7 +1283,7 @@ export default function ClassPage() {
                       rel="noreferrer"
                       className={`${chip} hover:bg-slate-100`}
                     >
-                      🔗 {l}
+                      📎 Click here
                     </a>
                   ))}
 
@@ -1515,9 +1525,9 @@ export default function ClassPage() {
             </div>
           )}
         </div>
-         </div>
-       </aside>
-    );
+      </div>
+    </aside>
+  );
 
   return (
     <div className="min-h-screen bg-emerald-100 p-6">

@@ -43,18 +43,18 @@ type ClassMeta = {
 type MetaStore = Record<string, ClassMeta>;
 
 
-// 20 bright classroom colours
+// 12 bright classroom colours
 const COLOURS: { name: string; bg: string; ring: string }[] = [
-  { name: "Emerald", bg: "bg-emerald-600", ring: "ring-emerald-200" },
-  { name: "Amber", bg: "bg-amber-500", ring: "ring-amber-200" },
-  { name: "Rose", bg: "bg-rose-600", ring: "ring-rose-200" },
-  { name: "Sky", bg: "bg-sky-600", ring: "ring-sky-200" },
-  { name: "Sunflower", bg: "bg-yellow-400", ring: "ring-yellow-200" },
-  { name: "Violet", bg: "bg-violet-700", ring: "ring-violet-200" },
-  { name: "Lime", bg: "bg-lime-500", ring: "ring-lime-200" },
-  { name: "Fuchsia", bg: "bg-fuchsia-600", ring: "ring-fuchsia-200" },
-  { name: "Orange", bg: "bg-orange-600", ring: "ring-orange-200" },
-  { name: "Slate", bg: "bg-slate-800", ring: "ring-slate-300" },
+  { name: "Black", bg: "bg-black", ring: "ring-slate-300" },
+  { name: "Dark Green", bg: "bg-green-800", ring: "ring-green-300" },
+  { name: "Navy", bg: "bg-blue-900", ring: "ring-blue-300" },
+  { name: "Maroon", bg: "bg-rose-800", ring: "ring-rose-300" },
+  { name: "Red", bg: "bg-red-500", ring: "ring-red-200" },
+  { name: "Gold", bg: "bg-yellow-400", ring: "ring-yellow-200" },
+  { name: "Lime", bg: "bg-lime-400", ring: "ring-lime-200" },
+  { name: "Deep Sky", bg: "bg-sky-400", ring: "ring-sky-200" },
+  { name: "Fuchsia", bg: "bg-fuchsia-500", ring: "ring-fuchsia-200" },
+  { name: "Dark Orange", bg: "bg-orange-700", ring: "ring-orange-300" },
 ];
 
 const DEFAULT_BG = COLOURS[0]?.bg ?? "bg-emerald-500";
@@ -579,7 +579,12 @@ function Dashboard() {
         <div className="mb-5 flex flex-wrap items-center gap-3 w-full justify-between">
           {/* Left side: Create button + helper text */}
           <div className="flex flex-wrap items-center gap-3">
-            <button className={btnPrimary} type="button" onClick={openCreate}>
+            <button
+              type="button"
+              onClick={openCreate}
+              className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-6 py-2.5 text-xl font-extrabold text-white shadow-md hover:bg-emerald-700 active:translate-y-[1px]"
+              style={{ textShadow: "0 2px 4px rgba(0,0,0,0.35)" }}
+            >
               + Create Class
             </button>
 
@@ -688,10 +693,17 @@ function Dashboard() {
                   </div>
 
                   <div className="text-center">
-                    <div className="text-3xl md:text-4xl font-extrabold tracking-tight leading-tight drop-shadow-md">
+                    <div
+                      className="text-3xl md:text-4xl font-extrabold tracking-tight leading-tight"
+                      style={{ textShadow: "0 3px 6px rgba(0,0,0,0.45)" }}
+                    >
                       {c.name}
                     </div>
-                    <div className="mt-1 text-xl md:text-2xl font-semibold tracking-wide text-white/95 drop-shadow-md">
+
+                    <div
+                      className="mt-1 text-xl md:text-2xl font-semibold tracking-wide text-white/95"
+                      style={{ textShadow: "0 2px 5px rgba(0,0,0,0.4)" }}
+                    >
                       {c.subject}
                     </div>
                     <div className="mt-3 inline-flex items-center justify-center rounded-full bg-white/20 px-4 py-1.5 text-xs font-semibold opacity-0 transition-opacity duration-200 group-hover:opacity-100">

@@ -693,8 +693,6 @@ export default function WhiteBoardPage() {
   const fsRootRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  const [classDisplay, setClassDisplay] = useState<string>("");
-
 
   // Four-layer canvases (background + images + ink + preview)
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -812,7 +810,8 @@ export default function WhiteBoardPage() {
   const [clipRect, setClipRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [snipMode, setSnipMode] = useState(false);
 
-  const [classLabel, setClassLabel] = useState("");
+  const [classLabel, setClassLabel] = useState<string>("");
+
 
   // Grid / XY modals + state
   const [showGridModal, setShowGridModal] = useState(false);
@@ -876,40 +875,28 @@ export default function WhiteBoardPage() {
   }
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("elume_class_layout_v1");
-      if (!raw) return;
+    if (!classId) return;
 
-      const meta = JSON.parse(raw);
-      const entry = meta?.[String(classId)] || {};
+    fetch(`${API_BASE}/classes/${classId}`)
+      .then((r) => {
+        if (!r.ok) throw new Error("Failed to load class");
+        return r.json();
+      })
+      .then((data) => {
+        const name = String(data?.name || "").trim();
+        const subject = String(data?.subject || "").trim();
 
-      const group = entry?.group || "";
-      const subject = entry?.subject || "";
+        // If name already includes the subject, don't duplicate it
+        const label =
+          subject && !name.toLowerCase().includes(subject.toLowerCase())
+            ? `${name} ${subject}`.trim()
+            : name;
 
-      const label = [group, subject].filter(Boolean).join(" ");
-      if (label) setClassLabel(label);
-    } catch {
-      // ignore
-    }
-  }, [classId]);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("elume_class_layout_v1");
-      if (!raw) return;
-
-      const meta = JSON.parse(raw);
-      const entry = meta?.[String(classId)] || {};
-
-      const name = entry?.group || "";
-      const subject = entry?.subject || "";
-
-      if (name || subject) {
-        setClassDisplay(`${name} ${subject}`.trim());
-      }
-    } catch {
-      // fail silently
-    }
+        setClassLabel(label);
+      })
+      .catch(() => {
+        setClassLabel("");
+      });
   }, [classId]);
 
   function forceBoardRedraw() {
@@ -3607,7 +3594,7 @@ export default function WhiteBoardPage() {
           )}
         </div>
       </div>
-            {leaveOpen && (
+      {leaveOpen && (
         <div className="fixed inset-0 z-[9999] grid place-items-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl">
             <div className="text-lg font-extrabold text-slate-900">Leave whiteboard?</div>
