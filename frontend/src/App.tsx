@@ -328,10 +328,10 @@ function Dashboard() {
     "rounded-full border-2 border-slate-200 bg-slate-50 px-4 py-2 text-sm hover:bg-slate-100 active:translate-y-[1px]";
 
   const headerBtn =
-  "w-32 text-center rounded-2xl border border-slate-200 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur transition-all hover:bg-slate-100 hover:shadow-md hover:-translate-y-[1px] active:translate-y-[0px] w-32 text-center";
+    "w-32 text-center rounded-2xl border border-slate-200 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur transition-all hover:bg-slate-100 hover:shadow-md hover:-translate-y-[1px] active:translate-y-[0px] w-32 text-center";
 
   const headerBtnPrimary =
-  "w-32 text-center rounded-2xl border border-emerald-600 bg-emerald-600/90 px-4 py-2 text-sm font-semibold text-white shadow-sm backdrop-blur transition-all hover:bg-emerald-700 hover:border-emerald-700 hover:shadow-md hover:-translate-y-[1px] active:translate-y-[0px] w-32 text-center";
+    "w-32 text-center rounded-2xl border border-emerald-600 bg-emerald-600/90 px-4 py-2 text-sm font-semibold text-white shadow-sm backdrop-blur transition-all hover:bg-emerald-700 hover:border-emerald-700 hover:shadow-md hover:-translate-y-[1px] active:translate-y-[0px] w-32 text-center";
 
   function swapOrder(dragId: number, overId: number) {
     if (dragId === overId) return;
@@ -503,7 +503,26 @@ function Dashboard() {
           </div>
 
           {/* Right controls */}
-          <div className="ml-auto flex items-center gap-4">
+          <div className="ml-auto flex items-center gap-3 md:gap-4">
+            {/* ✅ Mobile-only: Admin + Calendar beside logo */}
+            <div className="flex items-center gap-2 md:hidden">
+              <button
+                className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur transition-all hover:bg-slate-100"
+                type="button"
+                onClick={() => navigate("/admin")}
+              >
+                Admin
+              </button>
+
+              <button
+                className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur transition-all hover:bg-slate-100"
+                type="button"
+                onClick={() => navigate("/calendar")}
+              >
+                Calendar
+              </button>
+            </div>
+
             {/* Desktop-only: Create Resources (primary) */}
             <button
               className={`hidden md:inline-flex ${btnGlow}`}
@@ -521,7 +540,6 @@ function Dashboard() {
                 </span>
               </span>
 
-              {/* ✅ stronger readability on the white text */}
               <span className="drop-shadow-[0_2px_2px_rgba(0,0,0,0.55)]">Create Resources</span>
 
               <span className="ml-1 rounded-full bg-white/20 px-2 py-[2px] text-[10px] font-bold tracking-wide text-white border border-white/40">

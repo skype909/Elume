@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
+import { toPng } from "html-to-image";
+import jsPDF from "jspdf";
 
 type DayKey = "Mon" | "Tue" | "Wed" | "Thu" | "Fri";
 type SlotKind = "period" | "break" | "lunch";
@@ -387,8 +389,75 @@ export default function TeacherAdminPage() {
     return nowMins >= a && nowMins < b;
   }
 
-  function exportPdf() {
-    window.print();
+  async function exportPdf() {
+    const node = document.getElementById("timetablePrint");
+    if (!node) return;
+
+    // Build teacher display name
+    const title = (state.profile.title || "").trim();
+    const surname = (state.profile.surname || "").trim();
+    const firstName = (state.profile.firstName || "").trim();
+
+    const teacherName =
+      [title, surname].filter(Boolean).join(" ") ||
+      [title, firstName, surname].filter(Boolean).join(" ") ||
+      "Teacher";
+
+    const heading = `${teacherName}'s Timetable`;
+
+    // Temporarily hide UI-only bits inside the timetable container (optional)
+    // You already use print-hide for some areas; this keeps the snapshot clean.
+    const prevScrollTop = node.scrollTop;
+    node.scrollTop = 0;
+
+    try {
+      // High-res render
+      const dataUrl = await toPng(node as HTMLElement, {
+        cacheBust: true,
+        pixelRatio: 3,
+        // Ensures white background (prevents transparent PDF page)
+        backgroundColor: "#ffffff",
+      });
+
+      // A4 landscape in mm
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+
+      // Header space
+      const margin = 8;
+      const headerH = 14;
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(16);
+      pdf.text(heading, margin, margin + 6);
+
+      // Compute image placement (fit within remaining area)
+      const imgProps = pdf.getImageProperties(dataUrl);
+      const maxW = pageW - margin * 2;
+      const maxH = pageH - margin * 2 - headerH;
+
+      const imgW = imgProps.width;
+      const imgH = imgProps.height;
+
+      const scale = Math.min(maxW / imgW, maxH / imgH);
+      const drawW = imgW * scale;
+      const drawH = imgH * scale;
+
+      const x = (pageW - drawW) / 2;
+      const y = margin + headerH;
+
+      pdf.addImage(dataUrl, "PNG", x, y, drawW, drawH, undefined, "FAST");
+
+      const safeSurname = surname ? surname.replace(/\s+/g, "_") : "Teacher";
+      pdf.save(`${title || ""}${safeSurname ? "_" + safeSurname : ""}_Timetable.pdf`.replace(/^_/, ""));
+    } catch (e) {
+      console.error(e);
+      alert("Export failed. Try again, or reduce browser zoom to 100%.");
+    } finally {
+      node.scrollTop = prevScrollTop;
+    }
   }
 
   function autoRankUnusedToday() {
@@ -600,7 +669,7 @@ export default function TeacherAdminPage() {
                 Back to Dashboard
               </button>
               <button className={btn} type="button" onClick={exportPdf}>
-                Export PDF
+                Print Timetable
               </button>
               {savedToast && (
                 <span className="rounded-full border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
@@ -694,7 +763,7 @@ export default function TeacherAdminPage() {
         <div className="mt-6 grid gap-4 md:grid-cols-12 print:mt-0">
           {/* Timetable full width */}
           <div className="md:col-span-12">
-            <div id="timetablePrint" className={`${card} p-4 print-tight`}>
+            <div className={`${card} p-4 print-tight`}>
               <div className="flex items-center justify-between print-hide">
                 <div>
                   <div className="text-lg font-extrabold tracking-tight text-slate-900">
@@ -741,8 +810,10 @@ export default function TeacherAdminPage() {
               </div>
 
               {/* Timetable */}
-              <div className="mt-4 rounded-3xl border-2 border-slate-200 bg-white print:border-0 print:mt-0">
-
+              <div
+                id="timetablePrint"
+                className="mt-4 rounded-3xl border-2 border-slate-200 bg-white print:border-0 print:mt-0"
+              >
                 {/* ✅ Desktop table */}
                 <div className="hidden md:block">
                   <div className="md:min-w-[980px]">

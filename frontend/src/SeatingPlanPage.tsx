@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { toPng } from "html-to-image";
+import jsPDF from "jspdf";
 
 const API_BASE = "/api";
 
@@ -329,6 +331,77 @@ export default function SeatingPlanPage() {
         }));
     }
 
+    async function exportSeatingPdf() {
+        const node = document.getElementById("seatingPlanPrint");
+        if (!node) return;
+
+        const heading = `${classInfo?.name || `Class ${classId}`} — Seating Plan`;
+
+        try {
+            const dataUrl = await toPng(node as HTMLElement, {
+                cacheBust: true,
+                pixelRatio: 3,
+                backgroundColor: "#ffffff",
+            });
+
+            const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+            const pageW = pdf.internal.pageSize.getWidth();
+            const pageH = pdf.internal.pageSize.getHeight();
+
+            const margin = 8;
+            const headerH = 14;
+
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(16);
+            pdf.text(heading, margin, margin + 6);
+
+            const imgProps = pdf.getImageProperties(dataUrl);
+            const maxW = pageW - margin * 2;
+            const maxH = pageH - margin * 2 - headerH;
+
+            const scale = Math.min(maxW / imgProps.width, maxH / imgProps.height);
+            const drawW = imgProps.width * scale;
+            const drawH = imgProps.height * scale;
+
+            const x = (pageW - drawW) / 2;
+            const y = margin + headerH;
+
+            pdf.addImage(dataUrl, "PNG", x, y, drawW, drawH, undefined, "FAST");
+
+            const safe = heading.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "");
+            pdf.save(`${safe}.pdf`);
+        } catch (e) {
+            console.error(e);
+            alert("Export failed. Try setting browser zoom to 100% and try again.");
+        }
+    }
+
+    async function exportSeatingImage() {
+        const node = document.getElementById("seatingPlanPrint");
+        if (!node) return;
+
+        try {
+            const dataUrl = await toPng(node as HTMLElement, {
+                cacheBust: true,
+                pixelRatio: 3,
+                backgroundColor: "#ffffff",
+            });
+
+            const heading = `${classInfo?.name || `Class ${classId}`}_Seating_Plan`
+                .replace(/[^a-z0-9]+/gi, "_")
+                .replace(/^_+|_+$/g, "");
+
+            const link = document.createElement("a");
+            link.download = `${heading}.png`;
+            link.href = dataUrl;
+            link.click();
+        } catch (e) {
+            console.error(e);
+            alert("Export image failed.");
+        }
+    }
+
     function toggleIncludedStudent(idNum: number) {
         const roster = state.roster || {
             includedStudentIds: baseStudentNames.map((s) => s.id),
@@ -482,7 +555,7 @@ export default function SeatingPlanPage() {
                     </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <button
                         className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
                         onClick={() => navigate(`/class/${classId}`)}
@@ -491,12 +564,30 @@ export default function SeatingPlanPage() {
                     </button>
 
                     {state.layout && (
-                        <button
-                            className="rounded-2xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-95"
-                            onClick={regenerate}
-                        >
-                            🔁 Regenerate
-                        </button>
+                        <>
+                            <button
+                                className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+                                onClick={exportSeatingImage}
+                                title="Download a PNG snapshot"
+                            >
+                                Export Image
+                            </button>
+
+                            <button
+                                className="rounded-2xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-95"
+                                onClick={exportSeatingPdf}
+                                title="Download an A4 landscape PDF"
+                            >
+                                Print Seating Plan
+                            </button>
+
+                            <button
+                                className="rounded-2xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-95"
+                                onClick={regenerate}
+                            >
+                                🔁 Regenerate
+                            </button>
+                        </>
                     )}
                 </div>
             </div>
@@ -704,7 +795,7 @@ export default function SeatingPlanPage() {
                                 </div>
                             </div>
                         ) : (
-                            <div className="mt-5">
+                            <div id="seatingPlanPrint" className="mt-5">
                                 {/* Teacher desk */}
                                 <div className="mb-4 flex justify-center">
                                     <div className="w-full max-w-xl rounded-3xl border-2 border-slate-200 bg-slate-50 p-4 text-center shadow-sm">
@@ -789,12 +880,12 @@ export default function SeatingPlanPage() {
                                         </span>
                                     </div>
                                     <div className="text-right"></div>
-                                   
+
                                     <div className="mt-1 space-y-1 text-[11px] text-slate-600">
                                         *If you ever see a singleton warning, make one table 3 seats (or reduce 1-seat tables).<br />
                                         *You can swap students by tapping a seat to select it, then tapping another seat to switch them.</div>
-                                        </div>
-                                    </div>
+                                </div>
+                            </div>
                         )}
                     </div>
 

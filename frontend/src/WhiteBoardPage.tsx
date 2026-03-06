@@ -664,9 +664,36 @@ export default function WhiteBoardPage() {
     setIsDirty(false);
   };
 
+  // ✅ Confirm modal when leaving via UI buttons (e.g., Back to Class)
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const pendingNavRef = useRef<string | null>(null);
+
+  function requestLeave(to: string) {
+    if (dirtyRef.current) {
+      pendingNavRef.current = to;
+      setLeaveOpen(true);
+      return;
+    }
+    navigate(to);
+  }
+
+  function confirmLeave() {
+    const to = pendingNavRef.current;
+    pendingNavRef.current = null;
+    setLeaveOpen(false);
+    if (to) navigate(to);
+  }
+
+  function cancelLeave() {
+    pendingNavRef.current = null;
+    setLeaveOpen(false);
+  }
+
   // Fullscreen
   const fsRootRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const [classDisplay, setClassDisplay] = useState<string>("");
 
 
   // Four-layer canvases (background + images + ink + preview)
@@ -701,9 +728,9 @@ export default function WhiteBoardPage() {
   // Whiteboard state
   const [boardTitle, setBoardTitle] = useState<string>("Class Whiteboard");
   type Tool = "pen" | "eraser" | "line" | "hand";
-  const [tool, setTool] = useState<Tool>("hand");
+  const [tool, setTool] = useState<Tool>("pen");
   const [penColor, setPenColor] = useState(PEN_COLORS[0]);
-  const [penSize, setPenSize] = useState(PEN_SIZES[1]);
+  const [penSize, setPenSize] = useState(PEN_SIZES[0]);
   const [eraserSize, setEraserSize] = useState(ERASER_SIZES[1]);
 
   type PlacedImage = {
@@ -785,7 +812,7 @@ export default function WhiteBoardPage() {
   const [clipRect, setClipRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [snipMode, setSnipMode] = useState(false);
 
-
+  const [classLabel, setClassLabel] = useState("");
 
   // Grid / XY modals + state
   const [showGridModal, setShowGridModal] = useState(false);
@@ -808,9 +835,12 @@ export default function WhiteBoardPage() {
 
   // Styles
   const pill =
-    "rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60";
+    "rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-[13px] font-semibold text-slate-800 " +
+    "shadow-sm backdrop-blur hover:bg-slate-100 hover:shadow transition active:translate-y-[1px] disabled:opacity-60";
+
   const pillOn =
-    "rounded-xl border-2 border-slate-900 bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60";
+    "rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-[13px] font-semibold text-white " +
+    "shadow-sm hover:bg-slate-800 transition active:translate-y-[1px] disabled:opacity-60";
 
   /* ---------- Calculator widget state ---------- */
   const [showCalc, setShowCalc] = useState(false);
@@ -844,6 +874,43 @@ export default function WhiteBoardPage() {
       setCalcResult("Error");
     }
   }
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("elume_class_layout_v1");
+      if (!raw) return;
+
+      const meta = JSON.parse(raw);
+      const entry = meta?.[String(classId)] || {};
+
+      const group = entry?.group || "";
+      const subject = entry?.subject || "";
+
+      const label = [group, subject].filter(Boolean).join(" ");
+      if (label) setClassLabel(label);
+    } catch {
+      // ignore
+    }
+  }, [classId]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("elume_class_layout_v1");
+      if (!raw) return;
+
+      const meta = JSON.parse(raw);
+      const entry = meta?.[String(classId)] || {};
+
+      const name = entry?.group || "";
+      const subject = entry?.subject || "";
+
+      if (name || subject) {
+        setClassDisplay(`${name} ${subject}`.trim());
+      }
+    } catch {
+      // fail silently
+    }
+  }, [classId]);
 
   function forceBoardRedraw() {
     requestAnimationFrame(() => {
@@ -985,7 +1052,7 @@ export default function WhiteBoardPage() {
     const w = containerRef.current?.clientWidth ?? window.innerWidth;
 
     // ✅ Large interactive whiteboards: reduce pixel load hard
-    const cap = w >= 1600 ? 1.25 : 1.5;
+    const cap = w >= 1600 ? 1.0 : 1.5;
 
     return Math.min(dpr, cap);
   }
@@ -1312,7 +1379,8 @@ export default function WhiteBoardPage() {
 
   useEffect(() => {
     redrawImages();
-  }, [placedImages, selectedImageId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placedImages]);
 
   function stampTextToBoard(text: string) {
     const bgCtx = bgCtxRef.current;
@@ -2779,6 +2847,27 @@ export default function WhiteBoardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const onVV = () => {
+      setTimeout(() => {
+        syncCanvasSize();
+        forceBoardRedraw();
+      }, 120);
+    };
+
+    vv.addEventListener("resize", onVV);
+    vv.addEventListener("scroll", onVV);
+
+    return () => {
+      vv.removeEventListener("resize", onVV);
+      vv.removeEventListener("scroll", onVV);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Ensure scrolling still works in fullscreen (some layouts/global css can force overflow hidden)
   useEffect(() => {
     if (isFullscreen) {
@@ -2815,13 +2904,37 @@ export default function WhiteBoardPage() {
 
   return (
     <div ref={fsRootRef} className="min-h-screen bg-[#dff3df]">
-      <div className="mx-auto max-w-9xl px-4 pt-2">
+      <div className="mx-auto max-w-9xl px-3 pt-1">
         {/* Top bar */}
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-2xl font-semibold">Whiteboard</div>
-            <div className="text-sm text-slate-600">{boardTitle}</div>
-            {lastInsertInfo && <div className="mt-1 text-xs text-slate-500">{lastInsertInfo}</div>}
+          <div className="flex items-center gap-2 text-sm text-slate-700 min-w-0">
+            <span className="text-base font-semibold text-slate-900">
+              Whiteboard
+            </span>
+
+            {classLabel && (
+              <>
+                <span className="text-xs text-slate-400">·</span>
+                <span className="text-xs text-slate-700 font-semibold truncate">
+                  {classLabel}
+                </span>
+              </>
+            )}
+
+            {boardTitle && (
+              <>
+                <span className="text-xs text-slate-400">·</span>
+                <span className="text-xs text-slate-500 truncate">
+                  {boardTitle}
+                </span>
+              </>
+            )}
+
+            {lastInsertInfo && (
+              <span className="hidden md:inline text-xs text-slate-400 truncate max-w-[28vw]">
+                · {lastInsertInfo}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -2831,7 +2944,11 @@ export default function WhiteBoardPage() {
             <button className={pill} type="button" onClick={() => setShowImportModal(true)}>
               Import PDF
             </button>
-            <button className={pill} type="button" onClick={() => navigate(`/class/${classId}`)}>
+            <button
+              className={pill}
+              type="button"
+              onClick={() => requestLeave(`/class/${classId}`)}
+            >
               Back to Class
             </button>
             <button
@@ -2846,8 +2963,8 @@ export default function WhiteBoardPage() {
         </div>
 
         {/* Tools */}
-        <div className="mt-4 rounded-2xl border-2 border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-center gap-3">
+        <div className="mt-2 rounded-2xl border border-slate-200 bg-white/90 p-2 shadow-sm">
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap">
             <button type="button" className={tool === "pen" ? pillOn : pill} onClick={() => setTool("pen")}>
               Pen
             </button>
@@ -2895,7 +3012,7 @@ export default function WhiteBoardPage() {
               ))}
             </div>
 
-            <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="ml-auto flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap">
               <button type="button" className={pill} onClick={() => addPage()}>
                 + Add Page
               </button>
@@ -2909,7 +3026,7 @@ export default function WhiteBoardPage() {
                 Calculator
               </button>
               <button type="button" className={pill} onClick={() => setShowPdfPanel((v) => !v)}>
-                {showPdfPanel ? "Hide PDF Import" : "Show PDF Import"}
+                {showPdfPanel ? "Hide PDF" : "Show PDF"}
               </button>
               <button type="button" className={pill} onClick={() => clearInk()}>
                 Clear Ink
@@ -2923,7 +3040,7 @@ export default function WhiteBoardPage() {
           {/* Imported PDF panel */}
           {/* Board + (optional) PDF viewer side-by-side */}
           {/* Board + (optional) PDF viewer side-by-side */}
-          <div className="mt-4 flex w-full gap-3">
+          <div className="mt-2 flex w-full gap-3">
             {/* LEFT: Whiteboard */}
             <div className="flex-1 min-w-0">
               {/* Scrollable OneNote-style page */}
@@ -2935,7 +3052,7 @@ export default function WhiteBoardPage() {
                 onPointerUp={tool === "hand" ? onHandUp : undefined}
                 onPointerCancel={tool === "hand" ? onHandUp : undefined}
 
-                className="h-[70vh] overflow-y-scroll overflow-x-hidden overscroll-contain overscroll-x-none touch-pan-y rounded-2xl border-2 border-slate-200 bg-white relative"
+                className="h-[78vh] overflow-y-scroll overflow-x-hidden overscroll-contain overscroll-x-none touch-pan-y rounded-2xl border border-slate-200 bg-white relative"
               >
 
                 <canvas ref={bgCanvasRef} className="absolute left-0 top-0 pointer-events-none" />
@@ -3284,6 +3401,11 @@ export default function WhiteBoardPage() {
                     onClick={() => {
                       const finalTitle = titleDraft.trim() || "Class Whiteboard";
                       setBoardTitle(finalTitle);
+
+                      // ✅ default tool + size on startup
+                      setTool("pen");
+                      setPenSize(PEN_SIZES[0]);
+
                       setShowTitleModal(false);
                     }}
                   >
@@ -3485,6 +3607,30 @@ export default function WhiteBoardPage() {
           )}
         </div>
       </div>
+            {leaveOpen && (
+        <div className="fixed inset-0 z-[9999] grid place-items-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl">
+            <div className="text-lg font-extrabold text-slate-900">Leave whiteboard?</div>
+            <div className="mt-2 text-sm text-slate-700">
+              You have unsaved whiteboard changes. If you leave now, they will be lost.
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" className={pill} onClick={cancelLeave}>
+                Stay
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmLeave}
+                className="rounded-full border-2 border-red-700 bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 active:translate-y-[1px]"
+              >
+                Leave
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

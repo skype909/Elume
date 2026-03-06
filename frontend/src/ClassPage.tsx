@@ -37,6 +37,14 @@ type CalendarEvent = {
   event_type: string;
 };
 
+type StudentRow = {
+  id: number;
+  class_id: number;
+  first_name: string;
+  notes?: string | null;
+  active: boolean;
+};
+
 
 const API_BASE = "/api";
 
@@ -205,7 +213,22 @@ function PostComposer({
             placeholder="Author"
           />
           <div className="md:col-span-3 flex items-center justify-end gap-2">
-            <button className={btn} type="button">
+
+            {/* Hidden file picker */}
+            <input
+              id="postFilePicker"
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => onPickFiles(e.target.files)}
+            />
+
+            <button
+              className={btn}
+              type="button"
+              onClick={() => document.getElementById("postFilePicker")?.click()}
+              title="Attach files"
+            >
               Attach
             </button>
           </div>
@@ -244,6 +267,22 @@ function PostComposer({
                 title="Remove link"
               >
                 🔗 {l} ✕
+              </button>
+            ))}
+          </div>
+        )}
+
+        {files.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {files.map((f, i) => (
+              <button
+                key={f.name + i}
+                type="button"
+                className={`${chip} hover:bg-slate-100`}
+                onClick={() => removeFile(i)}
+                title="Remove file"
+              >
+                📎 {f.name} ✕
               </button>
             ))}
           </div>
@@ -301,9 +340,17 @@ export default function ClassPage() {
   const [timerMinutes, setTimerMinutes] = useState(5);
   const [timerSeconds, setTimerSeconds] = useState(0);
 
+  const [editingPostId, setEditingPostId] = useState<number | null>(null);
+  const [editContentDraft, setEditContentDraft] = useState("");
+  const [editLinksDraft, setEditLinksDraft] = useState<string[]>([]);
+  const [editLinkDraft, setEditLinkDraft] = useState("");
+
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerFinished, setTimerFinished] = useState(false);
   const [timerRemaining, setTimerRemaining] = useState(0);
+
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [loadingStudents, setLoadingStudents] = useState(true);
 
 
   const [activeTab, setActiveTab] = useState<"announce" | "notes" | "whiteboard">(
@@ -342,37 +389,30 @@ export default function ClassPage() {
     return `conic-gradient(${stops.join(",")})`;
   };
 
-  const spinRng = () => {
-    if (!rngValid || rngSpinning) return;
+  const spinName = () => {
+    if (!nameValid || nameSpinning) return;
 
-    const n = rngMax - rngMin + 1;
-    const idx = Math.floor(Math.random() * n); // 0..n-1
-    const value = rngMin + idx;
+    const n = studentNames.length;
+    const idx = Math.floor(Math.random() * n);
+    const picked = studentNames[idx];
 
     const anglePer = 360 / n;
     const spins = 6;
-
-    // Land the pointer at the center of the chosen slice.
     const targetDelta = spins * 360 + (360 - (idx + 0.5) * anglePer);
 
-    setRngResult(null);
+    setNameResult(null);
+    setNameSpinning(false);
 
-    // IMPORTANT:
-    // 1) Turn OFF transition briefly
-    // 2) Normalize current rotation so we don't jump across 0
-    // 3) Next frame, turn ON transition and apply the new rotation
-    setRngSpinning(false);
-
-    setRngRotation((prev) => {
+    setNameRotation((prev) => {
       const normalized = ((prev % 360) + 360) % 360;
 
       requestAnimationFrame(() => {
-        setRngSpinning(true);
-        setRngRotation(normalized + targetDelta);
+        setNameSpinning(true);
+        setNameRotation(normalized + targetDelta);
 
         window.setTimeout(() => {
-          setRngResult(value);
-          setRngSpinning(false);
+          setNameResult(picked);
+          setNameSpinning(false);
         }, 2400);
       });
 
@@ -380,6 +420,31 @@ export default function ClassPage() {
     });
   };
 
+  useEffect(() => {
+    if (!validClassId) {
+      setStudents([]);
+      setLoadingStudents(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingStudents(true);
+
+    fetch(`${API_BASE}/classes/${classId}/students`, { signal: controller.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Students fetch failed (${r.status})`);
+        return (await r.json()) as StudentRow[];
+      })
+      .then((studs) => setStudents(Array.isArray(studs) ? studs : []))
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+        console.error("Students load error:", e);
+        setStudents([]);
+      })
+      .finally(() => setLoadingStudents(false));
+
+    return () => controller.abort();
+  }, [classId, validClassId]);
 
   // --- fetch class ---
   useEffect(() => {
@@ -520,7 +585,48 @@ export default function ClassPage() {
     setEditRoom(roomLabel);
   }, [showClassSettings, teacherName, groupLabel, displayId, roomLabel]);
 
+  async function saveEditPost(postId: number) {
+    try {
+      setError(null);
 
+      const r = await fetch(`${API_BASE}/posts/${postId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: editContentDraft,
+          links: editLinksDraft,
+        }),
+      });
+
+      if (!r.ok) throw new Error(`Update failed (${r.status})`);
+
+      const updated = normalizePost(await r.json());
+
+      setPosts((prev) => prev.map((p) => (p.id === postId ? updated : p)));
+      cancelEditPost();
+    } catch (e: any) {
+      setError(e?.message || "Failed to update post");
+    }
+  }
+
+  // Random Name Generator (right panel)
+  const [nameGenOpen, setNameGenOpen] = useState(false);
+  const [nameResult, setNameResult] = useState<string | null>(null);
+  const [nameSpinning, setNameSpinning] = useState(false);
+  const [nameRotation, setNameRotation] = useState(0);
+
+  const studentNames = useMemo(() => {
+    const names = students
+      .filter((s) => s.active)
+      .map((s) => (s.first_name || "").trim())
+      .filter(Boolean);
+
+    // de-dupe while preserving order
+    return Array.from(new Set(names));
+  }, [students]);
+
+  const nameCount = studentNames.length;
+  const nameValid = nameCount >= 2 && nameCount <= 40; // keep same wheel sanity cap as before
 
   // --- fetch calendar events (for bell alerts) ---
   // --- fetch calendar events (GLOBAL: same calendar across all ClassPages) ---
@@ -612,10 +718,17 @@ export default function ClassPage() {
     setPosting(true);
     setError(null);
 
+    const fd = new FormData();
+    fd.append("author", author);
+    fd.append("content", content);
+    fd.append("links", JSON.stringify(links || []));
+
+    // Attach files
+    for (const f of files) fd.append("files", f);
+
     fetch(`${API_BASE}/classes/${classId}/posts`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ author, content, links }),
+      body: fd,
     })
       .then((r) => {
         if (!r.ok) throw new Error(`Post failed (${r.status})`);
@@ -656,6 +769,32 @@ export default function ClassPage() {
   function clampInt(n: number, min: number, max: number) {
     if (Number.isNaN(n)) return min;
     return Math.max(min, Math.min(max, Math.trunc(n)));
+  }
+
+  function startEditPost(p: Post) {
+    setEditingPostId(p.id);
+    setEditContentDraft(p.content || "");
+    setEditLinksDraft(p.links || []);
+    setEditLinkDraft("");
+  }
+
+  function cancelEditPost() {
+    setEditingPostId(null);
+    setEditContentDraft("");
+    setEditLinksDraft([]);
+    setEditLinkDraft("");
+  }
+
+  function addEditLink() {
+    const v = editLinkDraft.trim();
+    if (!v) return;
+    const url = v.startsWith("http://") || v.startsWith("https://") ? v : `https://${v}`;
+    setEditLinksDraft((prev) => [url, ...prev]);
+    setEditLinkDraft("");
+  }
+
+  function removeEditLink(i: number) {
+    setEditLinksDraft((prev) => prev.filter((_, idx) => idx !== i));
   }
 
   function formatMMSS(totalSec: number) {
@@ -1039,6 +1178,16 @@ export default function ClassPage() {
                 <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
                   {formatPostStamp(p.createdAt)}
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => startEditPost(p)}
+                  className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                  title="Edit post"
+                >
+                  Edit
+                </button>
+
                 <button
                   type="button"
                   onClick={() => requestDelete(p.id)}
@@ -1050,9 +1199,62 @@ export default function ClassPage() {
               </div>
 
               {/* Content */}
-              <div className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800">
-                {p.content}
-              </div>
+              {editingPostId === p.id ? (
+                <div className="mt-4 grid gap-3">
+                  <textarea
+                    className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    rows={4}
+                    value={editContentDraft}
+                    onChange={(e) => setEditContentDraft(e.target.value)}
+                  />
+
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                    <input
+                      className="flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                      value={editLinkDraft}
+                      onChange={(e) => setEditLinkDraft(e.target.value)}
+                      placeholder="Paste a link…"
+                    />
+                    <button className={btn} type="button" onClick={addEditLink}>
+                      Add link
+                    </button>
+                  </div>
+
+                  {editLinksDraft.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {editLinksDraft.map((l, i) => (
+                        <button
+                          key={l + i}
+                          type="button"
+                          className={`${chip} hover:bg-slate-100`}
+                          onClick={() => removeEditLink(i)}
+                          title="Remove link"
+                        >
+                          🔗 {l} ✕
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2">
+                    <button className={btn} type="button" onClick={cancelEditPost}>
+                      Cancel
+                    </button>
+                    <button
+                      className={btnPrimary}
+                      type="button"
+                      onClick={() => saveEditPost(p.id)}
+                      disabled={!editContentDraft.trim()}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800">
+                  {p.content}
+                </div>
+              )}
 
               {/* Attachments ✅ SAFE because p.links is always an array after normalise */}
               {(p.links?.length || p.files?.length) && (
@@ -1176,13 +1378,13 @@ export default function ClassPage() {
                   <button
                     type="button"
                     className={toolTile}
-                    onClick={() => setRngOpen((v) => !v)}
+                    onClick={() => setNameGenOpen((v) => !v)}
                   >
-                    <div className={toolIcon}>🎲</div>
+                    <div className={toolIcon}>🙋</div>
                     <div className={toolLabel}>
                       Random
                       <br />
-                      Number
+                      Name
                     </div>
                   </button>
 
@@ -1232,62 +1434,54 @@ export default function ClassPage() {
             })()}
           </div>
 
-          {/* RNG Widget (inline pop-up card) */}
-          {rngOpen && (
+          {nameGenOpen && (
             <div className="mt-4 rounded-3xl border-2 border-slate-200 bg-white p-4">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-extrabold">Random Number Generator</div>
-                <button className={pill} type="button" onClick={() => setRngOpen(false)}>
+                <div className="text-sm font-extrabold">Random Name Generator</div>
+                <button className={pill} type="button" onClick={() => setNameGenOpen(false)}>
                   Close
                 </button>
               </div>
 
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <label className="text-sm">
-                  Min
-                  <input
-                    type="number"
-                    className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-sm"
-                    value={rngMin}
-                    onChange={(e) => setRngMin(Number(e.target.value))}
-                  />
-                </label>
-
-                <label className="text-sm">
-                  Max
-                  <input
-                    type="number"
-                    className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-sm"
-                    value={rngMax}
-                    onChange={(e) => setRngMax(Number(e.target.value))}
-                  />
-                </label>
+              <div className="mt-2 text-xs text-slate-600">
+                Pulls <span className="font-bold">active</span> first names from Class Admin.
               </div>
 
-              {!rngValid && (
-                <div className="mt-2 text-xs text-red-600">
-                  Please enter a valid range (min &lt; max). Max range size is 40.
+              {!loadingStudents && nameCount === 0 && (
+                <div className="mt-3 text-sm text-red-700">
+                  No active students found. Add students in Class Admin.
+                </div>
+              )}
+
+              {!loadingStudents && nameCount === 1 && (
+                <div className="mt-3 text-sm text-red-700">
+                  Only 1 active student found. Add more students to use Random Name.
+                </div>
+              )}
+
+              {!loadingStudents && nameCount > 40 && (
+                <div className="mt-3 text-sm text-red-700">
+                  This class has {nameCount} active students. For performance, Random Name supports up to 40.
                 </div>
               )}
 
               <div className="mt-4 flex items-center justify-center">
                 <div className="relative">
-                  {/* pointer */}
                   <div className="absolute left-1/2 top-[-10px] z-10 h-0 w-0 -translate-x-1/2 border-l-[10px] border-r-[10px] border-b-[16px] border-l-transparent border-r-transparent border-b-slate-900" />
-                  {/* wheel */}
+
                   <div
                     className="grid h-44 w-44 place-items-center rounded-full border-4 border-slate-900"
                     style={{
-                      background: buildWheelBackground(rngMax - rngMin + 1),
-                      transform: `rotate(${rngRotation}deg)`,
-                      transition: rngSpinning ? "transform 2.4s cubic-bezier(0.2, 0.9, 0.2, 1)" : "none",
+                      background: buildWheelBackground(Math.max(2, Math.min(40, nameCount || 2))),
+                      transform: `rotate(${nameRotation}deg)`,
+                      transition: nameSpinning ? "transform 2.4s cubic-bezier(0.2, 0.9, 0.2, 1)" : "none",
                     }}
                   >
                     <div
-                      className="grid h-16 w-16 place-items-center rounded-full border-4 border-slate-900 bg-white text-xl font-extrabold"
-                      style={{ transform: `rotate(${-rngRotation}deg)` }}
+                      className="grid h-20 w-20 place-items-center rounded-full border-4 border-slate-900 bg-white px-2 text-center text-sm font-extrabold leading-tight"
+                      style={{ transform: `rotate(${-nameRotation}deg)` }}
                     >
-                      {rngResult ?? "?"}
+                      {nameResult ?? "?"}
                     </div>
                   </div>
                 </div>
@@ -1297,28 +1491,33 @@ export default function ClassPage() {
                 <button
                   type="button"
                   className="flex-1 rounded-2xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                  onClick={spinRng}
-                  disabled={!rngValid || rngSpinning}
+                  onClick={spinName}
+                  disabled={!nameValid || nameSpinning || loadingStudents}
                 >
-                  {rngSpinning ? "Spinning..." : "Generate"}
+                  {loadingStudents ? "Loading..." : nameSpinning ? "Spinning..." : "Pick Name"}
                 </button>
 
                 <button
                   type="button"
                   className={pill}
-                  onClick={() => setRngResult(null)}
-                  disabled={rngSpinning}
+                  onClick={() => setNameResult(null)}
+                  disabled={nameSpinning}
                 >
                   Reset
                 </button>
               </div>
+
+              {nameValid && (
+                <div className="mt-3 text-[11px] text-slate-500">
+                  Loaded: {nameCount} active student{nameCount === 1 ? "" : "s"}.
+                </div>
+              )}
             </div>
           )}
         </div>
-
-      </div>
-    </aside>
-  );
+         </div>
+       </aside>
+    );
 
   return (
     <div className="min-h-screen bg-emerald-100 p-6">
