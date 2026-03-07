@@ -370,6 +370,10 @@ class AssessmentCreate(BaseModel):
     # optional YYYY-MM-DD; if omitted use today
     assessment_date: Optional[str] = None
 
+class AssessmentUpdate(BaseModel):
+    title: str
+    assessment_date: Optional[str] = None
+
 class ResultUpsert(BaseModel):
     student_id: int
     score_percent: Optional[int] = None
@@ -1282,16 +1286,61 @@ def get_posts(class_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/classes/{class_id}/posts")
-def add_post(class_id: int, new_post: schemas.PostCreate, db: Session = Depends(get_db)):
+async def add_post(
+    class_id: int,
+    author: str = Form("Teacher"),
+    content: str = Form(""),
+    links: str = Form("[]"),
+    files: list[UploadFile] = File([]),
+    db: Session = Depends(get_db),
+):
+    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    content = (content or "").strip()
+    author = (author or "Teacher").strip() or "Teacher"
+
+    raw_links = _links_to_list(links)
+
+    upload_dir = Path("uploads") / "posts"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    file_links: list[str] = []
+
+    for f in files or []:
+        if not f or not f.filename:
+            continue
+
+        original_name = Path(f.filename).name
+        ext = Path(original_name).suffix
+        stem = Path(original_name).stem
+
+        safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._") or "file"
+        unique_name = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}_{safe_stem}{ext}"
+        dest_path = upload_dir / unique_name
+
+        contents = await f.read()
+        with open(dest_path, "wb") as out:
+            out.write(contents)
+
+        file_links.append(f"/uploads/posts/{unique_name}")
+
+    all_links = raw_links + file_links
+
+    if not content and not all_links:
+        raise HTTPException(status_code=400, detail="Post must contain text, a link, or an attachment")
+
     p = PostModel(
         class_id=class_id,
-        author=new_post.author,
-        content=new_post.content,
-        links=_links_to_storage(getattr(new_post, "links", None)),
+        author=author,
+        content=content,
+        links=_links_to_storage(all_links),
     )
     db.add(p)
     db.commit()
     db.refresh(p)
+
     return {
         "id": p.id,
         "class_id": p.class_id,
@@ -2104,6 +2153,54 @@ def create_assessment(class_id: int, payload: AssessmentCreate, db: Session = De
         "assessment_date": a.assessment_date.date().isoformat() if a.assessment_date else None,
     }
 
+@app.put("/assessments/{assessment_id}")
+def update_assessment(assessment_id: int, payload: AssessmentUpdate, db: Session = Depends(get_db)):
+    a = db.query(ClassAssessmentModel).filter(ClassAssessmentModel.id == assessment_id).first()
+    if not a:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+
+    if payload.assessment_date:
+        try:
+            dt = datetime.strptime(payload.assessment_date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="assessment_date must be YYYY-MM-DD")
+    else:
+        dt = datetime.utcnow()
+
+    a.title = title
+    a.assessment_date = dt
+
+    db.commit()
+    db.refresh(a)
+
+    return {
+        "id": a.id,
+        "class_id": a.class_id,
+        "title": a.title,
+        "assessment_date": a.assessment_date.date().isoformat() if a.assessment_date else None,
+    }
+
+
+@app.delete("/assessments/{assessment_id}")
+def delete_assessment(assessment_id: int, db: Session = Depends(get_db)):
+    a = db.query(ClassAssessmentModel).filter(ClassAssessmentModel.id == assessment_id).first()
+    if not a:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    # delete linked results first
+    db.query(AssessmentResultModel).filter(
+        AssessmentResultModel.assessment_id == assessment_id
+    ).delete()
+
+    # then delete the assessment
+    db.delete(a)
+    db.commit()
+
+    return {"ok": True, "deleted_assessment_id": assessment_id}
 
 @app.get("/assessments/{assessment_id}/results")
 def get_assessment_results(assessment_id: int, db: Session = Depends(get_db)):
@@ -2182,7 +2279,7 @@ def upsert_assessment_results(assessment_id: int, payload: BulkResultsUpdate, db
                 score = 0
             score = int(score)
             if score < 0 or score > 100:
-                raise HTTPException(status_code=400, detail="score_percent must be 0..100")
+                raise HTTPException(status_code=400, detail="score_percent must be 0 - 100")
 
         r = by_student.get(item.student_id)
         if r:
@@ -2317,6 +2414,158 @@ def class_insights(class_id: int, db: Session = Depends(get_db)):
         "active_student_count": active_student_count,
         "student_rankings": rankings,
         "at_risk": at_risk,
+    }
+
+@app.get("/classes/{class_id}/report-data")
+def class_report_data(class_id: int, db: Session = Depends(get_db)):
+    students = (
+        db.query(StudentModel)
+        .filter(StudentModel.class_id == class_id)
+        .filter(StudentModel.active == True)  # noqa: E712
+        .order_by(StudentModel.first_name.asc())
+        .all()
+    )
+
+    assessments = (
+        db.query(ClassAssessmentModel)
+        .filter(ClassAssessmentModel.class_id == class_id)
+        .order_by(ClassAssessmentModel.assessment_date.asc(), ClassAssessmentModel.id.asc())
+        .all()
+    )
+
+    assessment_ids = [a.id for a in assessments]
+
+    results = []
+    if assessment_ids:
+        results = (
+            db.query(AssessmentResultModel)
+            .filter(AssessmentResultModel.assessment_id.in_(assessment_ids))
+            .all()
+        )
+
+    results_by_student: dict[int, list[AssessmentResultModel]] = {}
+    for r in results:
+        results_by_student.setdefault(r.student_id, []).append(r)
+
+    report_students = []
+
+    for s in students:
+        student_results = results_by_student.get(s.id, [])
+
+        numeric_scores = [
+            int(r.score_percent)
+            for r in student_results
+            if not r.absent and r.score_percent is not None
+        ]
+
+        average = round(sum(numeric_scores) / len(numeric_scores), 1) if numeric_scores else None
+        taken = len(numeric_scores)
+        missed = len([r for r in student_results if r.absent])
+
+        report_students.append(
+            {
+                "id": s.id,
+                "name": s.first_name,
+                "average": average,
+                "taken": taken,
+                "missed": missed,
+            }
+        )
+
+    class_average_values = [s["average"] for s in report_students if s["average"] is not None]
+    class_average = (
+        round(sum(class_average_values) / len(class_average_values), 1)
+        if class_average_values
+        else None
+    )
+
+    return {
+        "class_id": class_id,
+        "assessment_count": len(assessments),
+        "class_average": class_average,
+        "students": report_students,
+    }
+
+
+@app.get("/classes/{class_id}/students/{student_id}/report-data")
+def student_report_data(class_id: int, student_id: int, db: Session = Depends(get_db)):
+    student = (
+        db.query(StudentModel)
+        .filter(StudentModel.class_id == class_id, StudentModel.id == student_id)
+        .first()
+    )
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    assessments = (
+        db.query(ClassAssessmentModel)
+        .filter(ClassAssessmentModel.class_id == class_id)
+        .order_by(ClassAssessmentModel.assessment_date.asc(), ClassAssessmentModel.id.asc())
+        .all()
+    )
+
+    assessment_ids = [a.id for a in assessments]
+
+    results = []
+    if assessment_ids:
+        results = (
+            db.query(AssessmentResultModel)
+            .filter(
+                AssessmentResultModel.student_id == student_id,
+                AssessmentResultModel.assessment_id.in_(assessment_ids),
+            )
+            .all()
+        )
+
+    results_by_assessment = {r.assessment_id: r for r in results}
+
+    assessment_rows = []
+    numeric_scores = []
+
+    for a in assessments:
+        r = results_by_assessment.get(a.id)
+
+        if not r:
+            result_text = "—"
+            absent = False
+            score_value = None
+        elif r.absent:
+            result_text = "Absent"
+            absent = True
+            score_value = None
+        else:
+            score_value = int(r.score_percent) if r.score_percent is not None else None
+            result_text = f"{score_value}%" if score_value is not None else "—"
+            absent = False
+            if score_value is not None:
+                numeric_scores.append(score_value)
+
+        assessment_rows.append(
+            {
+                "assessment_id": a.id,
+                "title": a.title,
+                "date": a.assessment_date.date().isoformat() if a.assessment_date else None,
+                "result": result_text,
+                "absent": absent,
+                "score_percent": score_value,
+            }
+        )
+
+    average = round(sum(numeric_scores) / len(numeric_scores), 1) if numeric_scores else None
+    taken = len(numeric_scores)
+    missed = len([r for r in results if r.absent])
+
+    return {
+        "class_id": class_id,
+        "student": {
+            "id": student.id,
+            "name": student.first_name,
+            "average": average,
+            "taken": taken,
+            "missed": missed,
+        },
+        "assessment_count": len(assessments),
+        "assessments": assessment_rows,
     }
 
 from sqlalchemy import func  # add near your other imports
@@ -2645,6 +2894,142 @@ def ai_create_resources(
         raise HTTPException(status_code=500, detail="AI returned empty content")
 
     return {"title": title, "content": body}
+
+class AIReportCommentRequest(BaseModel):
+    length: str = "Medium"            # Short | Medium | Long
+    indicators: List[str] = []
+    sign_off: Optional[str] = None
+
+
+class AIReportCommentResponse(BaseModel):
+    comment: str
+
+
+@app.post(
+    "/classes/{class_id}/students/{student_id}/generate-report-comment",
+    response_model=AIReportCommentResponse,
+)
+def generate_report_comment(
+    class_id: int,
+    student_id: int,
+    payload: AIReportCommentRequest,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    student = (
+        db.query(StudentModel)
+        .filter(StudentModel.class_id == class_id, StudentModel.id == student_id)
+        .first()
+    )
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    assessments = (
+        db.query(ClassAssessmentModel)
+        .filter(ClassAssessmentModel.class_id == class_id)
+        .order_by(ClassAssessmentModel.assessment_date.asc(), ClassAssessmentModel.id.asc())
+        .all()
+    )
+
+    assessment_ids = [a.id for a in assessments]
+
+    results = []
+    if assessment_ids:
+        results = (
+            db.query(AssessmentResultModel)
+            .filter(
+                AssessmentResultModel.student_id == student_id,
+                AssessmentResultModel.assessment_id.in_(assessment_ids),
+            )
+            .all()
+        )
+
+    by_assessment = {r.assessment_id: r for r in results}
+
+    numeric_scores = [
+        int(r.score_percent)
+        for r in results
+        if not r.absent and r.score_percent is not None
+    ]
+    average = round(sum(numeric_scores) / len(numeric_scores), 1) if numeric_scores else None
+    taken = len(numeric_scores)
+    missed = len([r for r in results if r.absent])
+
+    latest_score = None
+    for a in reversed(assessments):
+        r = by_assessment.get(a.id)
+        if r and (not r.absent) and r.score_percent is not None:
+            latest_score = int(r.score_percent)
+            break
+
+    try:
+        from openai import OpenAI  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI client not available: {e}")
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="OPENAI_API_KEY is missing. Check backend .env and that load_dotenv() runs on startup.",
+        )
+
+    client = OpenAI(api_key=api_key)
+
+    desired_length = (payload.length or "Medium").strip()
+    if desired_length not in ["Short", "Medium", "Long"]:
+        desired_length = "Medium"
+
+    system = (
+        f"Today is {datetime.now().date().isoformat()}. "
+        "You are an assistant helping a teacher write a school report comment. "
+        "Write in a professional, natural, supportive school-report style suitable for Ireland/UK schools. "
+        "Start the comment with the student's first name. "
+        "ALWAYS include the student's first name. "
+        "Do not use bullet points. Do not use markdown. "
+        "Write one polished paragraph only. "
+        "Do not invent facts beyond the data provided. "
+        "If behaviour or effort indicators are provided, weave them in naturally. "
+        "If a sign-off is provided, place it naturally at the end."
+        "Avoid repeating identical sentence structures across comments. "
+    )
+
+    if desired_length == "Short":
+        length_rule = "Write about 2 short sentences."
+    elif desired_length == "Long":
+        length_rule = "Write about 4 to 5 sentences."
+    else:
+        length_rule = "Write about 3 sentences."
+
+    user_msg = (
+        f"Teacher email: {user.email}\n"
+        f"Student name: {student.first_name}\n"
+        f"Class id: {class_id}\n"
+        f"Average score: {average if average is not None else 'N/A'}\n"
+        f"Latest score: {latest_score if latest_score is not None else 'N/A'}\n"
+        f"Assessments completed: {taken}\n"
+        f"Assessments missed: {missed}\n"
+        f"Indicators: {', '.join(payload.indicators) if payload.indicators else 'None'}\n"
+        f"Sign-off: {(payload.sign_off or '').strip() or 'None'}\n"
+        f"Length instruction: {length_rule}\n"
+        "\n"
+        "Write the final student report comment now."
+    )
+
+    resp = client.chat.completions.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        temperature=0.4,
+    )
+
+    comment = (resp.choices[0].message.content or "").strip()
+    if not comment:
+        raise HTTPException(status_code=500, detail="AI returned empty comment")
+
+    return {"comment": comment}
 
 
 # ================= AI QUIZ GENERATION =================

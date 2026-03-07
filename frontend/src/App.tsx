@@ -19,6 +19,8 @@ import { getToken, clearToken } from "./api";
 import { apiFetch } from "./api";
 import WhiteBoardPage from "./WhiteBoardPage";
 import TeacherAdminPage from "./TeacherAdminPage";
+import ClassReportPage from "./ClassReportPage";
+import StudentReportPage from "./StudentReportPage";
 import TeacherPlanner from "./TeacherPlanner";
 import CreateResources from "./CreateResources";
 
@@ -982,6 +984,8 @@ export default function App() {
         <Route path="/s/:token" element={<StudentClassPage />} />
         <Route path="/" element={<Dashboard />} />
         <Route path="/admin" element={<TeacherAdminPage />} />
+        <Route path="/class/:id/report" element={<ClassReportPage />} />
+        <Route path="/class/:id/student-report/:studentId" element={<StudentReportPage />} />
         <Route path="/planner" element={<TeacherPlanner />} />
         <Route path="/create-resources" element={<CreateResources />} />
       </Routes>
