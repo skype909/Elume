@@ -219,6 +219,8 @@ function fmtDay(d: DayKey) {
 
 export default function TeacherAdminPage() {
   const navigate = useNavigate();
+  const email = getEmailFromToken();
+  const isSuperAdmin = email === "admin@elume.ie";
 
   const [state, setState] = useState<StoredAdminState>(() => {
     const raw = localStorage.getItem(storageKey());
@@ -664,6 +666,33 @@ export default function TeacherAdminPage() {
               </div>
             </div>
 
+            {isSuperAdmin && (
+              <div className="mt-6 rounded-3xl border-2 border-purple-300 bg-purple-50 p-4 shadow-sm">
+                <div className="text-lg font-bold text-purple-900">
+                  Super Admin Controls
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    className="rounded-full border-2 border-purple-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-purple-100"
+                    onClick={() => navigate("/admin-users")}
+                  >
+                    Manage Users
+                  </button>
+
+                  <button
+                    className="rounded-full border-2 border-purple-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-purple-100"
+                    onClick={() => navigate("/admin-stats")}
+                  >
+                    Platform Stats
+                  </button>
+                </div>
+
+                <div className="mt-2 text-xs text-purple-700">
+                  Visible only to the ELUME Super Admin account.
+                </div>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <button className={btn} type="button" onClick={() => navigate("/")}>
                 Back to Dashboard

@@ -70,6 +70,18 @@ class AuthToken(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+class AdminCreateUser(BaseModel):
+    email: str
+    password: str
+
+class AdminResetPassword(BaseModel):
+    email: str
+    new_password: str
+
+class AdminRenameUser(BaseModel):
+    old_email: str
+    new_email: str
+
 def _make_token(user_id: int, email: str) -> str:
     exp = datetime.utcnow() + timedelta(days=JWT_EXPIRE_DAYS)
     return jwt.encode(
@@ -262,6 +274,10 @@ def get_current_user(
 
     return user
 
+def require_super_admin(user: models.UserModel):
+    if (user.email or "").strip().lower() != "admin@elume.ie":
+        raise HTTPException(status_code=403, detail="Not authorised")
+
 # =========================================================
 # DB
 # =========================================================
@@ -346,6 +362,122 @@ def save_teacher_admin_state(
             db.refresh(row)
 
     return {"state": json.loads(row.state_json), "updated_at": row.updated_at}
+
+@app.get("/admin/users")
+def admin_list_users(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_super_admin(user)
+
+    users = (
+        db.query(models.UserModel)
+        .order_by(models.UserModel.id.asc())
+        .all()
+    )
+
+    return [
+        {
+            "id": u.id,
+            "email": u.email,
+            "created_at": u.created_at.isoformat() if getattr(u, "created_at", None) else None,
+        }
+        for u in users
+    ]
+
+
+@app.post("/admin/users")
+def admin_create_user(
+    payload: AdminCreateUser,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_super_admin(user)
+
+    email = (payload.email or "").strip().lower()
+    password = (payload.password or "").strip()
+
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    existing = db.query(models.UserModel).filter(models.UserModel.email == email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already exists")
+
+    new_user = models.UserModel(
+        email=email,
+        password_hash=PWD_CONTEXT.hash(password),
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return {
+        "message": "User created",
+        "id": new_user.id,
+        "email": new_user.email,
+    }
+
+
+@app.post("/admin/users/reset-password")
+def admin_reset_password(
+    payload: AdminResetPassword,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_super_admin(user)
+
+    email = (payload.email or "").strip().lower()
+    new_password = (payload.new_password or "").strip()
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Email required")
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    target = db.query(models.UserModel).filter(models.UserModel.email == email).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    target.password_hash = PWD_CONTEXT.hash(new_password)
+    db.commit()
+
+    return {"message": f"Password reset for {target.email}"}
+
+
+@app.post("/admin/users/rename")
+def admin_rename_user(
+    payload: AdminRenameUser,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_super_admin(user)
+
+    old_email = (payload.old_email or "").strip().lower()
+    new_email = (payload.new_email or "").strip().lower()
+
+    if not old_email or not new_email or "@" not in new_email:
+        raise HTTPException(status_code=400, detail="Valid old and new email required")
+
+    target = db.query(models.UserModel).filter(models.UserModel.email == old_email).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    clash = db.query(models.UserModel).filter(models.UserModel.email == new_email).first()
+    if clash and clash.id != target.id:
+        raise HTTPException(status_code=400, detail="New email already in use")
+
+    target.email = new_email
+    db.commit()
+    db.refresh(target)
+
+    return {
+        "message": "User email updated",
+        "id": target.id,
+        "email": target.email,
+    }
 
 
 # =========================================================

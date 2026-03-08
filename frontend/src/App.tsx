@@ -23,6 +23,7 @@ import ClassReportPage from "./ClassReportPage";
 import StudentReportPage from "./StudentReportPage";
 import TeacherPlanner from "./TeacherPlanner";
 import CreateResources from "./CreateResources";
+import AdminUsersPage from "./AdminUsersPage";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -43,6 +44,78 @@ type ClassMeta = {
   order: number;
 };
 type MetaStore = Record<string, ClassMeta>;
+
+type DayKey = "Mon" | "Tue" | "Wed" | "Thu" | "Fri";
+type SlotKind = "period" | "break" | "lunch";
+
+type Slot = {
+  id: string;
+  kind: SlotKind;
+  label: string;
+  start: string;
+  end: string;
+};
+
+type TimetableEntry = {
+  classId: number | null;
+  classLabel: string;
+  room: string;
+  supervisionRank: number | null;
+  dutyNote: string;
+};
+
+type DaySchedule = {
+  slots: Slot[];
+  entries: Record<string, TimetableEntry>;
+};
+
+type TeacherProfile = {
+  title: string;
+  firstName: string;
+  surname: string;
+  schoolName: string;
+  schoolAddress: string;
+  rollNumber: string;
+};
+
+type StoredAdminState = {
+  profile: TeacherProfile;
+  schedule: Record<DayKey, DaySchedule>;
+  updatedAt: string | null;
+};
+
+const TT_DAYS: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+function fmtDayLong(d: DayKey) {
+  if (d === "Mon") return "Monday";
+  if (d === "Tue") return "Tuesday";
+  if (d === "Wed") return "Wednesday";
+  if (d === "Thu") return "Thursday";
+  return "Friday";
+}
+
+function currentSchoolDay(): DayKey {
+  const n = new Date().getDay(); // 0 Sun, 1 Mon ... 6 Sat
+  if (n === 0 || n === 6) return "Mon"; // weekend → next Monday
+  return TT_DAYS[n - 1] as DayKey;
+}
+
+function isLandscapeNow() {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(orientation: landscape)").matches;
+}
+
+function loadTeacherTimetableLocal(): StoredAdminState | null {
+  try {
+    const raw = localStorage.getItem(teacherAdminKeyForUser());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredAdminState;
+    if (!parsed?.profile || !parsed?.schedule) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 
 // 12 bright classroom colours
@@ -233,6 +306,16 @@ function Dashboard() {
   const [editColour, setEditColour] = useState(DEFAULT_BG);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // mobile timetable quick-view
+  const [ttOpen, setTtOpen] = useState(false);
+  const [ttMode, setTtMode] = useState<"day" | "week">(
+    () => (isLandscapeNow() ? "week" : "day")
+  );
+  const [ttDay, setTtDay] = useState<DayKey>(() => currentSchoolDay());
+  const [ttState, setTtState] = useState<StoredAdminState | null>(() => loadTeacherTimetableLocal());
+  const [ttLoading, setTtLoading] = useState(false);
+  const [ttError, setTtError] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -306,18 +389,158 @@ function Dashboard() {
     minute: "2-digit",
   });
 
+  async function openTimetableQuickView() {
+    setTtOpen(true);
+    setTtDay(currentSchoolDay());
+    setTtMode(isLandscapeNow() ? "week" : "day");
+    setTtError(null);
+
+    const local = loadTeacherTimetableLocal();
+    if (local) setTtState(local);
+
+    setTtLoading(true);
+    try {
+      const data = await apiFetch("/teacher-admin/state");
+      const serverState = (data as any)?.state as StoredAdminState | null;
+      if (serverState?.profile && serverState?.schedule) {
+        setTtState(serverState);
+        try {
+          localStorage.setItem(teacherAdminKeyForUser(), JSON.stringify(serverState));
+        } catch { }
+      } else if (!local) {
+        setTtError("No timetable saved yet.");
+      }
+    } catch {
+      if (!local) setTtError("Could not load timetable.");
+    } finally {
+      setTtLoading(false);
+    }
+  }
+
+  function timetableCardClass(slot: Slot, hasEntry: boolean) {
+    if (slot.kind === "break") return "border-amber-200 bg-amber-50 text-amber-900";
+    if (slot.kind === "lunch") return "border-orange-200 bg-orange-50 text-orange-900";
+    if (hasEntry) return "border-emerald-200 bg-emerald-50 text-slate-900";
+    return "border-slate-200 bg-slate-50 text-slate-700";
+  }
+
+  function renderDayStack(day: DayKey) {
+    if (!ttState?.schedule?.[day]) return null;
+
+    const daySchedule = ttState.schedule[day];
+
+    return (
+      <div className="space-y-3">
+        {daySchedule.slots.map((slot) => {
+          const entry = daySchedule.entries?.[slot.id];
+          const hasClass = !!entry?.classLabel?.trim();
+          const hasDuty = !!entry?.dutyNote?.trim();
+
+          return (
+            <div
+              key={`${day}_${slot.id}`}
+              className={`rounded-2xl border p-3 ${timetableCardClass(slot, hasClass || hasDuty)}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-extrabold">{slot.label}</div>
+                  <div className="text-xs opacity-80">
+                    {slot.start}–{slot.end}
+                  </div>
+                </div>
+
+                <div className="text-right text-xs opacity-80">
+                  {fmtDayLong(day)}
+                </div>
+              </div>
+
+              <div className="mt-2">
+                {hasClass ? (
+                  <>
+                    <div className="text-base font-extrabold">{entry.classLabel}</div>
+                    {entry.room && (
+                      <div className="mt-1 text-sm">Room: {entry.room}</div>
+                    )}
+                  </>
+                ) : hasDuty ? (
+                  <div className="text-sm font-semibold">{entry.dutyNote}</div>
+                ) : (
+                  <div className="text-sm opacity-70">Free</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderWeekGrid() {
+    if (!ttState?.schedule?.Mon) return null;
+
+    const mondaySlots = ttState.schedule["Mon"].slots;
+
+    return (
+      <div className="overflow-x-auto">
+        <div className="min-w-[820px] rounded-2xl border border-slate-200 bg-white">
+          <div className="grid grid-cols-6 border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700">
+            <div className="p-3">Time</div>
+            {TT_DAYS.map((d) => (
+              <div key={d} className={`p-3 ${ttDay === d ? "text-emerald-800" : ""}`}>
+                {fmtDayLong(d)}
+              </div>
+            ))}
+          </div>
+
+          {mondaySlots.map((rowSlot) => (
+            <div key={rowSlot.id} className="grid grid-cols-6 border-b border-slate-100 last:border-b-0">
+              <div className="p-3 text-xs text-slate-600">
+                <div className="font-semibold text-slate-700">{rowSlot.label}</div>
+                <div>{rowSlot.start}–{rowSlot.end}</div>
+              </div>
+
+              {TT_DAYS.map((day) => {
+                const slot = ttState.schedule[day].slots.find((s) => s.id === rowSlot.id) ?? rowSlot;
+                const entry = ttState.schedule[day].entries?.[rowSlot.id];
+                const hasClass = !!entry?.classLabel?.trim();
+                const hasDuty = !!entry?.dutyNote?.trim();
+
+                return (
+                  <div key={`${day}_${rowSlot.id}`} className="p-2">
+                    <div className={`rounded-xl border p-2 min-h-[76px] ${timetableCardClass(slot, hasClass || hasDuty)}`}>
+                      {hasClass ? (
+                        <>
+                          <div className="text-xs font-extrabold leading-tight">{entry.classLabel}</div>
+                          {entry.room && <div className="mt-1 text-[11px]">Room: {entry.room}</div>}
+                        </>
+                      ) : hasDuty ? (
+                        <div className="text-[11px] font-semibold leading-tight">{entry.dutyNote}</div>
+                      ) : (
+                        <div className="text-[11px] opacity-70">Free</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // Design tokens
   const card =
     "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)]";
   const btn =
     "rounded-2xl border-2 border-slate-300 bg-white px-6 py-3 text-base font-semibold shadow-sm hover:bg-slate-50 active:translate-y-[1px]";
   const btnGlow =
-    "relative inline-flex items-center gap-3 rounded-2xl border-2 border-fuchsia-600 " +
-    "bg-gradient-to-r from-yellow-400 via-emerald-500 to-pink-500 " +
+    "relative inline-flex items-center gap-3 rounded-2xl border-2 border-emerald-600 " +
+    "bg-gradient-to-r from-sky-500 to-emerald-500 " +
     "px-7 py-3 text-base font-extrabold text-white " +
-    "shadow-[0_0_18px_rgba(236,72,153,0.75)] " +
-    "ring-4 ring-pink-300/70 " +
-    "hover:shadow-[0_0_40px_rgba(236,72,153,1)] hover:ring-pink-300 " +
+    "shadow-[0_0_18px_rgba(120,120,120,0.35)] " +
+    "ring-4 ring-slate-300/60 " +
+    "hover:shadow-[0_0_40px_rgba(120,120,120,0.6)] hover:ring-slate-400 " +
     "hover:-translate-y-[2px] hover:scale-[1.03] active:scale-[0.98] " +
     "transition-all duration-200 overflow-hidden " +
     "after:absolute after:top-0 after:left-[-60%] after:h-full after:w-[60%] " +
@@ -511,6 +734,14 @@ function Dashboard() {
               <button
                 className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur transition-all hover:bg-slate-100"
                 type="button"
+                onClick={openTimetableQuickView}
+              >
+                Timetable
+              </button>
+
+              <button
+                className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur transition-all hover:bg-slate-100"
+                type="button"
                 onClick={() => navigate("/admin")}
               >
                 Admin
@@ -578,55 +809,113 @@ function Dashboard() {
           </div>
         )}
 
-        <div className="mb-5 flex flex-wrap items-center gap-3 w-full justify-between">
-          {/* Left side: Create button + helper text */}
-          <div className="flex flex-wrap items-center gap-3">
+        <div className="mb-5 w-full">
+          {/* Mobile layout */}
+          <div className="flex items-stretch gap-3 md:hidden">
             <button
               type="button"
               onClick={openCreate}
-              className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-6 py-2.5 text-xl font-extrabold text-white shadow-md hover:bg-emerald-700 active:translate-y-[1px]"
+              className="shrink-0 rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-5 py-2.5 text-xl font-extrabold text-white shadow-md hover:bg-emerald-700 active:translate-y-[1px]"
               style={{ textShadow: "0 2px 4px rgba(0,0,0,0.35)" }}
             >
               + Create Class
             </button>
-
-            <div className="text-base font-semibold text-slate-700">
-              Drag tiles to arrange. Colour + order save on this device.
-            </div>
-          </div>
-
-          {/* Right side: Planner / Welcome card */}
-          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => navigate("/planner")}
-              title="Open Planner"
-              className="group flex items-center gap-3 rounded-3xl border-2 border-slate-200 bg-white px-4 py-2 shadow-sm hover:bg-slate-50 active:translate-y-[1px]"
+              title="Open ELume Planner"
+              className="group min-w-0 flex-1 flex items-center gap-3 rounded-3xl border-2 border-emerald-200 bg-gradient-to-r from-white via-emerald-50 to-sky-50 px-4 py-2.5 shadow-[0_4px_14px_rgba(16,185,129,0.10)] hover:border-emerald-300 hover:from-emerald-50 hover:to-sky-100 active:translate-y-[1px] transition-all"
             >
-              <img
-                src={PlannerLogo}
-                alt="Planner"
-                className="h-10 w-10 object-contain"
-              />
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-emerald-200 bg-white shadow-sm">
+                <img
+                  src={PlannerLogo}
+                  alt="Planner"
+                  className="h-8 w-8 object-contain"
+                />
+              </div>
 
-              <div className="text-left leading-tight">
-                <div className="text-[11px] font-semibold tracking-wide text-slate-500">
-                  Teacher Dashboard
+              <div className="min-w-0 text-left leading-tight">
+                <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-emerald-700/80">
+                  ELume Planner
                 </div>
 
-                <div className="text-lg font-extrabold tracking-tight text-slate-800">
+                <div className="truncate text-lg font-extrabold tracking-tight text-slate-800">
                   {welcome ? welcome.replace(/^Welcome\s*/i, "Welcome, ") : "Welcome"}
                 </div>
 
-                <div className="text-[11px] text-slate-500">
-                  Planner • Tasks • Week view
-                  <span className="ml-1 opacity-60 group-hover:opacity-100">→</span>
+                <div className="text-[11px] text-slate-600">
+                  Tasks • Week view
+                  <span className="ml-1 text-emerald-600 opacity-70 group-hover:opacity-100">→</span>
                 </div>
               </div>
             </button>
           </div>
-        </div>
 
+          <div className="mt-3 text-base font-semibold text-slate-700 md:hidden">
+            Drag tiles to arrange. Colour + order save on this device.
+          </div>
+
+          {/* Desktop layout */}
+          <div className="hidden md:flex flex-wrap items-center gap-3 w-full justify-between">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={openCreate}
+                className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-6 py-2.5 text-xl font-extrabold text-white shadow-md hover:bg-emerald-700 active:translate-y-[1px]"
+                style={{ textShadow: "0 2px 4px rgba(0,0,0,0.35)" }}
+              >
+                + Create Class
+              </button>
+
+              <div className="text-base font-semibold text-slate-700">
+                Drag tiles to arrange. Colour + order save on this device.
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => navigate("/planner")}
+                title="Open ELume Planner"
+                className="group min-w-0 flex-1 flex items-center gap-3 rounded-3xl border-2 border-emerald-200 bg-gradient-to-r from-white via-emerald-50 to-sky-50 px-4 py-2.5 shadow-[0_4px_14px_rgba(16,185,129,0.10)] hover:border-emerald-300 hover:from-emerald-50 hover:to-sky-100 active:translate-y-[1px] transition-all"
+              >
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-emerald-200 bg-white shadow-sm">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="rgb(16 185 129)"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-6 w-6"
+                  >
+                    <rect x="3" y="4" width="18" height="18" rx="3" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                    <line x1="8" y1="14" x2="12" y2="14" />
+                    <line x1="8" y1="18" x2="16" y2="18" />
+                  </svg>
+                </div>
+                <div className="min-w-0 text-left leading-tight">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-emerald-700/80">
+                    ELume Planner
+                  </div>
+
+                  <div className="truncate text-lg font-extrabold tracking-tight text-slate-800">
+                    {welcome ? welcome.replace(/^Welcome\s*/i, "Welcome, ") : "Welcome"}
+                  </div>
+
+                  <div className="text-[11px] text-slate-600">
+                    Tasks • Week view
+                    <span className="ml-1 text-emerald-600 opacity-70 group-hover:opacity-100">→</span>
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           {loading && (
@@ -719,6 +1008,103 @@ function Dashboard() {
 
         <div className="mt-8 text-xs text-slate-500">© 2026 ELume Beta. P Fitzgerald</div>
       </main>
+
+      {/* Mobile Timetable Quick View */}
+      {ttOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 p-3 md:hidden">
+          <div className="mx-auto mt-2 max-w-md rounded-3xl border-2 border-slate-200 bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-4">
+              <div>
+                <div className="text-lg font-extrabold tracking-tight text-slate-800">Timetable</div>
+                <div className="text-xs text-slate-500">
+                  {ttMode === "day"
+                    ? `${fmtDayLong(ttDay)} at a glance`
+                    : "Weekly overview • rotate phone for best view"}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setTtOpen(false)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTtMode("day")}
+                  className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${ttMode === "day"
+                    ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                    : "border-slate-200 bg-white text-slate-800"
+                    }`}
+                >
+                  Today
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTtMode("week")}
+                  className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${ttMode === "week"
+                    ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                    : "border-slate-200 bg-white text-slate-800"
+                    }`}
+                >
+                  Week
+                </button>
+              </div>
+
+              {ttMode === "day" && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {TT_DAYS.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setTtDay(d)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${ttDay === d
+                        ? "border-sky-300 bg-sky-50 text-sky-900"
+                        : "border-slate-200 bg-white text-slate-700"
+                        }`}
+                    >
+                      {fmtDayLong(d)}
+                      {currentSchoolDay() === d ? " • Today" : ""}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="max-h-[78vh] overflow-auto px-4 py-4">
+              {ttLoading && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  Loading timetable…
+                </div>
+              )}
+
+              {!ttLoading && ttError && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                  {ttError}
+                </div>
+              )}
+
+              {!ttLoading && !ttError && !ttState && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  No timetable found yet. Set it up in Admin first.
+                </div>
+              )}
+
+              {!ttLoading && !ttError && ttState && (
+                <>
+                  {ttMode === "day" ? renderDayStack(ttDay) : renderWeekGrid()}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create modal */}
       {createOpen && (
@@ -920,7 +1306,13 @@ function Dashboard() {
 }
 
 export default function App() {
-  const [isAuthed, setIsAuthed] = useState(!!localStorage.getItem("elume_token"));
+  const isLocalhost =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+
+  const [isAuthed, setIsAuthed] = useState(
+    isLocalhost ? false : !!localStorage.getItem("elume_token")
+  );
   const userEmail = useMemo(() => getEmailFromToken(), [isAuthed]);
   const userLabel = userEmail ?? "";
 
@@ -984,6 +1376,7 @@ export default function App() {
         <Route path="/s/:token" element={<StudentClassPage />} />
         <Route path="/" element={<Dashboard />} />
         <Route path="/admin" element={<TeacherAdminPage />} />
+        <Route path="/admin-users" element={<AdminUsersPage />} />
         <Route path="/class/:id/report" element={<ClassReportPage />} />
         <Route path="/class/:id/student-report/:studentId" element={<StudentReportPage />} />
         <Route path="/planner" element={<TeacherPlanner />} />

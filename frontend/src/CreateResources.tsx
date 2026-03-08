@@ -383,13 +383,19 @@ export default function CreateResources() {
 
     // -------- UI tokens (match your style) --------
     const card =
-        "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)]";
+        "rounded-3xl border border-slate-200/90 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.06)]";
     const pill =
         "rounded-full border-2 border-slate-200 bg-slate-50 px-4 py-2 text-sm hover:bg-slate-100 active:translate-y-[1px]";
     const btn =
         "rounded-2xl border-2 border-slate-300 bg-white px-4 py-2 text-sm font-semibold shadow-sm hover:bg-slate-50 active:translate-y-[1px]";
     const btnPrimary =
         "rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 active:translate-y-[1px] disabled:opacity-50";
+
+    const panelStepTab =
+        "absolute left-6 -top-5 z-10 inline-flex items-center gap-3 rounded-full border border-white/90 px-5 py-2 text-lg font-extrabold uppercase tracking-[0.16em] shadow-md backdrop-blur";
+
+    const panelStepFrame =
+        "pointer-events-none absolute inset-0 rounded-3xl border-t-4 border-l-4 border-r-4 bg-transparent";
 
     // -------- left: library --------
     const FOLDERS: ResourceFolder[] = [
@@ -949,7 +955,12 @@ export default function CreateResources() {
                 {/* 3-panel layout */}
                 <div className="mt-5 grid gap-4 lg:grid-cols-12">
                     {/* LEFT: Library */}
-                    <div className={`${card} p-4 lg:col-span-3`}>
+                    <div className={`${card} relative overflow-visible p-4 pt-10 lg:col-span-3`}>
+                        <div className={`${panelStepFrame} border-emerald-300`} />
+                        <div className={`${panelStepTab} bg-emerald-100 text-emerald-800`}>
+                            <span className="h-4 w-4 rounded-full bg-emerald-500" />
+                            Step 1
+                        </div>
                         <div className="flex items-center justify-between gap-2">
                             <div>
                                 <div className="text-sm font-extrabold tracking-tight text-slate-800">Library</div>
@@ -1110,8 +1121,15 @@ export default function CreateResources() {
                         </div>
                     </div>
 
+
+
                     {/* MIDDLE: Viewer + Snippets */}
-                    <div className={`${card} p-4 lg:col-span-5`}>
+                    <div className={`${card} relative overflow-visible p-4 pt-10 lg:col-span-5`}>
+                        <div className={`${panelStepFrame} border-sky-300`} />
+                        <div className={`${panelStepTab} bg-sky-100 text-sky-800`}>
+                            <span className="h-4 w-4 rounded-full bg-sky-500" />
+                            Step 2
+                        </div>
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <div className="text-sm font-extrabold tracking-tight text-slate-800">Workspace</div>
@@ -1332,7 +1350,12 @@ export default function CreateResources() {
                     </div>
 
                     {/* RIGHT: AI Studio */}
-                    <div className={`${card} p-4 lg:col-span-4`}>
+                    <div className={`${card} relative overflow-visible p-4 pt-10 lg:col-span-4`}>
+                        <div className={`${panelStepFrame} border-violet-300`} />
+                        <div className={`${panelStepTab} bg-violet-100 text-violet-800`}>
+                            <span className="h-4 w-4 rounded-full bg-violet-500" />
+                            Step 3
+                        </div>
                         <div className="flex items-start justify-between gap-2">
                             <div>
                                 <div className="text-sm font-extrabold tracking-tight text-slate-800">AI Studio</div>
@@ -1622,6 +1645,102 @@ export default function CreateResources() {
                 </div>
 
                 <div className="mt-8 text-xs text-slate-500">© 2026 ELume Beta. P Fitzgerald</div>
+            </div>
+
+            {/* ===== How to Use Create Resources ===== */}
+
+            <div className="mt-8 grid gap-6 md:grid-cols-3">
+
+                {/* STEP 1 */}
+                <div className="rounded-3xl border-2 border-emerald-300 bg-emerald-50 p-6 shadow-sm">
+
+                    <div className="text-2xl font-extrabold text-emerald-700 flex items-center gap-2">
+                        📂 Step 1 — Add Material
+                    </div>
+
+                    <div className="mt-3 text-base text-slate-700 leading-relaxed">
+                        Upload or add any relevant teaching material to the
+                        <span className="font-bold"> Library panel</span>.
+                    </div>
+
+                    <div className="mt-2 text-base text-slate-700 leading-relaxed">
+                        This could include:
+                    </div>
+
+                    <ul className="mt-2 list-disc pl-6 text-base text-slate-700">
+                        <li>Curriculum specifications</li>
+                        <li>Exam papers</li>
+                        <li>Textbook extracts</li>
+                        <li>Department resources</li>
+                        <li>Your own lesson notes</li>
+                    </ul>
+
+                </div>
+
+
+                {/* STEP 2 */}
+                <div className="rounded-3xl border-2 border-sky-300 bg-sky-50 p-6 shadow-sm">
+
+                    <div className="text-2xl font-extrabold text-sky-700 flex items-center gap-2">
+                        ✂️ Step 2 — Select Sections
+                    </div>
+
+                    <div className="mt-3 text-base text-slate-700 leading-relaxed">
+                        Create <span className="font-bold">Snippets</span> from the
+                        exact sections you want the AI to use.
+                    </div>
+
+                    <div className="mt-2 text-base text-slate-700 leading-relaxed">
+                        Snippets help ensure AI outputs are:
+                    </div>
+
+                    <ul className="mt-2 list-disc pl-6 text-base text-slate-700">
+                        <li>Curriculum aligned</li>
+                        <li>Factually accurate</li>
+                        <li>Relevant to your lesson</li>
+                    </ul>
+
+                    <div className="mt-2 text-base text-slate-700">
+                        Tick the snippets you want included in the generation.
+                    </div>
+
+                </div>
+
+
+                {/* STEP 3 */}
+                <div className="relative rounded-3xl border-2 border-purple-400 bg-purple-50 p-6 shadow-sm overflow-hidden">
+
+                    <span className="absolute inset-0 rounded-3xl bg-purple-300 opacity-20 blur-2xl animate-pulse"></span>
+
+                    <div className="text-2xl font-extrabold text-purple-700 flex items-center gap-2">
+                        🧠 Step 3 — Generate Resources
+                    </div>
+                    <div className="mt-3 text-base text-slate-700 leading-relaxed">
+                        Use the <span className="font-bold">AI Studio</span> to generate
+                        teaching resources based on your selected snippets.
+                    </div>
+
+                    <div className="mt-2 text-base text-slate-700">
+                        You can instantly create:
+                    </div>
+
+                    <ul className="mt-2 list-disc pl-6 text-base text-slate-700">
+                        <li>Lesson plans</li>
+                        <li>Worksheets</li>
+                        <li>Schemes of work</li>
+                        <li>Department plans</li>
+                        <li>Next-class teaching ideas</li>
+                    </ul>
+
+                </div>
+
+            </div>
+
+
+            {/* Helpful Tip */}
+
+            <div className="mt-6 text-center text-lg font-semibold text-slate-600">
+                💡 Tip: The more precise your snippets are, the better the AI output will be.
             </div>
 
             {/* SCOPE MODAL */}
