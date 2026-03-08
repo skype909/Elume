@@ -283,6 +283,49 @@ def require_super_admin(user: models.UserModel):
 # =========================================================
 Base.metadata.create_all(bind=engine)
 
+
+# =========================================================
+# WAITLIST (Elume early access)
+# =========================================================
+
+from pydantic import EmailStr
+import smtplib
+from email.mime.text import MIMEText
+
+
+class WaitlistRequest(BaseModel):
+    name: str
+    email: EmailStr
+    school: str | None = None
+
+
+@app.post("/waitlist")
+def join_waitlist(payload: WaitlistRequest):
+
+    message = f"""
+New Elume waitlist signup
+
+Name: {payload.name}
+Email: {payload.email}
+School: {payload.school or "Not provided"}
+"""
+
+    msg = MIMEText(message)
+    msg["Subject"] = "New Elume Waitlist Signup"
+    msg["From"] = "admin@elume.ie"
+    msg["To"] = "admin@elume.ie"
+
+    try:
+        with smtplib.SMTP("smtp.zoho.eu", 587) as server:
+            server.starttls()
+            server.login("admin@elume.ie", os.getenv("EMAIL_PASSWORD"))
+            server.send_message(msg)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Email failed: {str(e)}")
+
+    return {"success": True}
+
 # =========================================================
 # TEACHER ADMIN STATE (Profile + Timetable) — synced across devices
 # =========================================================
