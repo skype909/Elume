@@ -8,10 +8,8 @@ type StudentPost = {
   id: number;
   author?: string;
   content?: string;
-
-  // backend might return any of these shapes
-  links?: any; // array OR JSON string OR string
-  files?: any; // array of files with url/path
+  links?: any;
+  files?: any;
   created_at?: string;
 };
 
@@ -41,16 +39,14 @@ type StudentPayload = {
 
 type View = "home" | "resources" | "tests";
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
 function resolveFileUrl(u: string) {
   if (!u) return u;
-
-  // Already absolute
   if (u.startsWith("http://") || u.startsWith("https://")) return u;
-
-  // Handle common variants:
-  // "/uploads/x.png"  -> "/api/uploads/x.png"
-  // "uploads/x.png"   -> "/api/uploads/x.png"
-  // "api/uploads/x"   -> "/api/uploads/x"
   if (u.startsWith("/")) return `${API_BASE}${u}`;
   if (u.startsWith("api/")) return `/${u}`;
   if (u.startsWith("uploads/")) return `${API_BASE}/${u}`;
@@ -64,12 +60,10 @@ function normalizeLinks(v: any): string[] {
   if (typeof v === "string") {
     const s = v.trim();
     if (!s) return [];
-    // Try JSON array first
     try {
       const parsed = JSON.parse(s);
       if (Array.isArray(parsed)) return parsed.filter(Boolean).map(String);
-    } catch {}
-    // Otherwise split by newlines / commas
+    } catch { }
     return s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
   }
 
@@ -80,13 +74,9 @@ function extractLinksFromText(text: string): string[] {
   if (!text) return [];
   const found = new Set<string>();
 
-  // http(s) links
   (text.match(/https?:\/\/[^\s)]+/gi) || []).forEach((m) => found.add(m));
-
-  // uploads links (with or without a leading slash)
   (text.match(/\/?uploads\/[^\s)]+/gi) || []).forEach((m) => found.add(m));
 
-  // Trim trailing punctuation that breaks URLs
   return Array.from(found).map((u) => u.replace(/[),.]+$/g, ""));
 }
 
@@ -95,7 +85,6 @@ function extractLinksFromFiles(files: any): string[] {
   const urls: string[] = [];
   for (const f of files) {
     if (!f) continue;
-    // common fields
     const u =
       (typeof f.file_url === "string" && f.file_url) ||
       (typeof f.url === "string" && f.url) ||
@@ -107,13 +96,37 @@ function extractLinksFromFiles(files: any): string[] {
   return urls;
 }
 
+function isIos() {
+  if (typeof navigator === "undefined") return false;
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+
+function isInStandaloneMode() {
+  const nav = window.navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia?.("(display-mode: standalone)")?.matches || nav.standalone === true;
+}
+
+function cleanSessionCode(s: string) {
+  return s.replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
+}
+
 export default function StudentClassPage() {
   const { token } = useParams();
+
   const [data, setData] = useState<StudentPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const [view, setView] = useState<View>("home");
+
+  const [quizCode, setQuizCode] = useState("");
+  const [quizJoinError, setQuizJoinError] = useState<string | null>(null);
+
+  const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
+  const [showSaveBanner, setShowSaveBanner] = useState(false);
+  const [saveBannerDismissed, setSaveBannerDismissed] = useState(false);
+
+  const dismissKey = useMemo(() => `elume:student:save-banner:dismissed:${token || "unknown"}`, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -138,12 +151,42 @@ export default function StudentClassPage() {
     return () => controller.abort();
   }, [token]);
 
+  useEffect(() => {
+    const dismissed = localStorage.getItem(dismissKey) === "1";
+    setSaveBannerDismissed(dismissed);
+
+    if (!dismissed && !isInStandaloneMode()) {
+      setShowSaveBanner(true);
+    }
+  }, [dismissKey]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPromptEvent(e as BeforeInstallPromptEvent);
+      if (!saveBannerDismissed && !isInStandaloneMode()) {
+        setShowSaveBanner(true);
+      }
+    };
+
+    window.addEventListener("beforeinstallprompt", handler as EventListener);
+    return () => window.removeEventListener("beforeinstallprompt", handler as EventListener);
+  }, [saveBannerDismissed]);
+
   const className = data?.class_name || "Class";
   const subject = data?.subject || "";
 
-  const posts = useMemo(() => (Array.isArray(data?.posts) ? data!.posts! : []), [data]);
-  const notes = useMemo(() => (Array.isArray(data?.notes) ? data!.notes! : []), [data]);
-  const tests = useMemo(() => (Array.isArray(data?.tests) ? data!.tests! : []), [data]);
+  const posts = useMemo<StudentPost[]>(() => (
+    Array.isArray(data?.posts) ? data?.posts ?? [] : []
+  ), [data]);
+
+  const notes = useMemo<StudentNote[]>(() => (
+    Array.isArray(data?.notes) ? data?.notes ?? [] : []
+  ), [data]);
+
+  const tests = useMemo<StudentTest[]>(() => (
+    Array.isArray(data?.tests) ? data?.tests ?? [] : []
+  ), [data]);
 
   const notesByTopic = useMemo(() => {
     const map = new Map<string, StudentNote[]>();
@@ -155,34 +198,62 @@ export default function StudentClassPage() {
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [notes]);
 
-  const pageWrap = "min-h-screen bg-gradient-to-b from-[#E9FFF0] via-white to-white";
+  const pageWrap =
+    "min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50";
   const card =
-    "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)]";
-  const softCard = "rounded-3xl bg-white/70 backdrop-blur border-2 border-slate-200";
+    "rounded-[28px] border border-white/70 bg-white/85 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl";
+  const softCard =
+    "rounded-[28px] border border-white/70 bg-white/80 shadow-[0_10px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl";
   const btnBase =
-    "w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-4 text-left shadow-sm active:translate-y-[1px]";
+    "w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition active:scale-[0.99]";
   const pill =
-    "rounded-full border-2 border-slate-200 bg-white/70 px-3 py-1 text-xs font-semibold text-slate-700";
+    "rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-slate-700";
   const backBtn =
-    "rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 active:translate-y-[1px]";
+    "rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50 active:scale-[0.99]";
   const linkChip =
-    "inline-flex items-center gap-2 rounded-full border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:translate-y-[1px] cursor-pointer";
+    "inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm hover:bg-slate-50 active:scale-[0.99] cursor-pointer";
+
+  function dismissSaveBanner() {
+    localStorage.setItem(dismissKey, "1");
+    setSaveBannerDismissed(true);
+    setShowSaveBanner(false);
+  }
+
+  async function handleInstallClick() {
+    if (!installPromptEvent) return;
+    try {
+      await installPromptEvent.prompt();
+      await installPromptEvent.userChoice;
+    } catch { }
+    dismissSaveBanner();
+    setInstallPromptEvent(null);
+  }
+
+  function goToQuizJoin() {
+    const code = cleanSessionCode(quizCode);
+    if (!code) {
+      setQuizJoinError("Enter your session code first.");
+      return;
+    }
+    setQuizJoinError(null);
+    window.location.href = `${window.location.origin}/#/join/${code}`;
+  }
 
   function TopBar() {
     return (
-      <div className="sticky top-0 z-30 border-b border-slate-100 bg-white/85 backdrop-blur">
-        <div className="mx-auto max-w-3xl px-4 py-3">
+      <div className="sticky top-0 z-30 border-b border-slate-100/80 bg-white/85 backdrop-blur-xl">
+        <div className="mx-auto max-w-3xl px-3 py-3 sm:px-4">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              {/* Logo (optional) */}
-              <div className="grid h-10 w-10 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/70 bg-white shadow-md">
                 <img src={ELogo2} alt="ELUME" className="h-8 w-8 object-contain" />
               </div>
-              <div className="leading-tight">
-                <div className="text-base font-extrabold tracking-tight text-slate-900">
-                  ELUME
+
+              <div className="min-w-0 leading-tight">
+                <div className="truncate text-base font-black tracking-tight text-slate-900">
+                  Elume
                 </div>
-                <div className="text-[11px] font-semibold text-emerald-700">
+                <div className="truncate text-[11px] font-bold text-emerald-700">
                   Learn, Grow, Succeed.
                 </div>
               </div>
@@ -201,42 +272,126 @@ export default function StudentClassPage() {
     );
   }
 
-  function Hero() {
+  function SaveBanner() {
+    if (!showSaveBanner || loading || err || !data) return null;
+
     return (
-      <div className="mx-auto max-w-3xl px-4 pt-5">
-        <div className={`${softCard} overflow-hidden`}>
-          <div className="p-5">
-            <div className="flex items-center gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-xl font-extrabold tracking-tight text-slate-900">
-                  {className}
-                </div>
-                <div className="truncate text-sm font-semibold text-slate-600">{subject}</div>
-              </div>
-              <div className="flex-1" />
-              <div className={pill}>Student View</div>
+      <div className="mx-auto max-w-3xl px-3 pt-4 sm:px-4">
+        <div className="rounded-[28px] border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-[0_12px_35px_rgba(16,185,129,0.12)]">
+          <div className="flex items-start gap-3">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/70 bg-white shadow-sm">
+              <img src={ELogo2} alt="Elume" className="h-8 w-8 object-contain" />
             </div>
 
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-black uppercase tracking-[0.16em] text-emerald-700">
+                Save this page
+              </div>
+              <div className="mt-1 text-lg font-black tracking-tight text-slate-900">
+                Keep your class page one tap away
+              </div>
+
+              {installPromptEvent ? (
+                <div className="mt-2 text-sm leading-6 text-slate-600">
+                  Add this page to your phone’s home screen so you can open notes, tests and live quizzes faster.
+                </div>
+              ) : isIos() ? (
+                <div className="mt-2 text-sm leading-6 text-slate-600">
+                  On iPhone: tap <span className="font-black text-slate-900">Share</span> then
+                  <span className="font-black text-slate-900"> Add to Home Screen</span>.
+                </div>
+              ) : (
+                <div className="mt-2 text-sm leading-6 text-slate-600">
+                  Save this page as a bookmark or add it to your home screen for quicker access next time.
+                </div>
+              )}
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {installPromptEvent ? (
+                  <button
+                    type="button"
+                    onClick={handleInstallClick}
+                    className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-4 py-3 text-sm font-black text-white shadow-lg active:scale-[0.99]"
+                  >
+                    Add to Home Screen
+                  </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={dismissSaveBanner}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm active:scale-[0.99]"
+                >
+                  Got it
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function Hero() {
+    return (
+      <div className="mx-auto max-w-3xl px-3 pt-4 sm:px-4 sm:pt-5">
+        <div className={`${softCard} overflow-hidden`}>
+          <div className="p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <div className="grid h-14 w-14 shrink-0 place-items-center rounded-3xl border border-white/70 bg-white shadow-md">
+                <img src={ELogo2} alt="Elume" className="h-10 w-10 object-contain" />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className={pill}>Student View</div>
+                  {subject ? <div className={pill}>{subject}</div> : null}
+                </div>
+
+                <div className="mt-3 truncate text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
+                  {className}
+                </div>
+
+                <div className="mt-2 text-sm leading-6 text-slate-600">
+                  Announcements, resources, tests, and live quiz access in one mobile-friendly page.
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
               <button
                 type="button"
-                className={`${btnBase} border-emerald-200 bg-emerald-50`}
+                className={`${btnBase} border-emerald-200 bg-emerald-50 hover:bg-emerald-100`}
                 onClick={() => setView("resources")}
               >
-                <div className="text-sm font-extrabold text-emerald-900">Resources</div>
+                <div className="text-sm font-black text-emerald-900">Resources</div>
                 <div className="mt-1 text-xs font-semibold text-emerald-800/80">
-                  PDFs, notes, cheat sheets
+                  PDFs, notes, worksheets
                 </div>
               </button>
 
               <button
                 type="button"
-                className={`${btnBase} border-sky-200 bg-sky-50`}
+                className={`${btnBase} border-sky-200 bg-sky-50 hover:bg-sky-100`}
                 onClick={() => setView("tests")}
               >
-                <div className="text-sm font-extrabold text-sky-900">Tests & Papers</div>
+                <div className="text-sm font-black text-sky-900">Tests & Papers</div>
                 <div className="mt-1 text-xs font-semibold text-sky-800/80">
                   Class tests and exam papers
+                </div>
+              </button>
+
+              <button
+                type="button"
+                className={`${btnBase} border-violet-200 bg-violet-50 hover:bg-violet-100`}
+                onClick={() => {
+                  const el = document.getElementById("live-quiz-card");
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+              >
+                <div className="text-sm font-black text-violet-900">Join Live Quiz</div>
+                <div className="mt-1 text-xs font-semibold text-violet-800/80">
+                  Enter a session code
                 </div>
               </button>
             </div>
@@ -251,8 +406,8 @@ export default function StudentClassPage() {
   function EmptyState({ title, hint }: { title: string; hint: string }) {
     return (
       <div className={`${card} p-5`}>
-        <div className="text-base font-extrabold text-slate-900">{title}</div>
-        <div className="mt-2 text-sm text-slate-600">{hint}</div>
+        <div className="text-base font-black text-slate-900">{title}</div>
+        <div className="mt-2 text-sm leading-6 text-slate-600">{hint}</div>
       </div>
     );
   }
@@ -263,18 +418,73 @@ export default function StudentClassPage() {
         href={href}
         target="_blank"
         rel="noreferrer"
-        className="flex items-start gap-3 rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3 active:translate-y-[1px]"
+        className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm active:scale-[0.99]"
         title="Open file"
       >
-        <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-2xl border-2 border-slate-200 bg-white text-sm font-extrabold">
+        <div className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-slate-200 bg-white text-xs font-black text-slate-700">
           PDF
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-bold text-slate-900">{label}</div>
+          <div className="truncate text-sm font-black text-slate-900">{label}</div>
           <div className="mt-0.5 text-[11px] font-semibold text-slate-500">Tap to open</div>
         </div>
-        <div className="shrink-0 text-xs font-extrabold text-slate-500">Open</div>
+        <div className="shrink-0 text-xs font-black text-slate-500">Open</div>
       </a>
+    );
+  }
+
+  function LiveQuizCard() {
+    return (
+      <div id="live-quiz-card" className={`${card} p-5`}>
+        <div className="flex items-start gap-3">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-violet-200 bg-violet-50 shadow-sm">
+            <span className="text-xl">🎯</span>
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-black uppercase tracking-[0.16em] text-violet-700">
+              Live Quiz
+            </div>
+            <div className="mt-1 text-xl font-black tracking-tight text-slate-900">
+              Join with session code
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-600">
+              Your teacher will give you a code. Type it below to jump straight into the live quiz.
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <input
+            value={quizCode}
+            onChange={(e) => setQuizCode(cleanSessionCode(e.target.value))}
+            inputMode="text"
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="Enter session code"
+            className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-base font-black uppercase tracking-[0.12em] text-slate-900 shadow-sm outline-none placeholder:normal-case placeholder:tracking-normal placeholder:font-semibold placeholder:text-slate-400 focus:border-violet-400 focus:ring-4 focus:ring-violet-100"
+          />
+
+          <button
+            type="button"
+            onClick={goToQuizJoin}
+            className="rounded-2xl bg-gradient-to-r from-violet-500 via-fuchsia-500 to-cyan-500 px-5 py-4 text-sm font-black text-white shadow-lg active:scale-[0.99] sm:min-w-[150px]"
+          >
+            Join Quiz
+          </button>
+        </div>
+
+        {quizJoinError ? (
+          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+            {quizJoinError}
+          </div>
+        ) : null}
+
+        <div className="mt-4 rounded-2xl border border-violet-100 bg-violet-50/70 px-4 py-3 text-xs leading-5 text-violet-900">
+          Tip: if you save this page to your phone’s home screen, you’ll only need to enter the code next time.
+        </div>
+      </div>
     );
   }
 
@@ -285,16 +495,16 @@ export default function StudentClassPage() {
 
     return (
       <div className={`${card} p-5`}>
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-base font-extrabold text-slate-900">Announcements</div>
-          <div className="text-xs font-semibold text-slate-500">{posts.length}</div>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="text-base font-black text-slate-900">Announcements</div>
+          <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-black text-slate-700">
+            {posts.length}
+          </div>
         </div>
 
         <div className="space-y-3">
           {posts.map((p) => {
             const text = String(p?.content || "");
-
-            // Collect links from all possible places
             const fromLinksField = normalizeLinks((p as any)?.links);
             const fromFiles = extractLinksFromFiles((p as any)?.files);
             const fromText = extractLinksFromText(text);
@@ -304,17 +514,24 @@ export default function StudentClassPage() {
             );
 
             return (
-              <div key={p.id} className="rounded-2xl border-2 border-slate-200 bg-white p-4">
-                <div className="text-xs font-bold text-slate-600">{p.author || "Teacher"}</div>
-                <div className="mt-2 whitespace-pre-wrap text-sm text-slate-900">{text}</div>
+              <div key={p.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+                    {p.author || "Teacher"}
+                  </div>
+                  {p.created_at ? (
+                    <div className="text-[11px] font-semibold text-slate-400">
+                      {new Date(p.created_at).toLocaleDateString()}
+                    </div>
+                  ) : null}
+                </div>
 
-                {/* Clickable links (whiteboard saved lives here) */}
+                <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-900">{text}</div>
+
                 {allLinks.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-4 flex flex-wrap gap-2">
                     {allLinks.map((l, i) => {
                       const href = resolveFileUrl(l);
-
-                      // Use an explicit click handler for mobile reliability
                       return (
                         <button
                           key={`${p.id}-link-${i}`}
@@ -322,7 +539,7 @@ export default function StudentClassPage() {
                           className={linkChip}
                           onClick={() => window.open(href, "_blank", "noopener,noreferrer")}
                         >
-                          🔗 Open
+                          🔗 Open attachment
                         </button>
                       );
                     })}
@@ -342,13 +559,15 @@ export default function StudentClassPage() {
     return (
       <div className="space-y-4">
         <div className={`${card} p-5`}>
-          <div className="text-base font-extrabold text-slate-900">Resources</div>
+          <div className="text-base font-black text-slate-900">Resources</div>
           <div className="mt-1 text-sm text-slate-600">Tap any item to open.</div>
         </div>
 
         {notesByTopic.map(([topic, items]) => (
           <div key={topic} className={`${card} p-5`}>
-            <div className="mb-3 text-sm font-extrabold text-slate-900">{topic}</div>
+            <div className="mb-3 text-sm font-black uppercase tracking-[0.14em] text-slate-500">
+              {topic}
+            </div>
             <div className="space-y-2">
               {items.map((n) => {
                 const label = n.filename || "Resource";
@@ -368,7 +587,7 @@ export default function StudentClassPage() {
     return (
       <div className="space-y-4">
         <div className={`${card} p-5`}>
-          <div className="text-base font-extrabold text-slate-900">Tests & Papers</div>
+          <div className="text-base font-black text-slate-900">Tests & Papers</div>
           <div className="mt-1 text-sm text-slate-600">Tap a test to open.</div>
         </div>
 
@@ -388,7 +607,7 @@ export default function StudentClassPage() {
   function Content() {
     if (loading) {
       return (
-        <div className="mx-auto max-w-3xl px-4 py-8">
+        <div className="mx-auto max-w-3xl px-3 py-8 sm:px-4">
           <div className={`${card} p-5`}>
             <div className="text-sm font-semibold text-slate-700">Loading…</div>
           </div>
@@ -398,10 +617,10 @@ export default function StudentClassPage() {
 
     if (err) {
       return (
-        <div className="mx-auto max-w-3xl px-4 py-8">
-          <div className="rounded-3xl border-2 border-red-200 bg-white p-5">
-            <div className="text-base font-extrabold text-red-800">Couldn’t load page</div>
-            <div className="mt-2 text-sm text-red-700">{err}</div>
+        <div className="mx-auto max-w-3xl px-3 py-8 sm:px-4">
+          <div className="rounded-[28px] border border-red-200 bg-white p-5 shadow-sm">
+            <div className="text-base font-black text-red-800">Couldn’t load page</div>
+            <div className="mt-2 text-sm leading-6 text-red-700">{err}</div>
           </div>
         </div>
       );
@@ -409,21 +628,32 @@ export default function StudentClassPage() {
 
     if (!data) {
       return (
-        <div className="mx-auto max-w-3xl px-4 py-8">
+        <div className="mx-auto max-w-3xl px-3 py-8 sm:px-4">
           <EmptyState title="Not found" hint="This student link may be invalid or expired." />
         </div>
       );
     }
 
     return (
-      <div className="mx-auto max-w-3xl px-4 pb-10">
+      <div className="mx-auto max-w-3xl px-3 pb-10 sm:px-4">
         {view === "home" && (
           <div className="mt-5 space-y-4">
+            <LiveQuizCard />
             <Announcements />
           </div>
         )}
-        {view === "resources" && <div className="mt-5"><ResourcesView /></div>}
-        {view === "tests" && <div className="mt-5"><TestsView /></div>}
+
+        {view === "resources" && (
+          <div className="mt-5">
+            <ResourcesView />
+          </div>
+        )}
+
+        {view === "tests" && (
+          <div className="mt-5">
+            <TestsView />
+          </div>
+        )}
       </div>
     );
   }
@@ -431,6 +661,7 @@ export default function StudentClassPage() {
   return (
     <div className={pageWrap}>
       <TopBar />
+      <SaveBanner />
       <Hero />
       <Content />
     </div>
