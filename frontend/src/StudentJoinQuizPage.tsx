@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import elumeLogo from "./assets/ELogo2.png";
 
 const API_BASE = "/api";
 
@@ -34,7 +35,6 @@ type StoredParticipant = {
 };
 
 function hashStringToInt(s: string) {
-  // simple deterministic hash
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
@@ -76,6 +76,29 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function Pill({
+  children,
+  tone = "slate",
+}: {
+  children: React.ReactNode;
+  tone?: "slate" | "emerald" | "amber" | "cyan";
+}) {
+  const cls =
+    tone === "emerald"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : tone === "amber"
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : tone === "cyan"
+          ? "border-cyan-200 bg-cyan-50 text-cyan-800"
+          : "border-slate-200 bg-slate-50 text-slate-700";
+
+  return (
+    <div className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] ${cls}`}>
+      {children}
+    </div>
+  );
+}
+
 export default function StudentJoinQuizPage() {
   const { code } = useParams();
   const navigate = useNavigate();
@@ -97,33 +120,25 @@ export default function StudentJoinQuizPage() {
   const [selectedChoice, setSelectedChoice] = useState<ChoiceKey | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Track last question by BOTH id + index (index is more reliable if id is missing/unchanged)
   const [lastQuestionId, setLastQuestionId] = useState<string>("");
   const [lastQuestionIndex, setLastQuestionIndex] = useState<number | null>(null);
 
-  // Brief "Next question…" transition so students notice the change
   const [transitioning, setTransitioning] = useState(false);
   const transitionTimerRef = useRef<number | null>(null);
 
   const pollRef = useRef<number | null>(null);
   const answeringRef = useRef(false);
 
-  function triggerTransition() {
-    setTransitioning(true);
-    if (transitionTimerRef.current) window.clearTimeout(transitionTimerRef.current);
-    transitionTimerRef.current = window.setTimeout(() => setTransitioning(false), 450);
-  }
-
   const title = current?.title || "Live Quiz";
   const state = current?.state || "lobby";
   const q = current?.question || null;
+
   const displayOrder = useMemo(() => {
     if (!q) return [] as ChoiceKey[];
 
     const base: ChoiceKey[] = ["A", "B", "C", "D"];
     const valid = base.filter((k) => (q.choices?.[k] ?? "").trim().length > 0);
 
-    // stable per student per question
     const seedStr = `${sessionCode}::${anonId || "anon"}::${q.id || ""}`;
     return shuffledChoices(valid, seedStr);
   }, [q?.id, q?.choices, anonId, sessionCode]);
@@ -131,7 +146,6 @@ export default function StudentJoinQuizPage() {
   const isAnonymousSession = Boolean(current?.anonymous);
 
   const questionNumberText = useMemo(() => {
-    // Only show question number once live has started properly
     if (current?.state !== "live") return "";
     if (typeof current?.current_index === "number" && typeof current?.total_questions === "number") {
       if (current.current_index < 0) return "";
@@ -175,14 +189,12 @@ export default function StudentJoinQuizPage() {
     }
 
     const data = (await res.json()) as JoinResponse;
-
     const nameToStore = (providedName || "").trim();
 
     setHasJoined(true);
     setAnonId(data.anon_id);
     setNickname((data.nickname || "").toString());
 
-    // ✅ store once (don’t overwrite yourself)
     localStorage.setItem(
       storageKey,
       JSON.stringify({
@@ -200,30 +212,42 @@ export default function StudentJoinQuizPage() {
         const txt = await res.text().catch(() => "");
         throw new Error(txt || "Failed to load current question.");
       }
-      const data = (await res.json()) as CurrentResponse;
-      setCurrent(data);
-      setPollError(null);
 
-      // When the teacher advances to a new question, reset local selection
+      const data = (await res.json()) as CurrentResponse;
+
       const newQid = data.question?.id || "";
       const newIdx = typeof data.current_index === "number" ? data.current_index : null;
 
       const idChanged = Boolean(newQid) && newQid !== lastQuestionId;
       const idxChanged = newIdx !== null && newIdx !== lastQuestionIndex;
-
       const questionChanged = idChanged || idxChanged;
 
       if (questionChanged) {
-        // Only clear if we were already on a question (prevents “flash then clear” on first load)
+        setSelectedChoice(null);
+        setHasAnswered(false);
+
         if (lastQuestionId || lastQuestionIndex !== null) {
-          setSelectedChoice(null);
-          setHasAnswered(false);
-          triggerTransition();
+          setTransitioning(true);
+
+          if (transitionTimerRef.current) {
+            window.clearTimeout(transitionTimerRef.current);
+          }
+
+          transitionTimerRef.current = window.setTimeout(() => {
+            setCurrent(data);
+            setTransitioning(false);
+          }, 900);
+        } else {
+          setCurrent(data);
         }
 
         setLastQuestionId(newQid);
         setLastQuestionIndex(newIdx);
+      } else {
+        setCurrent(data);
       }
+
+      setPollError(null);
 
       if (data.state === "ended") stopPolling();
     } catch (e: any) {
@@ -236,7 +260,6 @@ export default function StudentJoinQuizPage() {
     if (!q?.id) return;
     if (answeringRef.current) return;
 
-    // ✅ instant UI feedback
     setSelectedChoice(choice);
     setHasAnswered(true);
 
@@ -259,9 +282,6 @@ export default function StudentJoinQuizPage() {
     }
   }
 
-  // Boot: validate code, load stored participant.
-  // If stored exists -> rejoin automatically.
-  // If not -> show name entry screen (no auto-join).
   useEffect(() => {
     if (!sessionCode) {
       setFatalError("Missing session code.");
@@ -277,10 +297,8 @@ export default function StudentJoinQuizPage() {
     const storedName = (stored.name || "").trim();
     const storedNick = (stored.nickname || "").trim();
 
-    // Pre-fill name box from last time (nice UX)
     if (storedName && !nameInput) setNameInput(storedName);
 
-    // If we already joined before (have anon_id), rejoin quietly
     if (storedAnon) {
       setLoading(true);
       joinSession(storedAnon, storedName || storedNick)
@@ -292,7 +310,6 @@ export default function StudentJoinQuizPage() {
       return () => stopPolling();
     }
 
-    // Fresh scan: show name entry, don’t auto-join
     setHasJoined(false);
     setAnonId("");
     setNickname("");
@@ -332,38 +349,87 @@ export default function StudentJoinQuizPage() {
 
   if (!hasJoined && !loading && !fatalError) {
     return (
-      <div className="min-h-screen bg-slate-50 p-6">
-        <div className="mx-auto max-w-xl rounded-3xl border-2 border-slate-200 bg-white p-6 shadow-sm">
-          <div className="text-xl font-extrabold text-slate-900">Join the Live Quiz</div>
-          <div className="mt-2 text-sm text-slate-600">Enter your name so your answers can be recorded.</div>
+      <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -left-16 top-[-40px] h-72 w-72 rounded-full bg-cyan-300/20 blur-3xl" />
+          <div className="absolute right-[-60px] top-16 h-80 w-80 rounded-full bg-violet-300/20 blur-3xl" />
+          <div className="absolute bottom-[-70px] left-[12%] h-72 w-72 rounded-full bg-emerald-300/20 blur-3xl" />
+          <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:34px_34px]" />
+        </div>
 
-          <div className="mt-4">
-            <label className="block text-xs font-bold text-slate-700">Your name</label>
-            <input
-              className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none focus:border-slate-400"
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-              placeholder="e.g. Aoife"
-              autoFocus
-            />
-          </div>
+        <div className="relative z-10 flex min-h-screen items-center justify-center p-4 sm:p-6">
+          <div className="w-full max-w-md">
+            <div className="rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-7">
+              <div className="text-center">
+                <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl border border-white/70 bg-white/90 shadow-xl ring-1 ring-emerald-100">
+                  <img
+                    src={elumeLogo}
+                    alt="Elume"
+                    className="h-14 w-14 object-contain drop-shadow-sm"
+                  />
+                </div>
 
-          {pollError ? (
-            <div className="mt-3 rounded-2xl border-2 border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              {pollError}
+                <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700 shadow-sm">
+                  Student live quiz
+                </div>
+
+                <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
+                  Join the Live Quiz
+                </h1>
+
+                <p className="mt-3 text-sm leading-6 text-slate-600 sm:text-base">
+                  Enter your name to join the session and send your answers live.
+                </p>
+              </div>
+
+              <div className="mt-6 rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                      Session code
+                    </div>
+                    <div className="mt-1 text-2xl font-black tracking-[0.08em] text-slate-900">
+                      {sessionCode || "—"}
+                    </div>
+                  </div>
+                  <Pill tone="cyan">Ready to join</Pill>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <label className="block text-sm font-black text-slate-800">Your name</label>
+                <input
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white/95 px-4 py-4 text-base font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  placeholder="e.g. Aoife"
+                  autoFocus
+                  autoComplete="name"
+                />
+              </div>
+
+              {pollError ? (
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                  {pollError}
+                </div>
+              ) : null}
+
+              <button
+                className="mt-5 w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-4 text-base font-black text-white shadow-lg transition hover:shadow-xl active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={joinWithName}
+                disabled={nameInput.trim().length < 2}
+              >
+                Join Quiz
+              </button>
+
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-xs leading-5 text-slate-600">
+                Tip: use your first name only so the teacher can identify you clearly.
+              </div>
             </div>
-          ) : null}
 
-          <button
-            className="mt-4 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-50"
-            onClick={joinWithName}
-            disabled={nameInput.trim().length < 2}
-          >
-            Join Quiz
-          </button>
-
-          <div className="mt-3 text-xs text-slate-500">
-            Tip: use your first name only. • Code: <span className="font-bold">{sessionCode}</span>
+            <div className="mt-4 text-center text-[11px] text-slate-500">
+              Elume Live Quiz • Mobile-friendly student view
+            </div>
           </div>
         </div>
       </div>
@@ -372,10 +438,24 @@ export default function StudentJoinQuizPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 p-6">
-        <div className="mx-auto max-w-xl rounded-3xl border-2 border-slate-200 bg-white p-6 shadow-sm">
-          <div className="text-lg font-extrabold text-slate-900">Joining…</div>
-          <div className="mt-2 text-sm text-slate-600">Connecting to the live quiz.</div>
+      <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50 p-4 sm:p-6">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -left-16 top-[-40px] h-72 w-72 rounded-full bg-cyan-300/20 blur-3xl" />
+          <div className="absolute right-[-60px] top-16 h-80 w-80 rounded-full bg-violet-300/20 blur-3xl" />
+        </div>
+
+        <div className="relative z-10 mx-auto flex min-h-screen max-w-md items-center">
+          <div className="w-full rounded-[32px] border border-white/70 bg-white/85 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+            <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-white/70 bg-white/90 shadow-lg ring-1 ring-emerald-100">
+              <img src={elumeLogo} alt="Elume" className="h-11 w-11 object-contain" />
+            </div>
+            <div className="mt-5 text-center text-2xl font-black tracking-tight text-slate-900">
+              Joining…
+            </div>
+            <div className="mt-2 text-center text-sm text-slate-600">
+              Connecting to the live quiz.
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -383,164 +463,244 @@ export default function StudentJoinQuizPage() {
 
   if (fatalError) {
     return (
-      <div className="min-h-screen bg-slate-50 p-6">
-        <div className="mx-auto max-w-xl rounded-3xl border-2 border-rose-200 bg-white p-6 shadow-sm">
-          <div className="text-lg font-extrabold text-rose-700">Can’t join</div>
-          <div className="mt-2 text-sm text-slate-700">{fatalError}</div>
-          <button
-            className="mt-4 rounded-2xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm font-bold text-white"
-            onClick={() => navigate("/")}
-          >
-            Go back
-          </button>
+      <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-rose-50 p-4 sm:p-6">
+        <div className="relative z-10 mx-auto flex min-h-screen max-w-md items-center">
+          <div className="w-full rounded-[32px] border border-rose-200 bg-white/90 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.10)]">
+            <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-rose-100 bg-rose-50 shadow-sm">
+              <img src={elumeLogo} alt="Elume" className="h-11 w-11 object-contain" />
+            </div>
+
+            <div className="mt-5 text-center text-2xl font-black tracking-tight text-rose-700">
+              Can’t join
+            </div>
+            <div className="mt-2 text-center text-sm leading-6 text-slate-700">{fatalError}</div>
+
+            <button
+              className="mt-6 w-full rounded-2xl bg-slate-900 px-5 py-3 text-sm font-black text-white shadow-md hover:opacity-95"
+              onClick={() => navigate("/")}
+            >
+              Go back
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   const headerRight = (
-    <div className="flex items-center gap-2">
-      {questionNumberText ? (
-        <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">Q {questionNumberText}</div>
-      ) : null}
-      {timeLeftText ? (
-        <div className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">{timeLeftText}</div>
-      ) : null}
+    <div className="flex flex-wrap items-center gap-2">
+      {questionNumberText ? <Pill tone="slate">Q {questionNumberText}</Pill> : null}
+      {timeLeftText ? <Pill tone="emerald">{timeLeftText}</Pill> : null}
     </div>
   );
 
   const displayName = nameInput.trim() || nickname || "Student";
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-6">
-      <div className="mx-auto max-w-2xl">
-        {/* Header */}
-        <div className="mb-4 rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-xl font-extrabold text-slate-900">{title}</div>
-              <div className="mt-1 text-sm text-slate-600">
-                You are: <span className="font-bold text-slate-900">{displayName}</span>
-              </div>
-              {isAnonymousSession ? (
-                <div className="mt-2 text-xs font-semibold text-amber-800">
-                  Note: This session is in anonymous mode — names may not be recorded by the teacher.
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -left-16 top-[-40px] h-72 w-72 rounded-full bg-cyan-300/20 blur-3xl" />
+        <div className="absolute right-[-60px] top-16 h-80 w-80 rounded-full bg-violet-300/20 blur-3xl" />
+        <div className="absolute bottom-[-70px] left-[12%] h-72 w-72 rounded-full bg-emerald-300/20 blur-3xl" />
+        <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:34px_34px]" />
+      </div>
+
+      <div className="relative z-10 min-h-screen p-3 sm:p-4 md:p-6">
+        <div className="mx-auto max-w-2xl">
+          <div className="mb-4 rounded-[32px] border border-white/70 bg-white/85 p-4 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-white/70 bg-white/90 shadow-md ring-1 ring-emerald-100">
+                  <img
+                    src={elumeLogo}
+                    alt="Elume"
+                    className="h-9 w-9 object-contain"
+                  />
                 </div>
-              ) : null}
-            </div>
-            {headerRight}
-          </div>
 
-          {pollError && (
-            <div className="mt-3 rounded-2xl border-2 border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              {pollError}
-            </div>
-          )}
-        </div>
-
-        {/* Body */}
-        {state === "lobby" && (
-          <div className="rounded-3xl border-2 border-slate-200 bg-white p-8 text-center shadow-sm">
-            <div className="text-lg font-extrabold text-slate-900">Waiting for the teacher…</div>
-            <div className="mt-2 text-sm text-slate-600">The quiz hasn’t started yet. Keep this page open.</div>
-            <div className="mt-6 rounded-2xl border-2 border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-              Session code: <span className="font-bold text-slate-800">{sessionCode}</span>
-            </div>
-          </div>
-        )}
-
-        {state === "live" && (
-          <div className="rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-sm">
-            {transitioning ? (
-              <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 p-10 text-center">
-                <div className="text-xl font-extrabold text-slate-900">Next question…</div>
-                <div className="mt-2 text-sm font-semibold text-slate-600">Get ready 👀</div>
-              </div>
-            ) : !q ? (
-              <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
-                <div className="text-base font-extrabold text-slate-900">Starting…</div>
-                <div className="mt-2 text-sm text-slate-600">Loading the question.</div>
-              </div>
-            ) : (
-              <>
-                <div className="text-lg font-extrabold text-slate-900">{q.prompt}</div>
-
-                {hasAnswered && selectedChoice ? (
-                  <div className="mt-3 rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-3 text-sm font-extrabold text-emerald-900">
-                    Answer recorded ✓{" "}
-                    <span className="text-xs font-semibold text-emerald-800">
-                      (You can still change it until the teacher moves on.)
-                    </span>
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700 shadow-sm">
+                    Elume Live Quiz
                   </div>
-                ) : (
-                  <div className="mt-3 text-sm font-semibold text-slate-600">
-                    Tap an option to submit your answer.
+
+                  <div className="mt-3 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
+                    {title}
                   </div>
-                )}
 
-                <div className="mt-4 grid grid-cols-1 gap-3">
-                  {displayOrder.map((k, idx) => {
-                    const label = q.choices?.[k] || "";
-                    const disabled = !label.trim();
-                    const isSelected = selectedChoice === k;
+                  <div className="mt-2 text-sm text-slate-600">
+                    You are: <span className="font-black text-slate-900">{displayName}</span>
+                  </div>
 
-                    // show A/B/C/D as the *display* letter (not the underlying key)
-                    const shownLetter = (["A", "B", "C", "D"] as const)[idx] ?? "A";
-
-                    return (
-                      <button
-                        key={k}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => submitAnswer(k)} // IMPORTANT: submit the ORIGINAL key for scoring
-                        className={`w-full rounded-3xl border-2 px-4 py-4 text-left text-base font-bold transition ${disabled
-                          ? "border-slate-200 bg-slate-50 text-slate-300"
-                          : isSelected
-                            ? "border-emerald-600 bg-emerald-50 text-emerald-900 ring-4 ring-emerald-200"
-                            : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
-                          }`}
-                      >
-                        <span
-                          className={`mr-3 inline-block w-7 rounded-xl px-2 py-1 text-center text-sm ${isSelected ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"
-                            }`}
-                        >
-                          {shownLetter}
-                        </span>
-
-                        {label || <span className="text-slate-400">Empty</span>}
-                        {isSelected ? <span className="ml-2 text-sm">✓</span> : null}
-                      </button>
-                    );
-                  })}
+                  {isAnonymousSession ? (
+                    <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-900">
+                      This session is in anonymous mode. Your name may not be shown to the teacher.
+                    </div>
+                  ) : null}
                 </div>
+              </div>
 
-                <div className="mt-4 text-xs text-slate-600">
-                  Tip: You can change your answer until the teacher moves on.
-                </div>
-              </>
+              <div className="sm:text-right">{headerRight}</div>
+            </div>
+
+            {pollError && (
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                {pollError}
+              </div>
             )}
           </div>
-        )}
 
-        {state === "ended" && (
-          <div className="rounded-3xl border-2 border-slate-200 bg-white p-8 text-center shadow-sm">
-            <div className="text-lg font-extrabold text-slate-900">Session finished</div>
-            <div className="mt-2 text-sm text-slate-600">The teacher has ended the quiz. You can close this page.</div>
+          {state === "lobby" && (
+            <div className="rounded-[32px] border border-white/70 bg-white/85 p-6 text-center shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-8">
+              <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-emerald-100 bg-emerald-50 shadow-sm">
+                <img src={elumeLogo} alt="Elume" className="h-10 w-10 object-contain" />
+              </div>
 
-            <button
-              className="mt-6 rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-50"
-              onClick={() => {
-                stopPolling();
-                fetchCurrent().then(() => startPolling());
-              }}
-            >
-              Check again
-            </button>
+              <div className="mt-5 text-2xl font-black tracking-tight text-slate-900">
+                Waiting for the teacher…
+              </div>
+              <div className="mt-2 text-sm leading-6 text-slate-600">
+                The quiz hasn’t started yet. Keep this page open and the first question will appear automatically.
+              </div>
+
+              <div className="mt-6 inline-flex rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-black text-slate-800">
+                Session code: {sessionCode}
+              </div>
+            </div>
+          )}
+
+          {state === "live" && (
+            <div className="rounded-[32px] border border-white/70 bg-white/85 p-4 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-5">
+              {transitioning ? (
+                <div className="rounded-[28px] border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-8 text-center shadow-sm sm:p-10">
+                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-emerald-100 bg-white shadow-sm">
+                    <img src={elumeLogo} alt="Elume" className="h-10 w-10 object-contain" />
+                  </div>
+
+                  <div className="mt-5 text-xs font-black uppercase tracking-[0.2em] text-emerald-700">
+                    Next Question
+                  </div>
+
+                  <div className="mt-3 text-3xl font-black tracking-tight text-slate-900">
+                    Get ready…
+                  </div>
+
+                  <div className="mt-3 text-sm font-semibold text-slate-600 sm:text-base">
+                    The next question is loading now.
+                  </div>
+
+                  {questionNumberText ? (
+                    <div className="mt-5 inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-4 py-2 text-sm font-black text-emerald-800">
+                      Up next: Q {questionNumberText}
+                    </div>
+                  ) : null}
+                </div>
+              ) : !q ? (
+                <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                  <div className="text-lg font-black text-slate-900">Starting…</div>
+                  <div className="mt-2 text-sm text-slate-600">Loading the question.</div>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-[28px] border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-emerald-50 p-4 shadow-sm sm:p-5">
+                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
+                      Live question
+                    </div>
+                    <div className="mt-2 text-xl font-black leading-tight tracking-tight text-slate-900 sm:text-2xl">
+                      {q.prompt}
+                    </div>
+
+                    {hasAnswered && selectedChoice ? (
+                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-900">
+                        Answer recorded ✓{" "}
+                        <span className="text-xs font-semibold text-emerald-800">
+                          You can still change it until the teacher moves on.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="mt-4 text-sm font-semibold text-slate-600">
+                        Tap an option below to submit your answer.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3">
+                    {displayOrder.map((k, idx) => {
+                      const label = q.choices?.[k] || "";
+                      const disabled = !label.trim();
+                      const isSelected = selectedChoice === k;
+                      const shownLetter = (["A", "B", "C", "D"] as const)[idx] ?? "A";
+
+                      return (
+                        <button
+                          key={k}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => submitAnswer(k)}
+                          className={`w-full rounded-[26px] border px-4 py-4 text-left text-base font-black shadow-sm transition active:scale-[0.99] sm:px-5 sm:py-5 ${disabled
+                            ? "border-slate-200 bg-slate-50 text-slate-300"
+                            : isSelected
+                              ? "border-emerald-500 bg-gradient-to-r from-emerald-50 to-cyan-50 text-emerald-900 ring-4 ring-emerald-200"
+                              : "border-slate-200 bg-white text-slate-900 hover:-translate-y-0.5 hover:bg-slate-50"
+                            }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-sm font-black ${isSelected ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"
+                                }`}
+                            >
+                              {shownLetter}
+                            </span>
+
+                            <span className="flex-1 leading-6">
+                              {label || <span className="text-slate-400">Empty</span>}
+                            </span>
+
+                            {isSelected ? (
+                              <span className="text-lg font-black text-emerald-700">✓</span>
+                            ) : null}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-4 text-center text-xs text-slate-600">
+                    Tip: You can change your answer until the teacher moves on.
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {state === "ended" && (
+            <div className="rounded-[32px] border border-white/70 bg-white/85 p-6 text-center shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-8">
+              <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-slate-200 bg-slate-50 shadow-sm">
+                <img src={elumeLogo} alt="Elume" className="h-10 w-10 object-contain" />
+              </div>
+
+              <div className="mt-5 text-2xl font-black tracking-tight text-slate-900">
+                Session finished
+              </div>
+              <div className="mt-2 text-sm leading-6 text-slate-600">
+                The teacher has ended the quiz. You can close this page.
+              </div>
+
+              <button
+                className="mt-6 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                onClick={() => {
+                  stopPolling();
+                  fetchCurrent().then(() => startPolling());
+                }}
+              >
+                Check again
+              </button>
+            </div>
+          )}
+
+          <div className="mt-4 text-center text-[11px] text-slate-500">
+            Elume Live Quiz • Keep this tab open during the session
           </div>
-        )}
-
-        {/* Footer */}
-        <div className="mt-4 text-center text-[11px] text-slate-500">ELume Live Quiz • Keep this tab open during the session</div>
+        </div>
       </div>
     </div>
   );
