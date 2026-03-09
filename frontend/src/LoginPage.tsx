@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { apiFetch, setToken } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
 
@@ -16,6 +16,46 @@ export default function LoginPage({ onLoggedIn }: Props) {
     const [waitlistLoading, setWaitlistLoading] = useState(false);
     const [waitlistSuccess, setWaitlistSuccess] = useState<string | null>(null);
     const [waitlistError, setWaitlistError] = useState<string | null>(null);
+
+    function isLocalDev() {
+        const h = window.location.hostname;
+        return h === "localhost" || h === "127.0.0.1";
+    }
+
+    useEffect(() => {
+    let cancelled = false;
+
+    async function devAutoLogin() {
+        if (!isLocalDev()) return;
+
+        try {
+            const data = await apiFetch("/auth/dev-auto-login", {
+                method: "POST",
+            });
+
+            if (cancelled) return;
+
+            const token = data?.access_token;
+            if (!token) throw new Error("No token returned from dev auto login");
+
+            localStorage.setItem("elume_token", token);
+
+            try {
+                setToken(token);
+            } catch { }
+
+            onLoggedIn();
+        } catch {
+            // silently fail so normal login form still works
+        }
+    }
+
+    devAutoLogin();
+
+    return () => {
+        cancelled = true;
+    };
+}, [onLoggedIn]);
 
     async function submit(e: React.FormEvent) {
         e.preventDefault();

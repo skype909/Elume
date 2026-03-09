@@ -46,6 +46,13 @@ from models import (
 
 )
 
+def _dev_autologin_enabled() -> bool:
+    return os.getenv("DEV_AUTO_LOGIN", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+def _is_local_request(host: Optional[str]) -> bool:
+    host = (host or "").split(":")[0].strip().lower()
+    return host in {"localhost", "127.0.0.1"}
+
 
 # =========================================================
 # APP
@@ -57,6 +64,10 @@ PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me")
 JWT_ALG = "HS256"
 JWT_EXPIRE_DAYS = 30
+
+class DevAutoLoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 class AuthRegister(BaseModel):
     email: str
@@ -241,6 +252,34 @@ def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
 
     return {"access_token": _make_token(user.id, user.email), "token_type": "bearer"}
 
+
+@app.post("/auth/dev-auto-login", response_model=DevAutoLoginResponse)
+def auth_dev_auto_login(
+    db: Session = Depends(get_db),
+    host: Optional[str] = Header(default=None, alias="host"),
+):
+    if not _dev_autologin_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if not _is_local_request(host):
+        raise HTTPException(status_code=403, detail="Local development only")
+
+    email = "admin@elume.ie"
+
+    user = db.query(models.UserModel).filter(models.UserModel.email == email).first()
+    if not user:
+        user = models.UserModel(
+            email=email,
+            password_hash=PWD_CONTEXT.hash("dev-only-placeholder-password"),
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    return {
+        "access_token": _make_token(user.id, user.email),
+        "token_type": "bearer",
+    }
 
 @app.post("/auth/login", response_model=AuthToken)
 def auth_login(payload: AuthLogin, db: Session = Depends(get_db)):

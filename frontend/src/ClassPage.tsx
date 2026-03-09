@@ -14,7 +14,45 @@ import { Settings, Timer, Bell, Play, Pause, RotateCcw } from "lucide-react";
 
 
 
-const META_KEY = "elume_class_layout_v1";
+function getEmailFromToken(): string | null {
+  const t = localStorage.getItem("elume_token");
+  if (!t) return null;
+  try {
+    const payload = JSON.parse(atob(t.split(".")[1]));
+    return payload?.email ?? payload?.sub ?? payload?.username ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function teacherAdminKeyForUser() {
+  const email = getEmailFromToken() ?? "anon";
+  return `elume_teacher_admin_v2__${email}`;
+}
+
+function metaKeyForUser() {
+  const email = getEmailFromToken() ?? "anon";
+  return `elume_class_layout_v1__${email}`;
+}
+
+function loadTeacherDisplayName(): string {
+  try {
+    const raw = localStorage.getItem(teacherAdminKeyForUser());
+    if (!raw) return "";
+
+    const parsed = JSON.parse(raw);
+    const p = parsed?.profile;
+    if (!p) return "";
+
+    const title = String(p.title ?? "").trim();
+    const surname = String(p.surname ?? "").trim();
+
+    if (!title || !surname) return "";
+    return `${title} ${surname}`;
+  } catch {
+    return "";
+  }
+}
 
 type ClassItem = { id: number; name: string; subject: string };
 type Post = {
@@ -318,7 +356,7 @@ export default function ClassPage() {
   const [classInfo, setClassInfo] = useState<ClassItem | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
   const [content, setContent] = useState("");
-  const [author, setAuthor] = useState("Mr Fitzgerald");
+  const [author, setAuthor] = useState(() => loadTeacherDisplayName() || "Teacher");
   const [links, setLinks] = useState<string[]>([]);
   const [linkDraft, setLinkDraft] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -329,7 +367,7 @@ export default function ClassPage() {
   const [showClassSettings, setShowClassSettings] = useState(false);
   const [editName, setEditName] = useState("");
   const [editSubject, setEditSubject] = useState("");
-  const [teacherName, setTeacherName] = useState("Mr Fitzgerald");
+  const [teacherName, setTeacherName] = useState(() => loadTeacherDisplayName() || "Teacher");
   const [displayId, setDisplayId] = useState("");
   const [editTeacher, setEditTeacher] = useState("");
   const [editGroup, setEditGroup] = useState("");
@@ -540,7 +578,7 @@ export default function ClassPage() {
   // Header Colour
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(META_KEY);
+      const raw = localStorage.getItem(metaKeyForUser());
       if (!raw) return;
 
       const meta = JSON.parse(raw);
@@ -548,9 +586,14 @@ export default function ClassPage() {
 
       if (entry?.color) setClassColour(entry.color);
 
-      if (typeof entry?.teacher === "string" && entry.teacher.trim()) {
+      const adminTeacherName = loadTeacherDisplayName();
+      if (adminTeacherName) {
+        setTeacherName(adminTeacherName);
+        setAuthor(adminTeacherName);
+      } else if (typeof entry?.teacher === "string" && entry.teacher.trim()) {
+        // fallback for any older saved class data
         setTeacherName(entry.teacher);
-        setAuthor(entry.teacher); // also updates post composer default author
+        setAuthor(entry.teacher);
       }
 
       if (typeof entry?.group === "string" && entry.group.trim()) {
@@ -569,6 +612,24 @@ export default function ClassPage() {
       // fail silently
     }
   }, [classId]);
+
+  useEffect(() => {
+    const refreshTeacher = () => {
+      const adminTeacherName = loadTeacherDisplayName();
+      if (adminTeacherName) {
+        setTeacherName(adminTeacherName);
+        setAuthor(adminTeacherName);
+      }
+    };
+
+    window.addEventListener("storage", refreshTeacher);
+    window.addEventListener("focus", refreshTeacher);
+
+    return () => {
+      window.removeEventListener("storage", refreshTeacher);
+      window.removeEventListener("focus", refreshTeacher);
+    };
+  }, []);
 
 
   useEffect(() => {
@@ -1946,7 +2007,7 @@ export default function ClassPage() {
 
                         // Persist UI-only fields (teacher/group/room) per class
                         try {
-                          const raw = localStorage.getItem(META_KEY);
+                          const raw = localStorage.getItem(metaKeyForUser());
                           const meta = raw ? JSON.parse(raw) : {};
                           const prev = meta[String(classId)] || {};
 
@@ -1957,7 +2018,7 @@ export default function ClassPage() {
                             room: editRoom.trim(),
                           };
 
-                          localStorage.setItem(META_KEY, JSON.stringify(meta));
+                          localStorage.setItem(metaKeyForUser(), JSON.stringify(meta));
                         } catch { }
 
                         // Apply immediately to header + post composer default
