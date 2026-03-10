@@ -24,6 +24,8 @@ import StudentReportPage from "./StudentReportPage";
 import TeacherPlanner from "./TeacherPlanner";
 import CreateResources from "./CreateResources";
 import AdminUsersPage from "./AdminUsersPage";
+import StudentCollabRoomPage from "./StudentCollabRoomPage";
+import CollaborationPage from "./CollaborationPage";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -1379,6 +1381,8 @@ export default function App() {
         <Route path="/admin-users" element={<AdminUsersPage />} />
         <Route path="/class/:id/report" element={<ClassReportPage />} />
         <Route path="/class/:id/student-report/:studentId" element={<StudentReportPage />} />
+        <Route path="/collab/join/:code" element={<StudentCollabRoomPage />} />
+        <Route path="/class/:id/collaboration" element={<CollaborationPage />} />
         <Route path="/planner" element={<TeacherPlanner />} />
         <Route path="/create-resources" element={<CreateResources />} />
       </Routes>

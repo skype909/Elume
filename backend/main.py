@@ -9,6 +9,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
+import json
+from collections import defaultdict
+from fastapi import WebSocket, WebSocketDisconnect
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -26,6 +30,22 @@ import secrets
 
 from io import BytesIO
 from fastapi.responses import StreamingResponse
+
+from uuid import uuid4
+from datetime import datetime, timedelta
+from uuid import uuid4
+
+from datetime import datetime, timedelta
+
+from models import CollabSessionModel, CollabParticipantModel
+from schemas import (
+    CollabCreatePayload,
+    CollabCreateResponse,
+    CollabJoinPayload,
+    CollabJoinResponse,
+    CollabAssignmentsPayload,
+    CollabStatusResponse,
+)
 
 
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
@@ -600,6 +620,7 @@ class BulkResultsUpdate(BaseModel):
 # LIVE QUIZ / POLL
 # =========================================================
 
+
 class LiveQuizCreateQuestion(BaseModel):
     id: str
     prompt: str
@@ -631,6 +652,42 @@ class LiveQuizAnswerRequest(BaseModel):
     anon_id: str
     question_id: str
     choice: str  # A/B/C/D
+
+class CollabRoomManager:
+    def __init__(self):
+        # key = (session_code, room_key)
+        self.rooms: dict[tuple[str, str], list[WebSocket]] = defaultdict(list)
+
+    async def connect(self, session_code: str, room_key: str, websocket: WebSocket):
+        await websocket.accept()
+        key = (session_code, room_key)
+        self.rooms[key].append(websocket)
+
+    def disconnect(self, session_code: str, room_key: str, websocket: WebSocket):
+        key = (session_code, room_key)
+        if key in self.rooms and websocket in self.rooms[key]:
+            self.rooms[key].remove(websocket)
+        if key in self.rooms and not self.rooms[key]:
+            del self.rooms[key]
+
+    async def broadcast(self, session_code: str, room_key: str, payload: dict):
+        key = (session_code, room_key)
+        dead = []
+        for ws in self.rooms.get(key, []):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+
+        for ws in dead:
+            self.disconnect(session_code, room_key, ws)
+
+collab_room_manager = CollabRoomManager()
+
+def _collab_room_key(room_number: int | None) -> str:
+    if room_number is None:
+        return "teacher-main"
+    return f"room-{int(room_number)}"
 
 def _rand_code(n: int = 6) -> str:
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -684,6 +741,99 @@ def ensure_columns():
         if "owner_user_id" not in col_names:
             conn.execute(text("ALTER TABLE classes ADD COLUMN owner_user_id INTEGER"))
             conn.commit()
+
+def _collab_time_left_seconds(s: CollabSessionModel) -> Optional[int]:
+    if not s.timer_minutes or not s.breakout_started_at or s.state != "live":
+        return None
+
+    elapsed = int((datetime.utcnow() - s.breakout_started_at).total_seconds())
+    total = int(s.timer_minutes) * 60
+    left = total - elapsed
+    return max(0, left)
+
+
+def _rand_collab_code(db: Session) -> str:
+    for _ in range(20):
+        code = _rand_code(6)
+        exists = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+        if not exists:
+            return code
+    raise HTTPException(status_code=500, detail="Could not generate collaboration code")
+
+@app.get("/collab/{code}/me/{anon_id}")
+def collab_me(code: str, anon_id: str, db: Session = Depends(get_db)):
+    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    p = (
+        db.query(CollabParticipantModel)
+        .filter(CollabParticipantModel.session_id == s.id)
+        .filter(CollabParticipantModel.anon_id == anon_id)
+        .first()
+    )
+    if not p:
+        raise HTTPException(status_code=404, detail="Participant not found")
+
+    return {
+        "id": p.id,
+        "anon_id": p.anon_id,
+        "name": p.name,
+        "room_number": p.room_number,
+        "is_online": bool(p.is_online),
+        "session_state": s.state,
+    }
+
+@app.websocket("/ws/collab/{code}/{room_key}")
+async def collab_room_socket(websocket: WebSocket, code: str, room_key: str):
+    await collab_room_manager.connect(code, room_key, websocket)
+
+    try:
+        await collab_room_manager.broadcast(code, room_key, {
+            "type": "presence",
+            "message": "peer_joined",
+        })
+
+        while True:
+            raw = await websocket.receive_text()
+
+            try:
+                data = json.loads(raw)
+            except Exception:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Invalid JSON payload"
+                })
+                continue
+
+            msg_type = data.get("type")
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
+            if msg_type in {
+                "stroke",
+                "stroke-batch",
+                "cursor",
+                "clear-preview",
+                "object-create",
+                "object-update",
+                "object-delete",
+            }:
+                await collab_room_manager.broadcast(code, room_key, data)
+                continue
+
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Unsupported message type: {msg_type}"
+            })
+
+    except WebSocketDisconnect:
+        collab_room_manager.disconnect(code, room_key, websocket)
+
+    except Exception:
+        collab_room_manager.disconnect(code, room_key, websocket)
 
 @app.post("/livequiz/create", response_model=LiveQuizCreateResponse)
 def livequiz_create(payload: LiveQuizCreateRequest, db: Session = Depends(get_db)):
@@ -1306,6 +1456,207 @@ def _rel_upload_url(stored_path: str) -> str:
     # Last resort: just expose basename (not ideal, but avoids crashing)
     return f"/uploads/{p.name}"
 
+
+@app.post("/collab/create", response_model=CollabCreateResponse)
+def collab_create(payload: CollabCreatePayload, db: Session = Depends(get_db)):
+    title = (payload.title or "").strip() or "Collaboration Whiteboard"
+    room_count = max(1, min(12, int(payload.room_count or 4)))
+    timer_minutes = payload.timer_minutes
+    if timer_minutes is not None:
+        timer_minutes = max(1, min(60, int(timer_minutes)))
+
+    code = _rand_collab_code(db)
+
+    s = CollabSessionModel(
+        class_id=payload.class_id,
+        session_code=code,
+        title=title,
+        state="lobby",
+        room_count=room_count,
+        timer_minutes=timer_minutes,
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+
+    return {"session_code": s.session_code, "join_url": None}
+
+
+@app.get("/collab/{code}/status", response_model=CollabStatusResponse)
+def collab_status(code: str, db: Session = Depends(get_db)):
+    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    participants = (
+        db.query(CollabParticipantModel)
+        .filter(CollabParticipantModel.session_id == s.id)
+        .all()
+    )
+
+    joined_count = len(participants)
+    assigned_count = len([p for p in participants if p.room_number is not None])
+
+    return {
+        "session_code": s.session_code,
+        "title": s.title,
+        "state": s.state,
+        "room_count": s.room_count,
+        "timer_minutes": s.timer_minutes,
+        "time_left_seconds": _collab_time_left_seconds(s),
+        "joined_count": joined_count,
+        "assigned_count": assigned_count,
+    }
+
+
+@app.post("/collab/{code}/join", response_model=CollabJoinResponse)
+def collab_join(code: str, payload: CollabJoinPayload, db: Session = Depends(get_db)):
+    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    anon_id = (payload.anon_id or "").strip()
+    name = (payload.name or "").strip()
+
+    if not name and not anon_id:
+        raise HTTPException(status_code=400, detail="Name required")
+
+    existing = None
+    if anon_id:
+        existing = (
+            db.query(CollabParticipantModel)
+            .filter(CollabParticipantModel.session_id == s.id)
+            .filter(CollabParticipantModel.anon_id == anon_id)
+            .first()
+        )
+
+    if existing:
+        existing.last_seen_at = datetime.utcnow()
+        existing.is_online = True
+        if name:
+            existing.name = name
+        db.commit()
+        db.refresh(existing)
+        return {
+            "anon_id": existing.anon_id,
+            "name": existing.name,
+            "room_number": existing.room_number,
+        }
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Name required")
+
+    anon_id = anon_id or f"cp_{uuid4().hex[:12]}"
+
+    p = CollabParticipantModel(
+        session_id=s.id,
+        anon_id=anon_id,
+        name=name,
+        room_number=None,
+        joined_at=datetime.utcnow(),
+        last_seen_at=datetime.utcnow(),
+        is_online=True,
+    )
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+
+    return {
+        "anon_id": p.anon_id,
+        "name": p.name,
+        "room_number": p.room_number,
+    }
+
+
+@app.get("/collab/{code}/participants")
+def collab_participants(code: str, db: Session = Depends(get_db)):
+    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    participants = (
+        db.query(CollabParticipantModel)
+        .filter(CollabParticipantModel.session_id == s.id)
+        .order_by(CollabParticipantModel.joined_at.asc())
+        .all()
+    )
+
+    return {
+        "participants": [
+            {
+                "id": p.id,
+                "anon_id": p.anon_id,
+                "name": p.name,
+                "room_number": p.room_number,
+                "is_online": bool(p.is_online),
+            }
+            for p in participants
+        ]
+    }
+
+
+@app.post("/collab/{code}/assignments")
+def collab_assignments(code: str, payload: CollabAssignmentsPayload, db: Session = Depends(get_db)):
+    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    for item in payload.assignments:
+        p = (
+            db.query(CollabParticipantModel)
+            .filter(CollabParticipantModel.session_id == s.id)
+            .filter(CollabParticipantModel.id == item.participant_id)
+            .first()
+        )
+        if not p:
+            continue
+
+        room_number = item.room_number
+        if room_number is not None:
+            room_number = max(1, min(12, int(room_number)))
+            if room_number > int(s.room_count):
+                room_number = int(s.room_count)
+
+        p.room_number = room_number
+
+    db.commit()
+    return {"message": "ok"}
+
+
+@app.post("/collab/{code}/start")
+def collab_start(code: str, db: Session = Depends(get_db)):
+    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    s.state = "live"
+    s.started_at = s.started_at or datetime.utcnow()
+    s.breakout_started_at = datetime.utcnow()
+    db.commit()
+    return {"message": "started"}
+
+
+@app.post("/collab/{code}/end")
+def collab_end(code: str, db: Session = Depends(get_db)):
+    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    s.state = "review"
+    db.commit()
+    return {"message": "review"}
+
+
+@app.post("/collab/{code}/end-session")
+def collab_end_session(code: str, db: Session = Depends(get_db)):
+    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    s.state = "ended"
+    s.ended_at = datetime.utcnow()
+    db.commit()
+    return {"message": "ended"}
 
 # =========================================================
 # SEED CLASSES (optional)

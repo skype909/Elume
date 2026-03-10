@@ -255,3 +255,37 @@ class StudentAccessLink(Base):
 
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class CollabSessionModel(Base):
+    __tablename__ = "collab_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False, index=True)
+    session_code = Column(String, unique=True, index=True, nullable=False)
+
+    title = Column(String, nullable=False, default="Collaboration Whiteboard")
+    state = Column(String, nullable=False, default="lobby")  # lobby / assigning / live / review / ended
+
+    room_count = Column(Integer, nullable=False, default=4)
+    timer_minutes = Column(Integer, nullable=True)
+
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+    breakout_started_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class CollabParticipantModel(Base):
+    __tablename__ = "collab_participants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("collab_sessions.id"), nullable=False, index=True)
+
+    anon_id = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    room_number = Column(Integer, nullable=True)
+
+    joined_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_online = Column(Boolean, default=True, nullable=False)

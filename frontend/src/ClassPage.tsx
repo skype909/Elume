@@ -1115,7 +1115,7 @@ export default function ClassPage() {
           {[
             { label: "Dashboard", to: `/` },
             { label: "Whiteboard", to: `/whiteboard/${classId}` },
-            { label: "Collaborate", to: null },
+            { label: "Collaborate", to: `/class/${classId}/collaboration` },
             { label: "eBooks", to: null },
             { label: "Admin", to: `/class/${classId}/admin` },
           ].map((item) => (

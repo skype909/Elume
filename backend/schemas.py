@@ -141,3 +141,57 @@ class TeacherAdminStateOut(BaseModel):
 
 class TeacherAdminStateSave(BaseModel):
     state: dict
+
+# -------------------------
+# Collaboration State
+# -------------------------
+
+class CollabCreatePayload(BaseModel):
+    class_id: int
+    title: str = "Collaboration Whiteboard"
+    room_count: int = 4
+    timer_minutes: Optional[int] = 10
+
+
+class CollabCreateResponse(BaseModel):
+    session_code: str
+    join_url: Optional[str] = None
+
+
+class CollabJoinPayload(BaseModel):
+    anon_id: Optional[str] = None
+    name: Optional[str] = None
+
+
+class CollabJoinResponse(BaseModel):
+    anon_id: str
+    name: str
+    room_number: Optional[int] = None
+
+
+class CollabAssignItem(BaseModel):
+    participant_id: int
+    room_number: Optional[int] = None
+
+
+class CollabAssignmentsPayload(BaseModel):
+    assignments: List[CollabAssignItem]
+
+
+class CollabParticipantOut(BaseModel):
+    id: int
+    anon_id: str
+    name: str
+    room_number: Optional[int] = None
+    is_online: bool = True
+
+
+class CollabStatusResponse(BaseModel):
+    session_code: str
+    title: str
+    state: str
+    room_count: int
+    timer_minutes: Optional[int] = None
+    time_left_seconds: Optional[int] = None
+    joined_count: int
+    assigned_count: int
