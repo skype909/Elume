@@ -1342,28 +1342,33 @@ export default function WhiteBoardPage() {
     if (!ctx) return;
 
     const widthCss = container.clientWidth;
-    const heightCss = canvasHeight;
+    const pad = 400;
 
-    // clear full board
-    ctx.clearRect(0, 0, widthCss, heightCss);
+    const y0 = Math.max(0, container.scrollTop - pad);
+    const y1 = Math.min(
+      canvasHeight,
+      container.scrollTop + container.clientHeight + pad
+    );
 
-    // ✅ If width is temporarily 0 during fullscreen transitions, wait and retry.
-    if (widthCss < 20 || heightCss < 20) {
+    if (widthCss < 20 || y1 - y0 < 20) {
       window.setTimeout(() => {
         void redrawImages();
       }, 80);
       return;
     }
 
-    // draw everything at absolute board coordinates
+    ctx.clearRect(0, y0, widthCss, y1 - y0);
+
     for (const p of placedImages) {
+      if (p.y + p.h < y0 || p.y > y1) continue;
+
       try {
         const img = await getCachedImage(p.src);
         ctx.drawImage(img, p.x, p.y, p.w, p.h);
       } catch { }
     }
   }
-
+  
   useEffect(() => {
     redrawImages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2044,41 +2049,48 @@ export default function WhiteBoardPage() {
   }
 
   /* ---------- Save ---------- */
-  /* ---------- Save ---------- */
   async function doSave() {
     const bg = bgCanvasRef.current;
     const ink = inkCanvasRef.current;
     const container = containerRef.current;
+
     if (!bg || !ink || !container) return;
 
     setSaving(true);
 
     try {
-      const width = container.clientWidth;
-
       const out = document.createElement("canvas");
-      out.width = width;
-      out.height = canvasHeight;
+
+      // Use the REAL internal canvas size to avoid distortion
+      out.width = bg.width;
+      out.height = bg.height;
 
       const outCtx = out.getContext("2d");
       if (!outCtx) throw new Error("Could not create export canvas");
 
-      // 1) Background
-      outCtx.drawImage(bg, 0, 0, width, canvasHeight);
+      // Match live board coordinate system
+      const scaleX = out.width / container.clientWidth;
+      const scaleY = out.height / canvasHeight;
 
-      // 2) Placed images (PDF inserts + snips) — draw ALL, not just viewport
+      outCtx.save();
+      outCtx.scale(scaleX, scaleY);
+
+      // 1) Background
+      outCtx.drawImage(bg, 0, 0, container.clientWidth, canvasHeight);
+
+      // 2) Placed images (PDF inserts + snips)
       for (const p of placedImages) {
         try {
           const img = await getCachedImage(p.src);
           outCtx.drawImage(img, p.x, p.y, p.w, p.h);
         } catch {
-          // ignore a single broken image
+          // ignore one broken image
         }
       }
 
-      // 3) Grid / XY overlays (draw directly into export)
+      // 3) Grid / XY overlays
       if (gridApplied) {
-        const fullW = width;
+        const fullW = container.clientWidth;
         const top = gridTop ?? 0;
         const viewH = container.clientHeight;
 
@@ -2103,6 +2115,7 @@ export default function WhiteBoardPage() {
           outCtx.lineTo(x, top + viewH);
           outCtx.stroke();
         }
+
         for (let r = 0; r <= rows; r++) {
           const y = top + r * cellH;
           outCtx.beginPath();
@@ -2110,9 +2123,10 @@ export default function WhiteBoardPage() {
           outCtx.lineTo(left + drawW, y);
           outCtx.stroke();
         }
+
         outCtx.restore();
       } else if (axesApplied) {
-        const fullW = width;
+        const fullW = container.clientWidth;
         const viewH = container.clientHeight;
         const top = axesTop ?? 0;
 
@@ -2124,13 +2138,14 @@ export default function WhiteBoardPage() {
         const x1 = left + drawW;
         const y1 = top + viewH;
 
-        const mapX = (x: number) => x0 + ((x - domMin) / (domMax - domMin)) * (x1 - x0);
-        const mapY = (y: number) => y1 - ((y - rngMin) / (rngMax - rngMin)) * (y1 - y0);
+        const mapX = (x: number) =>
+          x0 + ((x - domMin) / (domMax - domMin)) * (x1 - x0);
+        const mapY = (y: number) =>
+          y1 - ((y - rngMin) / (rngMax - rngMin)) * (y1 - y0);
 
         outCtx.save();
         outCtx.globalCompositeOperation = "source-over";
 
-        // dots
         outCtx.fillStyle = "rgba(15,23,42,0.25)";
         const dotR = 1.2;
         for (let x = domMin; x <= domMax + 1e-9; x += domStep) {
@@ -2143,7 +2158,6 @@ export default function WhiteBoardPage() {
           }
         }
 
-        // axes + labels
         outCtx.strokeStyle = "rgba(15,23,42,0.6)";
         outCtx.lineWidth = 2;
         outCtx.fillStyle = "#0f172a";
@@ -2191,7 +2205,9 @@ export default function WhiteBoardPage() {
       }
 
       // 4) Ink
-      outCtx.drawImage(ink, 0, 0, width, canvasHeight);
+      outCtx.drawImage(ink, 0, 0, container.clientWidth, canvasHeight);
+
+      outCtx.restore();
 
       const blob: Blob = await new Promise((resolve, reject) => {
         out.toBlob((b) => {
@@ -2201,17 +2217,21 @@ export default function WhiteBoardPage() {
       });
 
       const form = new FormData();
-      const safeTitle = boardTitle?.trim() || `Whiteboard ${new Date().toISOString().slice(0, 10)}`;
+      const safeTitle =
+        boardTitle?.trim() || `Whiteboard ${new Date().toISOString().slice(0, 10)}`;
 
       form.append("class_id", String(classId));
       form.append("title", safeTitle);
       form.append("image", blob, "whiteboard.png");
       form.append("file", blob, "whiteboard.png");
 
-      const r = await fetch(`${API_BASE}/whiteboard/save`, { method: "POST", body: form });
+      const r = await fetch(`${API_BASE}/whiteboard/save`, {
+        method: "POST",
+        body: form,
+      });
 
       if (!r.ok) {
-        const txt = await r.text();
+        const txt = await r.text().catch(() => "");
         throw new Error(txt || `Save failed (${r.status})`);
       }
 
@@ -2817,16 +2837,12 @@ export default function WhiteBoardPage() {
     const onFsChange = () => {
       setIsFullscreen(Boolean(document.fullscreenElement));
 
-      // ✅ Force a resize/redraw after fullscreen transition settles
-      setTimeout(() => {
-        syncCanvasSize();
-        forceBoardRedraw();
-      }, 120);
-
-      setTimeout(() => {
-        syncCanvasSize();
-        forceBoardRedraw();
-      }, 600);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          syncCanvasSize();
+          forceBoardRedraw();
+        });
+      });
     };
 
     document.addEventListener("fullscreenchange", onFsChange);

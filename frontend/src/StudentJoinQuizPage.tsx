@@ -223,8 +223,10 @@ export default function StudentJoinQuizPage() {
       const questionChanged = idChanged || idxChanged;
 
       if (questionChanged) {
-        setSelectedChoice(null);
-        setHasAnswered(false);
+        window.setTimeout(() => {
+          setSelectedChoice(null);
+          setHasAnswered(false);
+        }, 200);
 
         if (lastQuestionId || lastQuestionIndex !== null) {
           setTransitioning(true);
@@ -236,7 +238,7 @@ export default function StudentJoinQuizPage() {
           transitionTimerRef.current = window.setTimeout(() => {
             setCurrent(data);
             setTransitioning(false);
-          }, 900);
+          }, 3000);
         } else {
           setCurrent(data);
         }
@@ -576,18 +578,19 @@ export default function StudentJoinQuizPage() {
                     <img src={elumeLogo} alt="Elume" className="h-10 w-10 object-contain" />
                   </div>
 
-                  <div className="mt-5 text-xs font-black uppercase tracking-[0.2em] text-emerald-700">
-                    Next Question
-                  </div>
+                  <div className="text-center">
+                    <div className="text-3xl font-black text-indigo-600">
+                      Next Question
+                    </div>
 
-                  <div className="mt-3 text-3xl font-black tracking-tight text-slate-900">
-                    Get ready…
-                  </div>
+                    <div className="mt-2 text-lg text-slate-600">
+                      Get ready…
+                    </div>
 
-                  <div className="mt-3 text-sm font-semibold text-slate-600 sm:text-base">
-                    The next question is loading now.
+                    <div className="mt-3 text-sm font-bold uppercase tracking-[0.2em] text-slate-500">
+                      Question {questionNumberText}
+                    </div>
                   </div>
-
                   {questionNumberText ? (
                     <div className="mt-5 inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-4 py-2 text-sm font-black text-emerald-800">
                       Up next: Q {questionNumberText}
@@ -634,7 +637,7 @@ export default function StudentJoinQuizPage() {
                         <button
                           key={k}
                           type="button"
-                          disabled={disabled}
+                          disabled={disabled || hasAnswered}
                           onClick={() => submitAnswer(k)}
                           className={`w-full rounded-[26px] border px-4 py-4 text-left text-base font-black shadow-sm transition active:scale-[0.99] sm:px-5 sm:py-5 ${disabled
                             ? "border-slate-200 bg-slate-50 text-slate-300"

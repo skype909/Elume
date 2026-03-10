@@ -265,6 +265,22 @@ export default function CollaborationPage() {
     }, []);
 
     useEffect(() => {
+        if (!sessionCode) return;
+
+        stopPolling();
+
+        pollRef.current = window.setInterval(() => {
+            fetchStatus(sessionCode);
+
+            if (!showBreakoutModal) {
+                fetchParticipants(sessionCode);
+            }
+        }, 1000);
+
+        return () => stopPolling();
+    }, [sessionCode, showBreakoutModal]);
+
+    useEffect(() => {
         setRooms((prev) => {
             const next = Array.from({ length: roomCount }, (_, i) => {
                 const existing = prev.find((r) => r.roomNumber === i + 1);
@@ -355,6 +371,54 @@ export default function CollaborationPage() {
         );
     }
 
+    async function assignAndSave(participantId: string, roomNumber: number | null) {
+        const nextParticipants = participants.map((p) =>
+            p.id === participantId ? { ...p, roomNumber } : p
+        );
+
+        setRooms((prev) =>
+            prev.map((r) => ({
+                ...r,
+                participantIds:
+                    roomNumber === r.roomNumber
+                        ? Array.from(
+                            new Set([
+                                ...r.participantIds.filter((id) => id !== participantId),
+                                participantId,
+                            ])
+                        )
+                        : r.participantIds.filter((id) => id !== participantId),
+            }))
+        );
+
+        setParticipants(nextParticipants);
+
+        if (!sessionCode) return;
+
+        try {
+            const assignments = nextParticipants.map((p) => ({
+                participant_id: Number(p.id),
+                room_number: p.roomNumber,
+            }));
+
+            const res = await fetch(`${API_BASE}/collab/${sessionCode}/assignments`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ assignments }),
+            });
+
+            if (!res.ok) {
+                const txt = await res.text().catch(() => "");
+                throw new Error(txt || "Failed to save assignments.");
+            }
+
+            await fetchParticipants(sessionCode);
+            await fetchStatus(sessionCode);
+        } catch (e: any) {
+            window.alert(e?.message || "Failed to save assignments.");
+        }
+    }
+
     async function createSession() {
         try {
             const res = await fetch(`${API_BASE}/collab/create`, {
@@ -378,7 +442,6 @@ export default function CollaborationPage() {
             setSessionState("lobby");
             await fetchStatus(data.session_code);
             await fetchParticipants(data.session_code);
-            startPolling(data.session_code);
         } catch (e: any) {
             window.alert(e?.message || "Failed to create collaboration session.");
         }
@@ -428,13 +491,6 @@ export default function CollaborationPage() {
         }
     }
 
-    function startPolling(code: string) {
-        stopPolling();
-        pollRef.current = window.setInterval(() => {
-            fetchStatus(code);
-            fetchParticipants(code);
-        }, 1000);
-    }
 
     async function postControl(action: "start" | "end" | "end-session") {
         if (!sessionCode) return;
@@ -620,8 +676,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("select")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "select"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">✋</span>
@@ -632,8 +688,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("pen")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "pen"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">✎</span>
@@ -644,8 +700,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("eraser")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "eraser"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">⌫</span>
@@ -656,8 +712,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("highlighter")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "highlighter"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">🖍️</span>
@@ -668,8 +724,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("rectangle")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "rectangle"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">▭</span>
@@ -680,8 +736,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("circle")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "circle"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">◯</span>
@@ -692,8 +748,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("triangle")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "triangle"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">△</span>
@@ -704,8 +760,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("sticky")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "sticky"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">🗒️</span>
@@ -716,8 +772,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("arrow")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "arrow"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">➜</span>
@@ -728,8 +784,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("curved-arrow")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "curved-arrow"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">↷</span>
@@ -740,8 +796,8 @@ export default function CollaborationPage() {
                                         type="button"
                                         onClick={() => setTool("speech")}
                                         className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "speech"
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                             }`}
                                     >
                                         <span className="text-lg">💬</span>
@@ -772,8 +828,8 @@ export default function CollaborationPage() {
                                                         type="button"
                                                         onClick={() => setPenColor(c)}
                                                         className={`rounded-xl border px-2 py-2 text-[11px] font-black capitalize ${penColor === c
-                                                                ? "border-slate-900 bg-slate-900 text-white"
-                                                                : "border-slate-200 bg-white text-slate-700"
+                                                            ? "border-slate-900 bg-slate-900 text-white"
+                                                            : "border-slate-200 bg-white text-slate-700"
                                                             }`}
                                                     >
                                                         {c}
@@ -788,8 +844,8 @@ export default function CollaborationPage() {
                                                         type="button"
                                                         onClick={() => setPenSize(s as PenSize)}
                                                         className={`rounded-xl border px-2 py-2 text-[11px] font-black ${penSize === s
-                                                                ? "border-emerald-500 bg-emerald-500 text-white"
-                                                                : "border-slate-200 bg-white text-slate-700"
+                                                            ? "border-emerald-500 bg-emerald-500 text-white"
+                                                            : "border-slate-200 bg-white text-slate-700"
                                                             }`}
                                                     >
                                                         Size {s}
@@ -807,8 +863,8 @@ export default function CollaborationPage() {
                                                     type="button"
                                                     onClick={() => setEraserSize(s as EraserSize)}
                                                     className={`rounded-xl border px-2 py-2 text-[11px] font-black ${eraserSize === s
-                                                            ? "border-emerald-500 bg-emerald-500 text-white"
-                                                            : "border-slate-200 bg-white text-slate-700"
+                                                        ? "border-emerald-500 bg-emerald-500 text-white"
+                                                        : "border-slate-200 bg-white text-slate-700"
                                                         }`}
                                                 >
                                                     Size {s}
@@ -825,8 +881,8 @@ export default function CollaborationPage() {
                                                     type="button"
                                                     onClick={() => setHighlightColor(c)}
                                                     className={`rounded-xl border px-2 py-2 text-[11px] font-black capitalize ${highlightColor === c
-                                                            ? "border-slate-900 bg-slate-900 text-white"
-                                                            : "border-slate-200 bg-white text-slate-700"
+                                                        ? "border-slate-900 bg-slate-900 text-white"
+                                                        : "border-slate-200 bg-white text-slate-700"
                                                         }`}
                                                 >
                                                     {c}
@@ -1081,21 +1137,21 @@ export default function CollaborationPage() {
                                         <div className="mt-3 grid grid-cols-3 gap-2">
                                             <button
                                                 type="button"
-                                                onClick={() => assignParticipantToRoom(p.id, 1)}
+                                                onClick={() => assignAndSave(p.id, 1)}
                                                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
                                             >
                                                 Room 1
                                             </button>
                                             <button
                                                 type="button"
-                                                onClick={() => assignParticipantToRoom(p.id, 2)}
+                                                onClick={() => assignAndSave(p.id, 2)}
                                                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
                                             >
                                                 Room 2
                                             </button>
                                             <button
                                                 type="button"
-                                                onClick={() => assignParticipantToRoom(p.id, null)}
+                                                onClick={() => assignAndSave(p.id, null)}
                                                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
                                             >
                                                 Clear
@@ -1246,7 +1302,10 @@ export default function CollaborationPage() {
 
                                         <button
                                             type="button"
-                                            onClick={startBreakout}
+                                            onClick={async () => {
+                                                await postControl("start");
+                                                setShowBreakoutModal(false);
+                                            }}
                                             className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
                                         >
                                             Start breakout session
@@ -1313,7 +1372,7 @@ export default function CollaborationPage() {
                                                     <button
                                                         key={`${room.roomNumber}_${p.id}`}
                                                         type="button"
-                                                        onClick={() => assignParticipantToRoom(p.id, room.roomNumber)}
+                                                        onClick={() => assignAndSave(p.id, room.roomNumber)}
                                                         className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
                                                     >
                                                         + {p.name}

@@ -1314,26 +1314,23 @@ def _build_livequiz_results(db: Session, s: LiveQuizSessionModel) -> dict:
         answered = int(stats["answered"])
         correct = int(stats["correct"])
 
-        # If there are no correct answers defined, percent is based on participation
-        if any_correct_keys and total_qs:
-            percent = int(round((correct / total_qs) * 100))
-        else:
-            percent = int(round((answered / total_qs) * 100)) if total_qs else 0
+    # Percent must always reflect correct answers
+    if total_qs:
+        percent = int(round((correct / total_qs) * 100))
+    else:
+        percent = 0
 
-        leaderboard.append({
-            "participant_id": p.id,
-            "name": pid_to_name.get(p.id, "Player"),
-            "correct": correct,
-            "answered": answered,
-            "total_questions": total_qs,
-            "percent": percent,
-        })
+    leaderboard.append({
+        "participant_id": p.id,
+        "name": pid_to_name.get(p.id, "Player"),
+        "correct": correct,
+        "answered": answered,
+        "total_questions": total_qs,
+        "percent": percent,
+    })
 
     # Sort: if correct keys exist, sort by correct then answered; otherwise answered then name
-    if any_correct_keys:
-        leaderboard.sort(key=lambda r: (-r["correct"], -r["answered"], r["name"].lower()))
-    else:
-        leaderboard.sort(key=lambda r: (-r["answered"], r["name"].lower()))
+    leaderboard.sort(key=lambda r: (-r["correct"], -r["answered"], r["name"].lower()))
 
     top3 = leaderboard[:3]
 
