@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
+from copy import deepcopy
+
 import json
 from collections import defaultdict
 from fastapi import WebSocket, WebSocketDisconnect
@@ -760,6 +762,41 @@ def _rand_collab_code(db: Session) -> str:
             return code
     raise HTTPException(status_code=500, detail="Could not generate collaboration code")
 
+# key = (session_code, room_key) -> ordered list of board events
+collab_room_history: dict[tuple[str, str], list[dict]] = defaultdict(list)
+
+
+def _collab_history_key(session_code: str, room_key: str) -> tuple[str, str]:
+    return (session_code, room_key)
+
+
+def _append_collab_event(session_code: str, room_key: str, payload: dict) -> None:
+    key = _collab_history_key(session_code, room_key)
+    collab_room_history[key].append(deepcopy(payload))
+
+
+def _replace_collab_history(session_code: str, room_key: str, events: list[dict]) -> None:
+    key = _collab_history_key(session_code, room_key)
+    collab_room_history[key] = [deepcopy(evt) for evt in events]
+
+
+def _get_collab_history(session_code: str, room_key: str) -> list[dict]:
+    key = _collab_history_key(session_code, room_key)
+    return collab_room_history.get(key, [])
+
+
+def _seed_breakout_rooms_from_teacher(session_code: str, room_count: int) -> None:
+    teacher_events = _get_collab_history(session_code, "teacher-main")
+    for i in range(1, int(room_count) + 1):
+        room_key = f"room-{i}"
+        _replace_collab_history(session_code, room_key, teacher_events)
+
+
+def _clear_collab_session_history(session_code: str) -> None:
+    dead_keys = [key for key in collab_room_history.keys() if key[0] == session_code]
+    for key in dead_keys:
+        del collab_room_history[key]
+
 @app.get("/collab/{code}/me/{anon_id}")
 def collab_me(code: str, anon_id: str, db: Session = Depends(get_db)):
     s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
@@ -789,6 +826,11 @@ async def collab_room_socket(websocket: WebSocket, code: str, room_key: str):
     await collab_room_manager.connect(code, room_key, websocket)
 
     try:
+        # 1) Replay saved board history first so new joins/review panels see the board immediately
+        for evt in _get_collab_history(code, room_key):
+            await websocket.send_json(evt)
+
+        # 2) Then tell everyone someone joined
         await collab_room_manager.broadcast(code, room_key, {
             "type": "presence",
             "message": "peer_joined",
@@ -812,14 +854,22 @@ async def collab_room_socket(websocket: WebSocket, code: str, room_key: str):
                 await websocket.send_json({"type": "pong"})
                 continue
 
+            # Save only real board events
             if msg_type in {
                 "stroke",
-                "stroke-batch",
-                "cursor",
-                "clear-preview",
                 "object-create",
                 "object-update",
                 "object-delete",
+            }:
+                _append_collab_event(code, room_key, data)
+                await collab_room_manager.broadcast(code, room_key, data)
+                continue
+
+            # These are live-only and should not be persisted
+            if msg_type in {
+                "cursor",
+                "clear-preview",
+                "stroke-batch",
             }:
                 await collab_room_manager.broadcast(code, room_key, data)
                 continue
@@ -1626,6 +1676,9 @@ def collab_start(code: str, db: Session = Depends(get_db)):
     if not s:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # Copy the current teacher board into every breakout room
+    _seed_breakout_rooms_from_teacher(code, int(s.room_count or 0))
+
     s.state = "live"
     s.started_at = s.started_at or datetime.utcnow()
     s.breakout_started_at = datetime.utcnow()
@@ -1653,6 +1706,9 @@ def collab_end_session(code: str, db: Session = Depends(get_db)):
     s.state = "ended"
     s.ended_at = datetime.utcnow()
     db.commit()
+
+    _clear_collab_session_history(code)
+
     return {"message": "ended"}
 
 # =========================================================

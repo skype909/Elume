@@ -1323,8 +1323,9 @@ export default function App() {
 
   // Public routes should NOT require login
   const isPublicRoute =
-    location.pathname.startsWith("/s/") ||
-    location.pathname.startsWith("/join/");
+  location.pathname.startsWith("/s/") ||
+  location.pathname.startsWith("/join/") ||
+  location.pathname.startsWith("/collab/join/");
 
   function logout() {
     clearToken();
