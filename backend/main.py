@@ -339,11 +339,6 @@ def require_super_admin(user: models.UserModel):
     if (user.email or "").strip().lower() != "admin@elume.ie":
         raise HTTPException(status_code=403, detail="Not authorised")
 
-# =========================================================
-# DB
-# =========================================================
-Base.metadata.create_all(bind=engine)
-
 
 # =========================================================
 # WAITLIST (Elume early access)
@@ -1635,6 +1630,12 @@ def save_planner_tasks(data: dict, db: Session = Depends(get_db), user=Depends(g
 
     db.commit()
     return {"status": "ok"}
+
+# =========================================================
+# DB
+# =========================================================
+
+Base.metadata.create_all(bind=engine)
 
 # =========================================================
 # FILES / UPLOADS (ABSOLUTE + STABLE)
