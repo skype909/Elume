@@ -1545,48 +1545,58 @@ def get_teacher_planner(db: Session = Depends(get_db), user=Depends(get_current_
 
 @app.post("/teacher-planner/notes")
 def save_planner_notes(data: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    notes = data.get("notes")
+
+    if notes is None or not isinstance(notes, list):
+        raise HTTPException(status_code=400, detail="Invalid notes payload")
+
     db.query(TeacherPlannerNoteModel).filter(
         TeacherPlannerNoteModel.teacher_id == user.id
     ).delete()
 
-    for n in data.get("notes", []):
+    for n in notes:
         db.add(
-        TeacherPlannerNoteModel(
-            teacher_id=user.id,
-            week_key=n.get("weekKey"),
-            day_index=int(n.get("dayIndex", 0)),
-            slot_index=int(n.get("slotIndex", 0)),
-            title=n.get("title", ""),
-            body=n.get("body", ""),
-            relates_to_json=json.dumps(n.get("relatesTo", {"kind": "general"})),
-            updated_at=int(n.get("updatedAt", 0)),
+            TeacherPlannerNoteModel(
+                teacher_id=user.id,
+                week_key=n.get("weekKey"),
+                day_index=int(n.get("dayIndex", 0)),
+                slot_index=int(n.get("slotIndex", 0)),
+                title=n.get("title", ""),
+                body=n.get("body", ""),
+                relates_to_json=json.dumps(n.get("relatesTo", {"kind": "general"})),
+                updated_at=int(n.get("updatedAt", 0)),
+            )
         )
-    )
 
     db.commit()
     return {"status": "ok"}
 
 @app.post("/teacher-planner/tasks")
 def save_planner_tasks(data: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    tasks = data.get("tasks")
+
+    if tasks is None or not isinstance(tasks, list):
+        raise HTTPException(status_code=400, detail="Invalid tasks payload")
+
     db.query(TeacherPlannerTaskModel).filter(
         TeacherPlannerTaskModel.teacher_id == user.id
     ).delete()
 
-    for t in data.get("tasks", []):
+    for t in tasks:
         db.add(
-        TeacherPlannerTaskModel(
-            teacher_id=user.id,
-            text=t.get("text", ""),
-            due_date_iso=t.get("dueDateISO"),
-            created_at=int(t.get("createdAt", 0)),
-            done=bool(t.get("done", False)),
-            archived=bool(t.get("archived", False)),
-            archived_at=t.get("archivedAt"),
+            TeacherPlannerTaskModel(
+                teacher_id=user.id,
+                text=t.get("text", ""),
+                due_date_iso=t.get("dueDateISO"),
+                created_at=int(t.get("createdAt", 0)),
+                done=bool(t.get("done", False)),
+                archived=bool(t.get("archived", False)),
+                archived_at=t.get("archivedAt"),
+            )
         )
-    )
+
     db.commit()
     return {"status": "ok"}
-
 
 # =========================================================
 # FILES / UPLOADS (ABSOLUTE + STABLE)

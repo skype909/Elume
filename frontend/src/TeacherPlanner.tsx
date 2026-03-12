@@ -200,7 +200,7 @@ export default function TeacherPlanner() {
 
     const [notes, setNotes] = useState<PlannerNote[]>([]);
     const [tasks, setTasks] = useState<TaskItem[]>([]);
-    const [plannerLoaded, setPlannerLoaded] = useState(false);
+    const [plannerLoadState, setPlannerLoadState] = useState<"idle" | "success" | "error">("idle");
 
     // Week navigation
     const [weekMonday, setWeekMonday] = useState<Date>(() => startOfWeekMonday(new Date()));
@@ -265,19 +265,20 @@ export default function TeacherPlanner() {
     // -----------------------------
     useEffect(() => {
         let alive = true;
+
         (async () => {
             try {
                 const data = await loadPlanner();
                 if (!alive) return;
-                setNotes(data.notes);
-                setTasks(data.tasks);
-            } catch {
+
+                setNotes(Array.isArray(data.notes) ? data.notes : []);
+                setTasks(Array.isArray(data.tasks) ? data.tasks : []);
+                setPlannerLoadState("success");
+            } catch (err) {
                 if (!alive) return;
-                setNotes([]);
-                setTasks([]);
-            } finally {
-                if (!alive) return;
-                setPlannerLoaded(true);
+
+                console.error("Failed to load planner data", err);
+                setPlannerLoadState("error");
             }
         })();
 
@@ -290,15 +291,20 @@ export default function TeacherPlanner() {
     // Persist planner changes to backend
     // -----------------------------
     useEffect(() => {
-        if (!plannerLoaded) return;
-        savePlannerNotes(notes).catch(() => { });
-    }, [notes, plannerLoaded]);
+        if (plannerLoadState !== "success") return;
+
+        savePlannerNotes(notes).catch((err) => {
+            console.error("Failed to save planner notes", err);
+        });
+    }, [notes, plannerLoadState]);
 
     useEffect(() => {
-        if (!plannerLoaded) return;
-        savePlannerTasks(tasks).catch(() => { });
-    }, [tasks, plannerLoaded]);
+        if (plannerLoadState !== "success") return;
 
+        savePlannerTasks(tasks).catch((err) => {
+            console.error("Failed to save planner tasks", err);
+        });
+    }, [tasks, plannerLoadState]);
     // -----------------------------
     // Derived: week keys/dates
     // -----------------------------

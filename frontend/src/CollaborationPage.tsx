@@ -578,6 +578,63 @@ export default function CollaborationPage() {
         setTimeLeftSeconds(timerMinutes * 60);
     }
 
+    async function startBreakoutAndPersist() {
+        if (!sessionCode) return;
+
+        let nextParticipants = participants.map((p) => ({ ...p }));
+        const unassigned = nextParticipants.filter((p) => !p.roomNumber);
+
+        if (unassigned.length > 0) {
+            unassigned.forEach((p, index) => {
+                const roomNumber = (index % roomCount) + 1;
+                const target = nextParticipants.find((x) => x.id === p.id);
+                if (target) target.roomNumber = roomNumber;
+            });
+        }
+
+        const nextRooms = Array.from({ length: roomCount }, (_, i) => ({
+            roomNumber: i + 1,
+            participantIds: nextParticipants
+                .filter((p) => p.roomNumber === i + 1)
+                .map((p) => p.id),
+        }));
+
+        setParticipants(nextParticipants);
+        setRooms(nextRooms);
+
+        const assignments = nextParticipants.map((p) => ({
+            participant_id: Number(p.id),
+            room_number: p.roomNumber,
+        }));
+
+        const saveRes = await fetch(`${API_BASE}/collab/${sessionCode}/assignments`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ assignments }),
+        });
+
+        if (!saveRes.ok) {
+            const txt = await saveRes.text().catch(() => "");
+            throw new Error(txt || "Failed to save assignments.");
+        }
+
+        const startRes = await fetch(`${API_BASE}/collab/${sessionCode}/start`, {
+            method: "POST",
+        });
+
+        if (!startRes.ok) {
+            const txt = await startRes.text().catch(() => "");
+            throw new Error(txt || "Failed to start breakout.");
+        }
+
+        await fetchStatus(sessionCode);
+        await fetchParticipants(sessionCode);
+
+        setSessionState("live");
+        setShowBreakoutModal(false);
+        setTimeLeftSeconds(timerMinutes * 60);
+    }
+
     function endBreakout() {
         setSessionState("review");
         setTimeLeftSeconds(null);
@@ -742,14 +799,16 @@ export default function CollaborationPage() {
                                         <div className="flex items-center gap-2">
                                             <span>Rooms</span>
                                             <button
-                                                onClick={() => setRoomCount(Math.max(1, roomCount - 1))}
+                                                onClick={() => !sessionCode && setRoomCount(Math.max(1, roomCount - 1))}
                                                 className="px-1 text-slate-500 hover:text-slate-800"
                                             >
                                                 −
                                             </button>
+
                                             <span>{roomCount}</span>
+
                                             <button
-                                                onClick={() => setRoomCount(roomCount + 1)}
+                                                onClick={() => !sessionCode && setRoomCount(Math.min(12, roomCount + 1))}
                                                 className="px-1 text-slate-500 hover:text-slate-800"
                                             >
                                                 +
@@ -1333,6 +1392,7 @@ export default function CollaborationPage() {
                                             max={12}
                                             value={roomCount}
                                             onChange={(e) => {
+                                                if (sessionCode) return;
                                                 const value = Math.max(1, Math.min(12, Number(e.target.value || 1)));
                                                 setRoomCount(value);
                                             }}
@@ -1382,8 +1442,11 @@ export default function CollaborationPage() {
                                         <button
                                             type="button"
                                             onClick={async () => {
-                                                await postControl("start");
-                                                setShowBreakoutModal(false);
+                                                try {
+                                                    await startBreakoutAndPersist();
+                                                } catch (e: any) {
+                                                    window.alert(e?.message || "Failed to start breakout session.");
+                                                }
                                             }}
                                             className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
                                         >
