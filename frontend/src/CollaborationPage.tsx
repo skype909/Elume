@@ -81,6 +81,24 @@ function cls(...parts: Array<string | false | null | undefined>) {
     return parts.filter(Boolean).join(" ");
 }
 
+function buildRoomsFromParticipants(participants: CollabParticipant[], roomCount: number): BreakoutRoom[] {
+    return Array.from({ length: roomCount }, (_, i) => ({
+        roomNumber: i + 1,
+        participantIds: participants.filter((p) => p.roomNumber === i + 1).map((p) => p.id),
+    }));
+}
+
+function autoAssignParticipants(participants: CollabParticipant[], roomCount: number): CollabParticipant[] {
+    const next = participants.map((p) => ({ ...p }));
+    const unassigned = next.filter((p) => p.roomNumber == null);
+
+    unassigned.forEach((p, index) => {
+        p.roomNumber = (index % roomCount) + 1;
+    });
+
+    return next;
+}
+
 function JoinChip({
     label,
     value,
@@ -92,9 +110,7 @@ function JoinChip({
 }) {
     return (
         <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
-            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                {label}
-            </div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
             <div className="mt-1 break-all text-sm font-semibold text-slate-800">{value}</div>
             <button
                 type="button"
@@ -104,70 +120,6 @@ function JoinChip({
                 Copy
             </button>
         </div>
-    );
-}
-
-function StatTile({
-    label,
-    value,
-    tone = "slate",
-}: {
-    label: string;
-    value: React.ReactNode;
-    tone?: "slate" | "emerald" | "violet" | "cyan";
-}) {
-    const toneMap = {
-        slate: "from-white to-slate-50 border-slate-200 text-slate-900",
-        emerald: "from-emerald-50 to-white border-emerald-200 text-emerald-900",
-        violet: "from-violet-50 to-white border-violet-200 text-violet-900",
-        cyan: "from-cyan-50 to-white border-cyan-200 text-cyan-900",
-    };
-
-    return (
-        <div className={cls("rounded-3xl border bg-gradient-to-br p-4 shadow-sm", toneMap[tone])}>
-            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                {label}
-            </div>
-            <div className="mt-2 text-3xl font-black tracking-tight">{value}</div>
-        </div>
-    );
-}
-
-function ToolButton({
-    active,
-    label,
-    icon,
-    onClick,
-}: {
-    active?: boolean;
-    label: string;
-    icon: string;
-    onClick: () => void;
-}) {
-    return (
-        <button
-            type="button"
-            title={label}
-            onClick={onClick}
-            className={cls(
-                "group flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left shadow-sm transition",
-                active
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-100"
-                    : "border-slate-200 bg-white/90 text-slate-800 hover:-translate-y-0.5 hover:bg-slate-50"
-            )}
-        >
-            <div
-                className={cls(
-                    "grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-lg font-black",
-                    active ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"
-                )}
-            >
-                {icon}
-            </div>
-            <div className="min-w-0">
-                <div className="truncate text-sm font-black">{label}</div>
-            </div>
-        </button>
     );
 }
 
@@ -212,7 +164,6 @@ export default function CollaborationPage() {
     const [highlightColor, setHighlightColor] = useState<HighlightColor>("yellow");
 
     const [showJoinModal, setShowJoinModal] = useState(false);
-    const [showAssignRooms, setShowAssignRooms] = useState(false);
     const [showBreakoutModal, setShowBreakoutModal] = useState(false);
     const [showPdfModal, setShowPdfModal] = useState(false);
 
@@ -224,12 +175,14 @@ export default function CollaborationPage() {
     const [sessionCode, setSessionCode] = useState<string>("");
     const [status, setStatus] = useState<CollabStatus | null>(null);
     const [statusError, setStatusError] = useState<string | null>(null);
+    const [isCreating, setIsCreating] = useState(false);
+    const [isStartingBreakout, setIsStartingBreakout] = useState(false);
+
     const pollRef = useRef<number | null>(null);
+    const joinCodeRef = useRef("");
+
     const [rooms, setRooms] = useState<BreakoutRoom[]>(
-        Array.from({ length: 4 }, (_, i) => ({
-            roomNumber: i + 1,
-            participantIds: [],
-        }))
+        Array.from({ length: 4 }, (_, i) => ({ roomNumber: i + 1, participantIds: [] }))
     );
 
     const [reviewPanels, setReviewPanels] = useState<ReviewPanel[]>([
@@ -239,13 +192,18 @@ export default function CollaborationPage() {
         { id: uid("panel"), selectedBoard: "room-4" },
     ]);
 
-    const boardRef = useRef<HTMLDivElement | null>(null);
-
     const joinCode = sessionCode;
+    const hasSession = Boolean(joinCode);
+
+    useEffect(() => {
+        joinCodeRef.current = joinCode;
+    }, [joinCode]);
+
     const joinUrl = useMemo(
         () => (joinCode ? `${window.location.origin}/#/collab/join/${joinCode}` : ""),
         [joinCode]
     );
+
     const qrUrl = useMemo(
         () =>
             `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(joinUrl)}`,
@@ -266,20 +224,29 @@ export default function CollaborationPage() {
     }, []);
 
     useEffect(() => {
-        if (!sessionCode) return;
+        if (!joinCode) {
+            stopPolling();
+            return;
+        }
 
         stopPolling();
 
-        pollRef.current = window.setInterval(() => {
-            fetchStatus(sessionCode);
+        void fetchStatus(joinCode);
+        if (!showBreakoutModal) {
+            void fetchParticipants(joinCode);
+        }
 
+        pollRef.current = window.setInterval(() => {
+            const currentCode = joinCodeRef.current;
+            if (!currentCode) return;
+            void fetchStatus(currentCode);
             if (!showBreakoutModal) {
-                fetchParticipants(sessionCode);
+                void fetchParticipants(currentCode);
             }
         }, 1000);
 
         return () => stopPolling();
-    }, [sessionCode, showBreakoutModal]);
+    }, [joinCode, showBreakoutModal]);
 
     useEffect(() => {
         setRooms((prev) => {
@@ -299,8 +266,11 @@ export default function CollaborationPage() {
     }, [roomCount]);
 
     useEffect(() => {
-        if (timeLeftSeconds === null) return;
-        if (timeLeftSeconds <= 0) return;
+        setRooms(buildRoomsFromParticipants(participants, roomCount));
+    }, [participants, roomCount]);
+
+    useEffect(() => {
+        if (timeLeftSeconds === null || timeLeftSeconds <= 0) return;
 
         const timer = window.setInterval(() => {
             setTimeLeftSeconds((curr) => {
@@ -315,6 +285,13 @@ export default function CollaborationPage() {
 
         return () => window.clearInterval(timer);
     }, [timeLeftSeconds]);
+
+    function stopPolling() {
+        if (pollRef.current !== null) {
+            window.clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
+    }
 
     function copyToClipboard(text: string) {
         if (navigator.clipboard?.writeText) {
@@ -331,96 +308,73 @@ export default function CollaborationPage() {
         document.body.removeChild(ta);
     }
 
-    function randomEvenSplit() {
-        const shuffled = [...participants].sort(() => Math.random() - 0.5);
-        const nextRooms = Array.from({ length: roomCount }, (_, i) => ({
-            roomNumber: i + 1,
-            participantIds: [] as string[],
+    function formatTime(totalSeconds: number | null) {
+        if (totalSeconds === null) return "—";
+        const mins = Math.floor(totalSeconds / 60);
+        const secs = totalSeconds % 60;
+        return `${mins}:${String(secs).padStart(2, "0")}`;
+    }
+
+    async function fetchStatus(code: string) {
+        try {
+            const res = await fetch(`${API_BASE}/collab/${code}/status`);
+            if (!res.ok) throw new Error("Status unavailable.");
+            const data = (await res.json()) as CollabStatus;
+            setStatus(data);
+            setSessionState(data.state);
+
+            // Only hydrate from backend before a teacher edits locally,
+            // or if you want backend to remain the source of truth.
+            // For now: do not force roomCount back on every poll.
+            setTimeLeftSeconds(data.time_left_seconds ?? null);
+            setStatusError(null);
+        } catch (e: any) {
+            setStatusError(e?.message || "Status unavailable.");
+        }
+    }
+
+    async function fetchParticipants(code: string) {
+        try {
+            const res = await fetch(`${API_BASE}/collab/${code}/participants`);
+            if (!res.ok) throw new Error("Participants unavailable.");
+            const data = await res.json();
+            const list = (data?.participants || []) as CollabParticipantApi[];
+            setParticipants(
+                list.map((p) => ({
+                    id: String(p.id),
+                    name: p.name,
+                    joinedAt: "",
+                    roomNumber: p.room_number,
+                    isOnline: p.is_online,
+                }))
+            );
+        } catch {
+            // ignore small participant refresh errors for now
+        }
+    }
+
+    async function persistAssignments(code: string, nextParticipants: CollabParticipant[]) {
+        const assignments = nextParticipants.map((p) => ({
+            participant_id: Number(p.id),
+            room_number: p.roomNumber,
         }));
 
-        shuffled.forEach((p, idx) => {
-            nextRooms[idx % roomCount].participantIds.push(p.id);
+        const res = await fetch(`${API_BASE}/collab/${code}/assignments`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ assignments }),
         });
 
-        setRooms(nextRooms);
-        setParticipants((prev) =>
-            prev.map((p) => {
-                const room = nextRooms.find((r) => r.participantIds.includes(p.id));
-                return { ...p, roomNumber: room?.roomNumber ?? null };
-            })
-        );
-    }
-
-    function clearAssignments() {
-        setRooms((prev) => prev.map((r) => ({ ...r, participantIds: [] })));
-        setParticipants((prev) => prev.map((p) => ({ ...p, roomNumber: null })));
-    }
-
-    function assignParticipantToRoom(participantId: string, roomNumber: number | null) {
-        setRooms((prev) =>
-            prev.map((r) => ({
-                ...r,
-                participantIds:
-                    roomNumber === r.roomNumber
-                        ? Array.from(new Set([...r.participantIds.filter((id) => id !== participantId), participantId]))
-                        : r.participantIds.filter((id) => id !== participantId),
-            }))
-        );
-
-        setParticipants((prev) =>
-            prev.map((p) => (p.id === participantId ? { ...p, roomNumber } : p))
-        );
-    }
-
-    async function assignAndSave(participantId: string, roomNumber: number | null) {
-        const nextParticipants = participants.map((p) =>
-            p.id === participantId ? { ...p, roomNumber } : p
-        );
-
-        setRooms((prev) =>
-            prev.map((r) => ({
-                ...r,
-                participantIds:
-                    roomNumber === r.roomNumber
-                        ? Array.from(
-                            new Set([
-                                ...r.participantIds.filter((id) => id !== participantId),
-                                participantId,
-                            ])
-                        )
-                        : r.participantIds.filter((id) => id !== participantId),
-            }))
-        );
-
-        setParticipants(nextParticipants);
-
-        if (!sessionCode) return;
-
-        try {
-            const assignments = nextParticipants.map((p) => ({
-                participant_id: Number(p.id),
-                room_number: p.roomNumber,
-            }));
-
-            const res = await fetch(`${API_BASE}/collab/${sessionCode}/assignments`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ assignments }),
-            });
-
-            if (!res.ok) {
-                const txt = await res.text().catch(() => "");
-                throw new Error(txt || "Failed to save assignments.");
-            }
-
-            await fetchParticipants(sessionCode);
-            await fetchStatus(sessionCode);
-        } catch (e: any) {
-            window.alert(e?.message || "Failed to save assignments.");
+        if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            throw new Error(txt || "Failed to save assignments.");
         }
     }
 
     async function createSession() {
+        if (isCreating) return;
+        setIsCreating(true);
+
         try {
             const res = await fetch(`${API_BASE}/collab/create`, {
                 method: "POST",
@@ -439,200 +393,111 @@ export default function CollaborationPage() {
             }
 
             const data = (await res.json()) as CollabCreateResponse;
+            if (!data.session_code) {
+                throw new Error("Backend returned no session code.");
+            }
+
             setSessionCode(data.session_code);
             setSessionState("lobby");
-            await fetchStatus(data.session_code);
-            await fetchParticipants(data.session_code);
+            await Promise.all([fetchStatus(data.session_code), fetchParticipants(data.session_code)]);
             setShowJoinModal(true);
         } catch (e: any) {
             window.alert(e?.message || "Failed to create collaboration session.");
+        } finally {
+            setIsCreating(false);
         }
     }
 
-    async function fetchStatus(code: string) {
-        try {
-            const res = await fetch(`${API_BASE}/collab/${code}/status`);
-            if (!res.ok) throw new Error("Status unavailable.");
-            const data = (await res.json()) as CollabStatus;
-            setStatus(data);
-            setSessionState(data.state);
-            setRoomCount(data.room_count);
-            setTimeLeftSeconds(data.time_left_seconds ?? null);
-            setStatusError(null);
-        } catch (e: any) {
-            setStatusError(e?.message || "Status unavailable.");
+    async function assignAndSave(participantId: string, roomNumber: number | null) {
+        const code = joinCodeRef.current;
+        if (!code) {
+            window.alert("Create a session first.");
+            return;
         }
-    }
 
-    async function fetchParticipants(code: string) {
-        try {
-            const res = await fetch(`${API_BASE}/collab/${code}/participants`);
-            if (!res.ok) throw new Error("Participants unavailable.");
+        const nextParticipants = participants.map((p) =>
+            p.id === participantId ? { ...p, roomNumber } : p
+        );
 
-            const data = await res.json();
-            const list = (data?.participants || []) as CollabParticipantApi[];
-
-            setParticipants(
-                list.map((p) => ({
-                    id: String(p.id),
-                    name: p.name,
-                    joinedAt: "",
-                    roomNumber: p.room_number,
-                    isOnline: p.is_online,
-                }))
-            );
-        } catch (e) {
-            // ignore small participant refresh errors for now
-        }
-    }
-
-    function stopPolling() {
-        if (pollRef.current) {
-            window.clearInterval(pollRef.current);
-            pollRef.current = null;
-        }
-    }
-
-
-    async function postControl(action: "start" | "end" | "end-session") {
-        if (!sessionCode) return;
+        setParticipants(nextParticipants);
 
         try {
-            const res = await fetch(`${API_BASE}/collab/${sessionCode}/${action}`, {
-                method: "POST",
-            });
-
-            if (!res.ok) {
-                const txt = await res.text().catch(() => "");
-                throw new Error(txt || "Control action failed.");
-            }
-
-            await fetchStatus(sessionCode);
-            await fetchParticipants(sessionCode);
-        } catch (e: any) {
-            window.alert(e?.message || "Control action failed.");
-        }
-    }
-
-    async function saveAssignments() {
-        if (!sessionCode) return;
-
-        const assignments = participants.map((p) => ({
-            participant_id: Number(p.id),
-            room_number: p.roomNumber,
-        }));
-
-        try {
-            const res = await fetch(`${API_BASE}/collab/${sessionCode}/assignments`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ assignments }),
-            });
-
-            if (!res.ok) {
-                const txt = await res.text().catch(() => "");
-                throw new Error(txt || "Failed to save assignments.");
-            }
-
-            await fetchParticipants(sessionCode);
-            await fetchStatus(sessionCode);
+            await persistAssignments(code, nextParticipants);
+            await Promise.all([fetchParticipants(code), fetchStatus(code)]);
         } catch (e: any) {
             window.alert(e?.message || "Failed to save assignments.");
         }
     }
 
-    function startLobby() {
-        setSessionState("lobby");
-    }
-
-    function openAssigning() {
-        setSessionState("assigning");
-        setShowBreakoutModal(true);
-    }
-
-    function startBreakout() {
-        const unassigned = participants.filter((p) => !p.roomNumber);
-
-        if (unassigned.length > 0) {
-            const nextParticipants = participants.map((p) => ({ ...p }));
-
-            unassigned.forEach((p, index) => {
-                const roomNumber = (index % roomCount) + 1;
-                const target = nextParticipants.find((x) => x.id === p.id);
-                if (target) target.roomNumber = roomNumber;
-            });
-
-            const nextRooms = Array.from({ length: roomCount }, (_, i) => ({
-                roomNumber: i + 1,
-                participantIds: nextParticipants
-                    .filter((p) => p.roomNumber === i + 1)
-                    .map((p) => p.id),
-            }));
-
-            setParticipants(nextParticipants);
-            setRooms(nextRooms);
+    async function saveAssignments() {
+        const code = joinCodeRef.current;
+        if (!code) {
+            window.alert("Create a session first.");
+            return;
         }
 
-        setSessionState("live");
-        setShowBreakoutModal(false);
-        setTimeLeftSeconds(timerMinutes * 60);
+        try {
+            await persistAssignments(code, participants);
+            await Promise.all([fetchParticipants(code), fetchStatus(code)]);
+        } catch (e: any) {
+            window.alert(e?.message || "Failed to save assignments.");
+        }
+    }
+
+    function randomEvenSplit() {
+        const shuffled = [...participants].sort(() => Math.random() - 0.5);
+        const nextParticipants = shuffled.map((p, idx) => ({
+            ...p,
+            roomNumber: (idx % roomCount) + 1,
+        }));
+
+        const restoredOrder = participants.map((original) => {
+            const updated = nextParticipants.find((p) => p.id === original.id);
+            return updated || original;
+        });
+
+        setParticipants(restoredOrder);
+    }
+
+    function clearAssignments() {
+        setParticipants((prev) => prev.map((p) => ({ ...p, roomNumber: null })));
     }
 
     async function startBreakoutAndPersist() {
-        if (!sessionCode) return;
+        const code = joinCodeRef.current;
+        if (!code) {
+            throw new Error("No session code available. Create the session first.");
+        }
 
-        let nextParticipants = participants.map((p) => ({ ...p }));
-        const unassigned = nextParticipants.filter((p) => !p.roomNumber);
+        if (isStartingBreakout) return;
+        setIsStartingBreakout(true);
 
-        if (unassigned.length > 0) {
-            unassigned.forEach((p, index) => {
-                const roomNumber = (index % roomCount) + 1;
-                const target = nextParticipants.find((x) => x.id === p.id);
-                if (target) target.roomNumber = roomNumber;
+        try {
+            const nextParticipants = autoAssignParticipants(participants, roomCount);
+
+            setParticipants(nextParticipants);
+            setRooms(buildRoomsFromParticipants(nextParticipants, roomCount));
+
+            await persistAssignments(code, nextParticipants);
+
+            const startRes = await fetch(`${API_BASE}/collab/${code}/start`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ timer_minutes: timerMinutes, room_count: roomCount }),
             });
+
+            if (!startRes.ok) {
+                const txt = await startRes.text().catch(() => "");
+                throw new Error(txt || "Failed to start breakout.");
+            }
+
+            await Promise.all([fetchStatus(code), fetchParticipants(code)]);
+            setSessionState("live");
+            setShowBreakoutModal(false);
+            setTimeLeftSeconds(timerMinutes * 60);
+        } finally {
+            setIsStartingBreakout(false);
         }
-
-        const nextRooms = Array.from({ length: roomCount }, (_, i) => ({
-            roomNumber: i + 1,
-            participantIds: nextParticipants
-                .filter((p) => p.roomNumber === i + 1)
-                .map((p) => p.id),
-        }));
-
-        setParticipants(nextParticipants);
-        setRooms(nextRooms);
-
-        const assignments = nextParticipants.map((p) => ({
-            participant_id: Number(p.id),
-            room_number: p.roomNumber,
-        }));
-
-        const saveRes = await fetch(`${API_BASE}/collab/${sessionCode}/assignments`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ assignments }),
-        });
-
-        if (!saveRes.ok) {
-            const txt = await saveRes.text().catch(() => "");
-            throw new Error(txt || "Failed to save assignments.");
-        }
-
-        const startRes = await fetch(`${API_BASE}/collab/${sessionCode}/start`, {
-            method: "POST",
-        });
-
-        if (!startRes.ok) {
-            const txt = await startRes.text().catch(() => "");
-            throw new Error(txt || "Failed to start breakout.");
-        }
-
-        await fetchStatus(sessionCode);
-        await fetchParticipants(sessionCode);
-
-        setSessionState("live");
-        setShowBreakoutModal(false);
-        setTimeLeftSeconds(timerMinutes * 60);
     }
 
     function endBreakout() {
@@ -646,13 +511,6 @@ export default function CollaborationPage() {
 
     function downloadTeacherPng() {
         window.alert("Teacher PNG export hook goes here.");
-    }
-
-    function formatTime(totalSeconds: number | null) {
-        if (totalSeconds === null) return "—";
-        const mins = Math.floor(totalSeconds / 60);
-        const secs = totalSeconds % 60;
-        return `${mins}:${String(secs).padStart(2, "0")}`;
     }
 
     const assignedCount = participants.filter((p) => p.roomNumber !== null).length;
@@ -671,10 +529,7 @@ export default function CollaborationPage() {
                 <div className="mx-auto max-w-[1700px]">
                     <div className="mb-3 rounded-[22px] border border-white/70 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-xl md:px-5">
                         <div className="flex flex-col gap-2">
-
-                            {/* TOP ROW */}
                             <div className="flex flex-wrap items-center justify-between gap-3">
-
                                 <div className="flex items-center gap-3">
                                     <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-white/70 bg-white shadow-md ring-1 ring-emerald-100">
                                         <img src={elumeLogo} alt="Elume" className="h-9 w-9 object-contain" />
@@ -685,27 +540,28 @@ export default function CollaborationPage() {
                                             Live collaboration
                                         </div>
 
-                                        <h1 className="text-lg font-bold text-slate-900 md:text-xl">
-                                            Collaboration Whiteboard
-                                        </h1>
+                                        <h1 className="text-lg font-bold text-slate-900 md:text-xl">Collaboration Whiteboard</h1>
                                     </div>
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-2">
-
                                     <button
                                         onClick={createSession}
-                                        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-black text-white shadow hover:bg-emerald-700"
+                                        disabled={isCreating || hasSession}
+                                        className={cls(
+                                            "rounded-lg px-4 py-2 text-sm font-black text-white shadow",
+                                            isCreating || hasSession ? "bg-emerald-300 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700"
+                                        )}
                                     >
-                                        Create session
+                                        {hasSession ? "Session created" : isCreating ? "Creating..." : "Create session"}
                                     </button>
 
                                     <button
-                                        onClick={() => sessionCode && setShowJoinModal(true)}
-                                        disabled={!sessionCode}
+                                        onClick={() => hasSession && setShowJoinModal(true)}
+                                        disabled={!hasSession}
                                         className={cls(
                                             "rounded-lg border px-4 py-2 text-sm font-black",
-                                            sessionCode
+                                            hasSession
                                                 ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
                                                 : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
                                         )}
@@ -714,11 +570,11 @@ export default function CollaborationPage() {
                                     </button>
 
                                     <button
-                                        onClick={() => setShowAssignRooms(true)}
-                                        disabled={!sessionCode}
+                                        onClick={() => setShowBreakoutModal(true)}
+                                        disabled={!hasSession}
                                         className={cls(
                                             "rounded-lg border px-4 py-2 text-sm font-black",
-                                            sessionCode
+                                            hasSession
                                                 ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
                                                 : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
                                         )}
@@ -727,24 +583,41 @@ export default function CollaborationPage() {
                                     </button>
 
                                     <button
-                                        onClick={startBreakout}
-                                        disabled={!sessionCode}
-                                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 hover:bg-slate-50"
+                                        onClick={() => setShowBreakoutModal(true)}
+                                        disabled={!hasSession}
+                                        className={cls(
+                                            "rounded-lg border px-4 py-2 text-sm font-black",
+                                            hasSession
+                                                ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                                                : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                        )}
                                     >
                                         Start breakout
                                     </button>
 
                                     <button
                                         onClick={endBreakout}
-                                        disabled={!sessionCode}
+                                        disabled={!hasSession}
                                         className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 hover:bg-slate-50"
                                     >
                                         End breakout
                                     </button>
 
                                     <button
-                                        disabled
-                                        className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-black text-rose-300"
+                                        onClick={async () => {
+                                            try {
+                                                await fetch(`${API_BASE}/collab/${joinCodeRef.current}/end`, { method: "POST" });
+                                                await Promise.all([
+                                                    fetchStatus(joinCodeRef.current),
+                                                    fetchParticipants(joinCodeRef.current),
+                                                ]);
+                                                setSessionState("ended");
+                                            } catch (e: any) {
+                                                window.alert(e?.message || "Failed to end session.");
+                                            }
+                                        }}
+                                        disabled={!hasSession}
+                                        className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-black text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:text-rose-300"
                                     >
                                         End session
                                     </button>
@@ -762,20 +635,15 @@ export default function CollaborationPage() {
                                     >
                                         Save
                                     </button>
-
                                 </div>
                             </div>
 
-
-                            {/* SECOND ROW */}
                             <div className="flex flex-wrap items-center justify-between gap-2">
-
                                 <p className="max-w-xl text-sm text-slate-600">
                                     Live teacher board with student joining breakout rooms, and shared whiteboards.
                                 </p>
 
                                 <div className="flex flex-wrap items-center gap-2">
-
                                     <button
                                         onClick={() => window.dispatchEvent(new Event("collab-clear-board"))}
                                         className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-800 hover:bg-slate-50"
@@ -796,34 +664,23 @@ export default function CollaborationPage() {
                                     </div>
 
                                     <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-800">
-                                        <div className="flex items-center gap-2">
-                                            <span>Rooms</span>
-                                            <button
-                                                onClick={() => !sessionCode && setRoomCount(Math.max(1, roomCount - 1))}
-                                                className="px-1 text-slate-500 hover:text-slate-800"
-                                            >
-                                                −
-                                            </button>
-
-                                            <span>{roomCount}</span>
-
-                                            <button
-                                                onClick={() => !sessionCode && setRoomCount(Math.min(12, roomCount + 1))}
-                                                className="px-1 text-slate-500 hover:text-slate-800"
-                                            >
-                                                +
-                                            </button>
-                                        </div>
+                                        Rooms {roomCount}
                                     </div>
+
                                     <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">
                                         Timer: {formatTime(status?.time_left_seconds ?? timeLeftSeconds)}
                                     </div>
 
+                                    {statusError ? (
+                                        <div className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
+                                            {statusError}
+                                        </div>
+                                    ) : null}
                                 </div>
                             </div>
-
                         </div>
                     </div>
+
                     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[220px_minmax(0,1fr)_320px]">
                         <div className="sticky top-4 self-start">
                             <div className="rounded-[24px] border border-white/70 bg-white/90 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl">
@@ -835,137 +692,32 @@ export default function CollaborationPage() {
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("select")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "select"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">✋</span>
-                                        <span>Select</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("pen")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "pen"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">✎</span>
-                                        <span>Pen</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("eraser")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "eraser"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">⌫</span>
-                                        <span>Erase</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("highlighter")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "highlighter"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">🖍️</span>
-                                        <span>Mark</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("rectangle")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "rectangle"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">▭</span>
-                                        <span>Rect</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("circle")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "circle"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">◯</span>
-                                        <span>Circle</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("triangle")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "triangle"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">△</span>
-                                        <span>Tri</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("sticky")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "sticky"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">🗒️</span>
-                                        <span>Sticky</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("arrow")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "arrow"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">➜</span>
-                                        <span>Arrow</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("curved-arrow")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "curved-arrow"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">↷</span>
-                                        <span>Curve</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setTool("speech")}
-                                        className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === "speech"
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                            }`}
-                                    >
-                                        <span className="text-lg">💬</span>
-                                        <span>Speech</span>
-                                    </button>
+                                    {[
+                                        ["select", "✋", "Select"],
+                                        ["pen", "✎", "Pen"],
+                                        ["eraser", "⌫", "Erase"],
+                                        ["highlighter", "🖍️", "Mark"],
+                                        ["rectangle", "▭", "Rect"],
+                                        ["circle", "◯", "Circle"],
+                                        ["triangle", "△", "Tri"],
+                                        ["sticky", "🗒️", "Sticky"],
+                                        ["arrow", "➜", "Arrow"],
+                                        ["curved-arrow", "↷", "Curve"],
+                                        ["speech", "💬", "Speech"],
+                                    ].map(([key, icon, label]) => (
+                                        <button
+                                            key={key}
+                                            type="button"
+                                            onClick={() => setTool(key as ToolKey)}
+                                            className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === key
+                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                                }`}
+                                        >
+                                            <span className="text-lg">{icon}</span>
+                                            <span>{label}</span>
+                                        </button>
+                                    ))}
 
                                     <button
                                         type="button"
@@ -978,9 +730,7 @@ export default function CollaborationPage() {
                                 </div>
 
                                 <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-                                    <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
-                                        Tool settings
-                                    </div>
+                                    <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Tool settings</div>
 
                                     {tool === "pen" && (
                                         <div className="space-y-3">
@@ -1054,10 +804,8 @@ export default function CollaborationPage() {
                                         </div>
                                     )}
 
-                                    {!["pen", "eraser", "highlighter"].includes(tool) && (
-                                        <div className="text-xs font-semibold text-slate-600">
-                                            Select the tool and use the board directly.
-                                        </div>
+                                    {!['pen', 'eraser', 'highlighter'].includes(tool) && (
+                                        <div className="text-xs font-semibold text-slate-600">Select the tool and use the board directly.</div>
                                     )}
                                 </div>
 
@@ -1065,18 +813,24 @@ export default function CollaborationPage() {
                                     <button
                                         type="button"
                                         onClick={() => setShowBreakoutModal(true)}
-                                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-xs font-black text-slate-800 shadow-sm transition hover:bg-slate-50"
+                                        disabled={!hasSession}
+                                        className={cls(
+                                            "w-full rounded-2xl border px-3 py-3 text-xs font-black shadow-sm transition",
+                                            hasSession
+                                                ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                                                : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                        )}
                                     >
                                         Breakout rooms
                                     </button>
 
                                     <button
                                         type="button"
-                                        onClick={() => sessionCode && setShowJoinModal(true)}
-                                        disabled={!sessionCode}
+                                        onClick={() => hasSession && setShowJoinModal(true)}
+                                        disabled={!hasSession}
                                         className={cls(
                                             "w-full rounded-2xl border px-3 py-3 text-xs font-black shadow-sm transition",
-                                            sessionCode
+                                            hasSession
                                                 ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
                                                 : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
                                         )}
@@ -1113,39 +867,45 @@ export default function CollaborationPage() {
                             >
                                 {sessionState !== "review" ? (
                                     <div className="relative">
-                                        <CollabBoard
-                                            sessionCode={joinCode}
-                                            roomKey="teacher-main"
-                                            participantId="teacher"
-                                            tool={
-                                                tool === "highlighter"
-                                                    ? "highlighter"
-                                                    : tool === "eraser"
-                                                        ? "eraser"
-                                                        : tool === "select"
-                                                            ? "select"
-                                                            : tool === "rectangle"
-                                                                ? "rectangle"
-                                                                : tool === "circle"
-                                                                    ? "circle"
-                                                                    : tool === "triangle"
-                                                                        ? "triangle"
-                                                                        : tool === "sticky"
-                                                                            ? "sticky"
-                                                                            : tool === "arrow"
-                                                                                ? "arrow"
-                                                                                : tool === "curved-arrow"
-                                                                                    ? "curved-arrow"
-                                                                                    : tool === "speech"
-                                                                                        ? "speech"
-                                                                                        : "pen"
-                                            }
-                                            penColor={penColor}
-                                            penSize={penSize}
-                                            highlighterColor={highlightColor}
-                                            eraserSize={eraserSize}
-                                            height={760}
-                                        />
+                                        {hasSession ? (
+                                            <CollabBoard
+                                                sessionCode={joinCode}
+                                                roomKey="teacher-main"
+                                                participantId="teacher"
+                                                tool={
+                                                    tool === "highlighter"
+                                                        ? "highlighter"
+                                                        : tool === "eraser"
+                                                            ? "eraser"
+                                                            : tool === "select"
+                                                                ? "select"
+                                                                : tool === "rectangle"
+                                                                    ? "rectangle"
+                                                                    : tool === "circle"
+                                                                        ? "circle"
+                                                                        : tool === "triangle"
+                                                                            ? "triangle"
+                                                                            : tool === "sticky"
+                                                                                ? "sticky"
+                                                                                : tool === "arrow"
+                                                                                    ? "arrow"
+                                                                                    : tool === "curved-arrow"
+                                                                                        ? "curved-arrow"
+                                                                                        : tool === "speech"
+                                                                                            ? "speech"
+                                                                                            : "pen"
+                                                }
+                                                penColor={penColor}
+                                                penSize={penSize}
+                                                highlighterColor={highlightColor}
+                                                eraserSize={eraserSize}
+                                                height={760}
+                                            />
+                                        ) : (
+                                            <div className="grid min-h-[760px] place-items-center rounded-[28px] border border-dashed border-slate-300 bg-slate-50 text-slate-500">
+                                                Create a session to start the teacher board.
+                                            </div>
+                                        )}
 
                                         {timeLeftSeconds !== null && sessionState === "live" && (
                                             <div className="absolute right-4 top-4 rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-black text-violet-800 shadow-sm">
@@ -1156,24 +916,15 @@ export default function CollaborationPage() {
                                 ) : (
                                     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                                         {reviewPanels.map((panel, idx) => (
-                                            <div
-                                                key={panel.id}
-                                                className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm"
-                                            >
+                                            <div key={panel.id} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
                                                 <div className="mb-3 flex items-center justify-between gap-3">
-                                                    <div className="text-sm font-black text-slate-900">
-                                                        Review Panel {idx + 1}
-                                                    </div>
+                                                    <div className="text-sm font-black text-slate-900">Review Panel {idx + 1}</div>
 
                                                     <select
                                                         value={panel.selectedBoard}
                                                         onChange={(e) =>
                                                             setReviewPanels((prev) =>
-                                                                prev.map((p) =>
-                                                                    p.id === panel.id
-                                                                        ? { ...p, selectedBoard: e.target.value }
-                                                                        : p
-                                                                )
+                                                                prev.map((p) => (p.id === panel.id ? { ...p, selectedBoard: e.target.value } : p))
                                                             )
                                                         }
                                                         className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm outline-none"
@@ -1191,26 +942,28 @@ export default function CollaborationPage() {
                                                         {boardOptions.find((b) => b.value === panel.selectedBoard)?.label || "Board"}
                                                     </div>
 
-                                                    <CollabBoard
-                                                        sessionCode={joinCode}
-                                                        roomKey={panel.selectedBoard}
-                                                        participantId={`review-${panel.id}`}
-                                                        tool="select"
-                                                        penColor={penColor}
-                                                        penSize={penSize}
-                                                        highlighterColor={highlightColor}
-                                                        eraserSize={eraserSize}
-                                                        height={300}
-                                                        readOnly
-                                                    />
+                                                    {hasSession ? (
+                                                        <CollabBoard
+                                                            sessionCode={joinCode}
+                                                            roomKey={panel.selectedBoard}
+                                                            participantId={`review-${panel.id}`}
+                                                            tool="select"
+                                                            penColor={penColor}
+                                                            penSize={penSize}
+                                                            highlighterColor={highlightColor}
+                                                            eraserSize={eraserSize}
+                                                            height={300}
+                                                            readOnly
+                                                        />
+                                                    ) : (
+                                                        <div className="grid min-h-[300px] place-items-center text-slate-500">No session.</div>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
                                 )}
                             </SectionCard>
-
-
                         </div>
 
                         <SectionCard
@@ -1233,16 +986,11 @@ export default function CollaborationPage() {
 
                             <div className="space-y-3">
                                 {participants.map((p) => (
-                                    <div
-                                        key={p.id}
-                                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
-                                    >
+                                    <div key={p.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                                         <div className="flex items-start justify-between gap-3">
                                             <div className="min-w-0">
                                                 <div className="truncate text-sm font-black text-slate-900">{p.name}</div>
-                                                <div className="mt-1 text-xs font-semibold text-slate-500">
-                                                    {p.isOnline ? "Online" : "Offline"}
-                                                </div>
+                                                <div className="mt-1 text-xs font-semibold text-slate-500">{p.isOnline ? "Online" : "Offline"}</div>
                                             </div>
 
                                             <div
@@ -1300,12 +1048,8 @@ export default function CollaborationPage() {
                     <div className="w-full max-w-3xl rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">
-                                    Student Join
-                                </div>
-                                <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">
-                                    Invite students to collaboration
-                                </h3>
+                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">Student Join</div>
+                                <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">Invite students to collaboration</h3>
                                 <p className="mt-2 text-sm leading-6 text-slate-600">
                                     Keep this as a modal so the whiteboard stays fully visible during teaching.
                                 </p>
@@ -1332,16 +1076,8 @@ export default function CollaborationPage() {
                             </div>
 
                             <div className="space-y-4">
-                                <JoinChip
-                                    label="Session code"
-                                    value={joinCode || "Create session first"}
-                                    onCopy={() => joinCode && copyToClipboard(joinCode)}
-                                />
-                                <JoinChip
-                                    label="Join link"
-                                    value={joinUrl || "Create session first"}
-                                    onCopy={() => joinUrl && copyToClipboard(joinUrl)}
-                                />
+                                <JoinChip label="Session code" value={joinCode || "Create session first"} onCopy={() => joinCode && copyToClipboard(joinCode)} />
+                                <JoinChip label="Join link" value={joinUrl || "Create session first"} onCopy={() => joinUrl && copyToClipboard(joinUrl)} />
 
                                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
                                     Students can join by QR, direct link, or session code.
@@ -1357,12 +1093,8 @@ export default function CollaborationPage() {
                     <div className="w-full max-w-6xl rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-violet-700">
-                                    Breakout Rooms
-                                </div>
-                                <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">
-                                    Setup breakout collaboration
-                                </h3>
+                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-violet-700">Breakout Rooms</div>
+                                <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">Setup breakout collaboration</h3>
                                 <p className="mt-2 text-sm leading-6 text-slate-600">
                                     Choose room count, assign students, start timer, then launch room boards copied from the teacher board.
                                 </p>
@@ -1386,24 +1118,26 @@ export default function CollaborationPage() {
                                         <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
                                             Number of rooms
                                         </div>
+
                                         <input
                                             type="number"
                                             min={1}
                                             max={12}
                                             value={roomCount}
+                                            disabled={sessionState === "live" || sessionState === "review" || sessionState === "ended"}
                                             onChange={(e) => {
-                                                if (sessionCode) return;
+                                                if (sessionState === "live" || sessionState === "review" || sessionState === "ended") return;
+
                                                 const value = Math.max(1, Math.min(12, Number(e.target.value || 1)));
                                                 setRoomCount(value);
                                             }}
                                             className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                                         />
+
                                     </div>
 
                                     <div className="mt-4">
-                                        <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-                                            Timer minutes
-                                        </div>
+                                        <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Timer minutes</div>
                                         <input
                                             type="number"
                                             min={1}
@@ -1434,7 +1168,8 @@ export default function CollaborationPage() {
                                         <button
                                             type="button"
                                             onClick={saveAssignments}
-                                            className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
+                                            disabled={!hasSession}
+                                            className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
                                         >
                                             Save assignments
                                         </button>
@@ -1448,9 +1183,10 @@ export default function CollaborationPage() {
                                                     window.alert(e?.message || "Failed to start breakout session.");
                                                 }
                                             }}
-                                            className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
+                                            disabled={!hasSession || isStartingBreakout}
+                                            className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
                                         >
-                                            Start breakout session
+                                            {isStartingBreakout ? "Starting breakout..." : "Start breakout session"}
                                         </button>
                                     </div>
                                 </div>
@@ -1460,10 +1196,7 @@ export default function CollaborationPage() {
                                     <div className="mt-3 space-y-2">
                                         {unassigned.length ? (
                                             unassigned.map((p) => (
-                                                <div
-                                                    key={p.id}
-                                                    className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-800"
-                                                >
+                                                <div key={p.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-800">
                                                     {p.name}
                                                 </div>
                                             ))
@@ -1481,10 +1214,7 @@ export default function CollaborationPage() {
                                     const roomParticipants = participants.filter((p) => p.roomNumber === room.roomNumber);
 
                                     return (
-                                        <div
-                                            key={room.roomNumber}
-                                            className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm"
-                                        >
+                                        <div key={room.roomNumber} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
                                             <div className="flex items-center justify-between gap-3">
                                                 <div className="text-base font-black text-slate-900">Room {room.roomNumber}</div>
                                                 <div className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-cyan-700">
@@ -1495,10 +1225,7 @@ export default function CollaborationPage() {
                                             <div className="mt-4 space-y-2">
                                                 {roomParticipants.length ? (
                                                     roomParticipants.map((p) => (
-                                                        <div
-                                                            key={p.id}
-                                                            className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-800"
-                                                        >
+                                                        <div key={p.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-800">
                                                             {p.name}
                                                         </div>
                                                     ))
@@ -1535,12 +1262,8 @@ export default function CollaborationPage() {
                     <div className="w-full max-w-3xl rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-700">
-                                    PDF Import
-                                </div>
-                                <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">
-                                    Import from notes / PDF source
-                                </h3>
+                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-700">PDF Import</div>
+                                <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">Import from notes / PDF source</h3>
                                 <p className="mt-2 text-sm leading-6 text-slate-600">
                                     This modal is where your current whiteboard PDF picker, page preview, and snipping flow can be dropped in.
                                 </p>

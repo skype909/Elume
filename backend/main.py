@@ -680,6 +680,44 @@ class TeacherPlannerTaskModel(Base):
     archived = Column(Boolean, default=False)
     archived_at = Column(Integer, nullable=True)
 
+class CollabUpdatePayload(BaseModel):
+    room_count: Optional[int] = None
+    timer_minutes: Optional[int] = None
+
+@app.post("/collab/{code}/config")
+def collab_update_config(code: str, payload: CollabUpdatePayload, db: Session = Depends(get_db)):
+    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if s.state == "live":
+        raise HTTPException(status_code=400, detail="Cannot change config after breakout has started")
+
+    if payload.room_count is not None:
+        s.room_count = max(1, min(12, int(payload.room_count)))
+
+        participants = (
+            db.query(CollabParticipantModel)
+            .filter(CollabParticipantModel.session_id == s.id)
+            .all()
+        )
+        for p in participants:
+            if p.room_number is not None and p.room_number > s.room_count:
+                p.room_number = s.room_count
+
+    if payload.timer_minutes is not None:
+        s.timer_minutes = max(1, min(60, int(payload.timer_minutes)))
+
+    db.commit()
+    db.refresh(s)
+
+    return {
+        "session_code": s.session_code,
+        "room_count": s.room_count,
+        "timer_minutes": s.timer_minutes,
+        "state": s.state,
+    }
+
 class CollabRoomManager:
     def __init__(self):
         # key = (session_code, room_key)

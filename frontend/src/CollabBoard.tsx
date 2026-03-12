@@ -550,6 +550,11 @@ export default function CollabBoard({
     }, [syncCanvasSize]);
 
     useEffect(() => {
+        if (!sessionCode || !roomKey) {
+            setIsConnected(false);
+            return;
+        }
+
         const ws = new WebSocket(`${getWsBase()}/ws/collab/${sessionCode}/${roomKey}`);
         wsRef.current = ws;
 
