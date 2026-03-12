@@ -75,6 +75,7 @@ type Props = {
     eraserSize: number;
     height?: number;
     onUndoReady?: (undoFn: () => void) => void;
+    readOnly?: boolean;
 };
 
 type Interaction =
@@ -222,11 +223,13 @@ export default function CollabBoard({
     eraserSize,
     height = 720,
     onUndoReady,
+    readOnly = false,
 }: Props) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const committedCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
+    const editable = !readOnly;
 
     const [isConnected, setIsConnected] = useState(false);
     const [cursor, setCursor] = useState<{ x: number; y: number; size: number } | null>(null);
@@ -627,6 +630,7 @@ export default function CollabBoard({
     function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
         const container = containerRef.current;
         if (!container) return;
+        if (!editable) return;
 
         const pt = getPointFromEvent(e, container);
 

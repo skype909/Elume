@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, Column, Integer, String, Text, Boolean
 from sqlalchemy import text
 from fastapi import Header
 from passlib.context import CryptContext
@@ -655,6 +655,31 @@ class LiveQuizAnswerRequest(BaseModel):
     question_id: str
     choice: str  # A/B/C/D
 
+class TeacherPlannerNoteModel(Base):
+    __tablename__ = "teacher_planner_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    teacher_id = Column(Integer, index=True)
+    week_key = Column(String, index=True)
+    day_index = Column(Integer)
+    slot_index = Column(Integer)
+    title = Column(String, default="")
+    body = Column(Text, default="")
+    relates_to_json = Column(Text, default='{"kind":"general"}')
+    updated_at = Column(Integer, default=0)
+
+class TeacherPlannerTaskModel(Base):
+    __tablename__ = "teacher_planner_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    teacher_id = Column(Integer, index=True)
+    text = Column(Text)
+    due_date_iso = Column(String, nullable=True)
+    created_at = Column(Integer, default=0)
+    done = Column(Boolean, default=False)
+    archived = Column(Boolean, default=False)
+    archived_at = Column(Integer, nullable=True)
+
 class CollabRoomManager:
     def __init__(self):
         # key = (session_code, room_key)
@@ -1169,7 +1194,17 @@ def _build_livequiz_results(db: Session, s: LiveQuizSessionModel) -> dict:
     for q in qs:
         qid = str(q.get("id", "")).strip()
         corr = q.get("correct", None)
+
+        if corr is None and "correctIndex" in q:
+            try:
+                idx = int(q.get("correctIndex"))
+                if 0 <= idx <= 3:
+                    corr = ["A", "B", "C", "D"][idx]
+            except Exception:
+                corr = None
+
         corr = (str(corr).strip().upper() if corr is not None else None)
+
         if qid:
             correct_map[qid] = corr if corr in ["A", "B", "C", "D"] else None
 
@@ -1364,20 +1399,20 @@ def _build_livequiz_results(db: Session, s: LiveQuizSessionModel) -> dict:
         answered = int(stats["answered"])
         correct = int(stats["correct"])
 
-    # Percent must always reflect correct answers
-    if total_qs:
-        percent = int(round((correct / total_qs) * 100))
-    else:
-        percent = 0
+        # Percent must always reflect correct answers
+        if total_qs:
+            percent = int(round((correct / total_qs) * 100))
+        else:
+            percent = 0
 
-    leaderboard.append({
-        "participant_id": p.id,
-        "name": pid_to_name.get(p.id, "Player"),
-        "correct": correct,
-        "answered": answered,
-        "total_questions": total_qs,
-        "percent": percent,
-    })
+        leaderboard.append({
+            "participant_id": p.id,
+            "name": pid_to_name.get(p.id, "Player"),
+            "correct": correct,
+            "answered": answered,
+            "total_questions": total_qs,
+            "percent": percent,
+        })
 
     # Sort: if correct keys exist, sort by correct then answered; otherwise answered then name
     leaderboard.sort(key=lambda r: (-r["correct"], -r["answered"], r["name"].lower()))
@@ -1468,6 +1503,90 @@ def livequiz_results(code: str, db: Session = Depends(get_db)):
     if not s:
         raise HTTPException(status_code=404, detail="Session not found")
     return _build_livequiz_results(db, s)
+
+
+@app.get("/teacher-planner")
+def get_teacher_planner(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    notes = db.query(TeacherPlannerNoteModel).filter(
+        TeacherPlannerNoteModel.teacher_id == user.id
+    ).all()
+
+    tasks = db.query(TeacherPlannerTaskModel).filter(
+        TeacherPlannerTaskModel.teacher_id == user.id
+    ).all()
+
+    return {
+        "notes": [
+    {
+        "id": n.id,
+        "weekKey": n.week_key,
+        "dayIndex": n.day_index,
+        "slotIndex": n.slot_index,
+        "title": n.title,
+        "body": n.body,
+        "relatesTo": json.loads(n.relates_to_json or '{"kind":"general"}'),
+        "updatedAt": n.updated_at,
+    }
+    for n in notes
+],
+        "tasks": [
+    {
+        "id": t.id,
+        "text": t.text,
+        "dueDateISO": getattr(t, "due_date_iso", None),
+        "createdAt": getattr(t, "created_at", 0),
+        "done": getattr(t, "done", False) or t.completed,
+        "archived": getattr(t, "archived", False),
+        "archivedAt": getattr(t, "archived_at", None),
+    }
+    for t in tasks
+],
+    }
+
+@app.post("/teacher-planner/notes")
+def save_planner_notes(data: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    db.query(TeacherPlannerNoteModel).filter(
+        TeacherPlannerNoteModel.teacher_id == user.id
+    ).delete()
+
+    for n in data.get("notes", []):
+        db.add(
+        TeacherPlannerNoteModel(
+            teacher_id=user.id,
+            week_key=n.get("weekKey"),
+            day_index=int(n.get("dayIndex", 0)),
+            slot_index=int(n.get("slotIndex", 0)),
+            title=n.get("title", ""),
+            body=n.get("body", ""),
+            relates_to_json=json.dumps(n.get("relatesTo", {"kind": "general"})),
+            updated_at=int(n.get("updatedAt", 0)),
+        )
+    )
+
+    db.commit()
+    return {"status": "ok"}
+
+@app.post("/teacher-planner/tasks")
+def save_planner_tasks(data: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    db.query(TeacherPlannerTaskModel).filter(
+        TeacherPlannerTaskModel.teacher_id == user.id
+    ).delete()
+
+    for t in data.get("tasks", []):
+        db.add(
+        TeacherPlannerTaskModel(
+            teacher_id=user.id,
+            text=t.get("text", ""),
+            due_date_iso=t.get("dueDateISO"),
+            created_at=int(t.get("createdAt", 0)),
+            done=bool(t.get("done", False)),
+            archived=bool(t.get("archived", False)),
+            archived_at=t.get("archivedAt"),
+        )
+    )
+    db.commit()
+    return {"status": "ok"}
+
 
 # =========================================================
 # FILES / UPLOADS (ABSOLUTE + STABLE)

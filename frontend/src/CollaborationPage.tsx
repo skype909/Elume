@@ -212,6 +212,7 @@ export default function CollaborationPage() {
     const [highlightColor, setHighlightColor] = useState<HighlightColor>("yellow");
 
     const [showJoinModal, setShowJoinModal] = useState(false);
+    const [showAssignRooms, setShowAssignRooms] = useState(false);
     const [showBreakoutModal, setShowBreakoutModal] = useState(false);
     const [showPdfModal, setShowPdfModal] = useState(false);
 
@@ -240,9 +241,9 @@ export default function CollaborationPage() {
 
     const boardRef = useRef<HTMLDivElement | null>(null);
 
-    const joinCode = sessionCode || `COLL-${String(classId || 1).padStart(2, "0")}-A7X9`;
+    const joinCode = sessionCode;
     const joinUrl = useMemo(
-        () => `${window.location.origin}/#/collab/join/${joinCode}`,
+        () => (joinCode ? `${window.location.origin}/#/collab/join/${joinCode}` : ""),
         [joinCode]
     );
     const qrUrl = useMemo(
@@ -442,6 +443,7 @@ export default function CollaborationPage() {
             setSessionState("lobby");
             await fetchStatus(data.session_code);
             await fetchParticipants(data.session_code);
+            setShowJoinModal(true);
         } catch (e: any) {
             window.alert(e?.message || "Failed to create collaboration session.");
         }
@@ -549,6 +551,28 @@ export default function CollaborationPage() {
     }
 
     function startBreakout() {
+        const unassigned = participants.filter((p) => !p.roomNumber);
+
+        if (unassigned.length > 0) {
+            const nextParticipants = participants.map((p) => ({ ...p }));
+
+            unassigned.forEach((p, index) => {
+                const roomNumber = (index % roomCount) + 1;
+                const target = nextParticipants.find((x) => x.id === p.id);
+                if (target) target.roomNumber = roomNumber;
+            });
+
+            const nextRooms = Array.from({ length: roomCount }, (_, i) => ({
+                roomNumber: i + 1,
+                participantIds: nextParticipants
+                    .filter((p) => p.roomNumber === i + 1)
+                    .map((p) => p.id),
+            }));
+
+            setParticipants(nextParticipants);
+            setRooms(nextRooms);
+        }
+
         setSessionState("live");
         setShowBreakoutModal(false);
         setTimeLeftSeconds(timerMinutes * 60);
@@ -588,79 +612,159 @@ export default function CollaborationPage() {
 
             <div className="relative z-10 p-4 md:p-6">
                 <div className="mx-auto max-w-[1700px]">
-                    <div className="mb-4 rounded-[28px] border border-white/70 bg-white/80 px-5 py-3 shadow-[0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl md:px-6 md:py-3">
-                        <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-                            <div className="flex items-start gap-4">
-                                <div className="grid h-20 w-20 shrink-0 place-items-center rounded-3xl border border-white/70 bg-white/90 shadow-xl ring-1 ring-emerald-100">
-                                    <img src={elumeLogo} alt="Elume" className="h-14 w-14 object-contain drop-shadow-sm" />
-                                </div>
+                    <div className="mb-3 rounded-[22px] border border-white/70 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-xl md:px-5">
+                        <div className="flex flex-col gap-2">
 
-                                <div>
-                                    <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-emerald-700 shadow-sm">
-                                        Live collaboration
+                            {/* TOP ROW */}
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+
+                                <div className="flex items-center gap-3">
+                                    <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-white/70 bg-white shadow-md ring-1 ring-emerald-100">
+                                        <img src={elumeLogo} alt="Elume" className="h-9 w-9 object-contain" />
                                     </div>
 
-                                    <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900">
-                                        Collaboration Whiteboard
-                                    </h1>
+                                    <div>
+                                        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700">
+                                            Live collaboration
+                                        </div>
 
-                                    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 md:text-base">
-                                        Teacher-led live collaboration with breakout rooms, student joining, PDF imports,
-                                        shared whiteboards, and side-by-side review.
-                                    </p>
+                                        <h1 className="text-lg font-bold text-slate-900 md:text-xl">
+                                            Collaboration Whiteboard
+                                        </h1>
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+
+                                    <button
+                                        onClick={createSession}
+                                        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-black text-white shadow hover:bg-emerald-700"
+                                    >
+                                        Create session
+                                    </button>
+
+                                    <button
+                                        onClick={() => sessionCode && setShowJoinModal(true)}
+                                        disabled={!sessionCode}
+                                        className={cls(
+                                            "rounded-lg border px-4 py-2 text-sm font-black",
+                                            sessionCode
+                                                ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                                                : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                        )}
+                                    >
+                                        Student join
+                                    </button>
+
+                                    <button
+                                        onClick={() => setShowAssignRooms(true)}
+                                        disabled={!sessionCode}
+                                        className={cls(
+                                            "rounded-lg border px-4 py-2 text-sm font-black",
+                                            sessionCode
+                                                ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                                                : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                        )}
+                                    >
+                                        Assign rooms
+                                    </button>
+
+                                    <button
+                                        onClick={startBreakout}
+                                        disabled={!sessionCode}
+                                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 hover:bg-slate-50"
+                                    >
+                                        Start breakout
+                                    </button>
+
+                                    <button
+                                        onClick={endBreakout}
+                                        disabled={!sessionCode}
+                                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 hover:bg-slate-50"
+                                    >
+                                        End breakout
+                                    </button>
+
+                                    <button
+                                        disabled
+                                        className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-black text-rose-300"
+                                    >
+                                        End session
+                                    </button>
+
+                                    <button
+                                        onClick={() => navigate(`/class/${classId}`)}
+                                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 hover:bg-slate-50"
+                                    >
+                                        ← Back
+                                    </button>
+
+                                    <button
+                                        onClick={saveBoard}
+                                        className="rounded-lg bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-4 py-2 text-sm font-black text-white shadow hover:shadow-md"
+                                    >
+                                        Save
+                                    </button>
+
                                 </div>
                             </div>
 
-                            <div className="flex flex-wrap items-center gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => navigate(`/class/${classId}`)}
-                                    className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
-                                >
-                                    ← Back to class
-                                </button>
 
-                                <button
-                                    type="button"
-                                    onClick={() => setShowJoinModal(true)}
-                                    className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
-                                >
-                                    Student join
-                                </button>
+                            {/* SECOND ROW */}
+                            <div className="flex flex-wrap items-center justify-between gap-2">
 
-                                <button
-                                    type="button"
-                                    onClick={saveBoard}
-                                    className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-sm font-black text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl"
-                                >
-                                    Save board
-                                </button>
+                                <p className="max-w-xl text-sm text-slate-600">
+                                    Live teacher board with student joining breakout rooms, and shared whiteboards.
+                                </p>
+
+                                <div className="flex flex-wrap items-center gap-2">
+
+                                    <button
+                                        onClick={() => window.dispatchEvent(new Event("collab-clear-board"))}
+                                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-800 hover:bg-slate-50"
+                                    >
+                                        Erase all
+                                    </button>
+
+                                    <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">
+                                        State: {(status?.state || sessionState).toUpperCase()}
+                                    </div>
+
+                                    <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-800">
+                                        Students: {status?.joined_count ?? participants.length}
+                                    </div>
+
+                                    <div className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-bold text-violet-800">
+                                        Assigned: {status?.assigned_count ?? assignedCount}
+                                    </div>
+
+                                    <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-800">
+                                        <div className="flex items-center gap-2">
+                                            <span>Rooms</span>
+                                            <button
+                                                onClick={() => setRoomCount(Math.max(1, roomCount - 1))}
+                                                className="px-1 text-slate-500 hover:text-slate-800"
+                                            >
+                                                −
+                                            </button>
+                                            <span>{roomCount}</span>
+                                            <button
+                                                onClick={() => setRoomCount(roomCount + 1)}
+                                                className="px-1 text-slate-500 hover:text-slate-800"
+                                            >
+                                                +
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">
+                                        Timer: {formatTime(status?.time_left_seconds ?? timeLeftSeconds)}
+                                    </div>
+
+                                </div>
                             </div>
-                        </div>
 
-                        <div className="-mt-2 flex flex-wrap items-center justify-end gap-2">
-                            <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">
-                                State: {(status?.state || sessionState).toUpperCase()}
-                            </div>
-
-                            <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-800">
-                                Students: {status?.joined_count ?? participants.length}
-                            </div>
-
-                            <div className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-bold text-violet-800">
-                                Assigned: {status?.assigned_count ?? assignedCount}
-                            </div>
-
-                            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-800">
-                                Rooms: {status?.room_count ?? roomCount}
-                            </div>
-
-                            <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">
-                                Timer: {formatTime(status?.time_left_seconds ?? timeLeftSeconds)}
-                            </div>
                         </div>
                     </div>
-
                     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[220px_minmax(0,1fr)_320px]">
                         <div className="sticky top-4 self-start">
                             <div className="rounded-[24px] border border-white/70 bg-white/90 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl">
@@ -909,8 +1013,14 @@ export default function CollaborationPage() {
 
                                     <button
                                         type="button"
-                                        onClick={() => setShowJoinModal(true)}
-                                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-xs font-black text-slate-800 shadow-sm transition hover:bg-slate-50"
+                                        onClick={() => sessionCode && setShowJoinModal(true)}
+                                        disabled={!sessionCode}
+                                        className={cls(
+                                            "w-full rounded-2xl border px-3 py-3 text-xs font-black shadow-sm transition",
+                                            sessionCode
+                                                ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                                                : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                        )}
                                     >
                                         Student join
                                     </button>
@@ -1017,19 +1127,23 @@ export default function CollaborationPage() {
                                                     </select>
                                                 </div>
 
-                                                <div className="relative min-h-[300px] overflow-hidden rounded-[24px] border border-slate-200 bg-gradient-to-br from-slate-50 to-white">
-                                                    <div className="absolute left-3 top-3 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
+                                                <div className="relative min-h-[300px] overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+                                                    <div className="absolute left-3 top-3 z-10 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
                                                         {boardOptions.find((b) => b.value === panel.selectedBoard)?.label || "Board"}
                                                     </div>
 
-                                                    <div className="absolute inset-0 grid place-items-center p-6 text-center">
-                                                        <div>
-                                                            <div className="text-lg font-black text-slate-900">Board review view</div>
-                                                            <div className="mt-2 text-sm text-slate-600">
-                                                                This panel will render the saved or live board for comparison after breakout ends.
-                                                            </div>
-                                                        </div>
-                                                    </div>
+                                                    <CollabBoard
+                                                        sessionCode={joinCode}
+                                                        roomKey={panel.selectedBoard}
+                                                        participantId={`review-${panel.id}`}
+                                                        tool="select"
+                                                        penColor={penColor}
+                                                        penSize={penSize}
+                                                        highlighterColor={highlightColor}
+                                                        eraserSize={eraserSize}
+                                                        height={300}
+                                                        readOnly
+                                                    />
                                                 </div>
                                             </div>
                                         ))}
@@ -1037,57 +1151,7 @@ export default function CollaborationPage() {
                                 )}
                             </SectionCard>
 
-                            <SectionCard
-                                title="Session controls"
-                                hint="Teacher flow for lobby, assignment, live breakout, and review"
-                                right={
-                                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black uppercase tracking-[0.18em] text-emerald-700">
-                                        Control
-                                    </div>
-                                }
-                            >
-                                <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-                                    <button
-                                        type="button"
-                                        onClick={createSession}
-                                        className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-4 py-4 text-sm font-black text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl"
-                                    >
-                                        {sessionCode ? "Session ready" : "Create session"}
-                                    </button>
 
-                                    <button
-                                        type="button"
-                                        onClick={openAssigning}
-                                        className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
-                                    >
-                                        Assign rooms
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => postControl("start")}
-                                        className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
-                                    >
-                                        Start breakout
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => postControl("end")}
-                                        className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
-                                    >
-                                        End breakout
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => postControl("end-session")}
-                                        className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm font-black text-rose-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-rose-100"
-                                    >
-                                        End session
-                                    </button>
-                                </div>
-                            </SectionCard>
                         </div>
 
                         <SectionCard
@@ -1134,21 +1198,28 @@ export default function CollaborationPage() {
                                             </div>
                                         </div>
 
-                                        <div className="mt-3 grid grid-cols-3 gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => assignAndSave(p.id, 1)}
-                                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
-                                            >
-                                                Room 1
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => assignAndSave(p.id, 2)}
-                                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
-                                            >
-                                                Room 2
-                                            </button>
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            {Array.from({ length: roomCount }).map((_, i) => {
+                                                const room = i + 1;
+                                                const isAssigned = p.roomNumber === room;
+
+                                                return (
+                                                    <button
+                                                        key={room}
+                                                        type="button"
+                                                        onClick={() => assignAndSave(p.id, room)}
+                                                        className={cls(
+                                                            "rounded-xl border px-3 py-2 text-xs font-black",
+                                                            isAssigned
+                                                                ? "border-emerald-300 bg-emerald-500 text-white"
+                                                                : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                                                        )}
+                                                    >
+                                                        Room {room}
+                                                    </button>
+                                                );
+                                            })}
+
                                             <button
                                                 type="button"
                                                 onClick={() => assignAndSave(p.id, null)}
@@ -1194,7 +1265,7 @@ export default function CollaborationPage() {
                             <div className="rounded-[28px] border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-emerald-50 p-5 shadow-sm">
                                 <div className="mx-auto rounded-[28px] border border-white/80 bg-white p-4 shadow-lg">
                                     <img
-                                        src={qrUrl}
+                                        src={joinUrl ? qrUrl : "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="}
                                         alt="Join QR"
                                         className="mx-auto h-[220px] w-[220px] rounded-2xl border border-slate-100 bg-white"
                                     />
@@ -1202,8 +1273,16 @@ export default function CollaborationPage() {
                             </div>
 
                             <div className="space-y-4">
-                                <JoinChip label="Session code" value={joinCode} onCopy={() => copyToClipboard(joinCode)} />
-                                <JoinChip label="Join link" value={joinUrl} onCopy={() => copyToClipboard(joinUrl)} />
+                                <JoinChip
+                                    label="Session code"
+                                    value={joinCode || "Create session first"}
+                                    onCopy={() => joinCode && copyToClipboard(joinCode)}
+                                />
+                                <JoinChip
+                                    label="Join link"
+                                    value={joinUrl || "Create session first"}
+                                    onCopy={() => joinUrl && copyToClipboard(joinUrl)}
+                                />
 
                                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
                                     Students can join by QR, direct link, or session code.

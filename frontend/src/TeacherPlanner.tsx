@@ -138,46 +138,52 @@ function typeDotClass(t: string) {
 }
 
 // -----------------------------
-// Local Storage
+// Planner API helpers
 // -----------------------------
 
-const LS_NOTES_KEY = "elume.teacherPlanner.notes.v1";
-const LS_TASKS_KEY = "elume.teacherPlanner.tasks.v1";
+async function loadPlanner(): Promise<{ notes: PlannerNote[]; tasks: TaskItem[] }> {
+    const data = await apiFetch("/teacher-planner");
 
-function loadNotes(): PlannerNote[] {
-    try {
-        const raw = localStorage.getItem(LS_NOTES_KEY);
-        const parsed = raw ? JSON.parse(raw) : [];
-        return Array.isArray(parsed) ? parsed : [];
-    } catch {
-        return [];
-    }
+    const notes = Array.isArray(data?.notes)
+        ? data.notes.map((n: any) => ({
+            id: String(n.id),
+            weekKey: String(n.weekKey ?? ""),
+            dayIndex: Number(n.dayIndex ?? 0),
+            slotIndex: Number(n.slotIndex ?? 0),
+            title: String(n.title ?? ""),
+            body: String(n.body ?? n.text ?? ""),
+            relatesTo: n.relatesTo ?? { kind: "general" },
+            updatedAt: Number(n.updatedAt ?? Date.now()),
+        }))
+        : [];
+
+    const tasks = Array.isArray(data?.tasks)
+        ? data.tasks.map((t: any) => ({
+            id: String(t.id),
+            text: String(t.text ?? ""),
+            dueDateISO: t.dueDateISO ? String(t.dueDateISO) : undefined,
+            createdAt: Number(t.createdAt ?? Date.now()),
+            done: Boolean(t.done ?? t.completed ?? false),
+            archived: Boolean(t.archived ?? false),
+            archivedAt: t.archivedAt ? Number(t.archivedAt) : undefined,
+        }))
+        : [];
+
+    return { notes, tasks };
 }
 
-function saveNotes(notes: PlannerNote[]) {
-    try {
-        localStorage.setItem(LS_NOTES_KEY, JSON.stringify(notes));
-    } catch {
-        // ignore
-    }
+async function savePlannerNotes(notes: PlannerNote[]) {
+    await apiFetch("/teacher-planner/notes", {
+        method: "POST",
+        body: JSON.stringify({ notes }),
+    });
 }
 
-function loadTasks(): TaskItem[] {
-    try {
-        const raw = localStorage.getItem(LS_TASKS_KEY);
-        const parsed = raw ? JSON.parse(raw) : [];
-        return Array.isArray(parsed) ? parsed : [];
-    } catch {
-        return [];
-    }
-}
-
-function saveTasks(tasks: TaskItem[]) {
-    try {
-        localStorage.setItem(LS_TASKS_KEY, JSON.stringify(tasks));
-    } catch {
-        // ignore
-    }
+async function savePlannerTasks(tasks: TaskItem[]) {
+    await apiFetch("/teacher-planner/tasks", {
+        method: "POST",
+        body: JSON.stringify({ tasks }),
+    });
 }
 
 // -----------------------------
@@ -192,9 +198,9 @@ export default function TeacherPlanner() {
     const [events, setEvents] = useState<CalendarEvent[]>([]);
     const [loadingEvents, setLoadingEvents] = useState(false);
 
-    // Local data
-    const [notes, setNotes] = useState<PlannerNote[]>(() => loadNotes());
-    const [tasks, setTasks] = useState<TaskItem[]>(() => loadTasks());
+    const [notes, setNotes] = useState<PlannerNote[]>([]);
+    const [tasks, setTasks] = useState<TaskItem[]>([]);
+    const [plannerLoaded, setPlannerLoaded] = useState(false);
 
     // Week navigation
     const [weekMonday, setWeekMonday] = useState<Date>(() => startOfWeekMonday(new Date()));
@@ -255,32 +261,43 @@ export default function TeacherPlanner() {
     }, []);
 
     // -----------------------------
-    // Persist local changes
+    // Load planner data from backend
     // -----------------------------
-    useEffect(() => saveNotes(notes), [notes]);
-    useEffect(() => saveTasks(tasks), [tasks]);
-
-    // Close popover on outside click / ESC
     useEffect(() => {
-        function onDocDown(e: MouseEvent) {
-            if (!eventsPopover.open) return;
-            const el = popoverRef.current;
-            if (el && e.target && el.contains(e.target as Node)) return;
-            setEventsPopover({ open: false, dayISO: null });
-        }
-        function onKey(e: KeyboardEvent) {
-            if (e.key === "Escape") {
-                setEventsPopover({ open: false, dayISO: null });
-                setEditing((s) => ({ ...s, open: false }));
+        let alive = true;
+        (async () => {
+            try {
+                const data = await loadPlanner();
+                if (!alive) return;
+                setNotes(data.notes);
+                setTasks(data.tasks);
+            } catch {
+                if (!alive) return;
+                setNotes([]);
+                setTasks([]);
+            } finally {
+                if (!alive) return;
+                setPlannerLoaded(true);
             }
-        }
-        document.addEventListener("mousedown", onDocDown);
-        document.addEventListener("keydown", onKey);
+        })();
+
         return () => {
-            document.removeEventListener("mousedown", onDocDown);
-            document.removeEventListener("keydown", onKey);
+            alive = false;
         };
-    }, [eventsPopover.open]);
+    }, []);
+
+    // -----------------------------
+    // Persist planner changes to backend
+    // -----------------------------
+    useEffect(() => {
+        if (!plannerLoaded) return;
+        savePlannerNotes(notes).catch(() => { });
+    }, [notes, plannerLoaded]);
+
+    useEffect(() => {
+        if (!plannerLoaded) return;
+        savePlannerTasks(tasks).catch(() => { });
+    }, [tasks, plannerLoaded]);
 
     // -----------------------------
     // Derived: week keys/dates
