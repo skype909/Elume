@@ -118,9 +118,12 @@ export default function StudentClassPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const [view, setView] = useState<View>("home");
+  const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
 
   const [quizCode, setQuizCode] = useState("");
   const [quizJoinError, setQuizJoinError] = useState<string | null>(null);
+  const [collabCode, setCollabCode] = useState("");
+  const [collabJoinError, setCollabJoinError] = useState<string | null>(null);
 
   const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [showSaveBanner, setShowSaveBanner] = useState(false);
@@ -237,6 +240,16 @@ export default function StudentClassPage() {
     }
     setQuizJoinError(null);
     window.location.href = `${window.location.origin}/#/join/${code}`;
+  }
+
+  function goToCollabJoin() {
+    const code = cleanSessionCode(collabCode);
+    if (!code) {
+      setCollabJoinError("Enter your collaboration code first.");
+      return;
+    }
+    setCollabJoinError(null);
+    window.location.href = `${window.location.origin}/#/collab/join/${code}`;
   }
 
   function TopBar() {
@@ -358,11 +371,14 @@ export default function StudentClassPage() {
               </div>
             </div>
 
-            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <button
                 type="button"
                 className={`${btnBase} border-emerald-200 bg-emerald-50 hover:bg-emerald-100`}
-                onClick={() => setView("resources")}
+                onClick={() => {
+                  setSelectedTopic(null);
+                  setView("resources");
+                }}
               >
                 <div className="text-sm font-black text-emerald-900">Resources</div>
                 <div className="mt-1 text-xs font-semibold text-emerald-800/80">
@@ -396,6 +412,19 @@ export default function StudentClassPage() {
               </button>
             </div>
           </div>
+          <button
+            type="button"
+            className={`${btnBase} border-cyan-200 bg-cyan-50 hover:bg-cyan-100`}
+            onClick={() => {
+              const el = document.getElementById("live-collab-card");
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          >
+            <div className="text-sm font-black text-cyan-900">Join Collab Board</div>
+            <div className="mt-1 text-xs font-semibold text-cyan-800/80">
+              Enter a session code
+            </div>
+          </button>
 
           <div className="h-2 w-full bg-gradient-to-r from-emerald-500 via-sky-500 to-violet-500" />
         </div>
@@ -553,21 +582,90 @@ export default function StudentClassPage() {
     );
   }
 
+  function LiveCollabCard() {
+    return (
+      <div id="live-collab-card" className={`${card} p-5`}>
+        <div className="flex items-start gap-3">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-cyan-200 bg-cyan-50 shadow-sm">
+            <span className="text-xl">🧑‍🤝‍🧑</span>
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-black uppercase tracking-[0.16em] text-cyan-700">
+              Collaboration Board
+            </div>
+            <div className="mt-1 text-xl font-black tracking-tight text-slate-900">
+              Join with session code
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-600">
+              Your teacher will give you a collaboration code. Enter it below to join the live whiteboard.
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <input
+            value={collabCode}
+            onChange={(e) => setCollabCode(cleanSessionCode(e.target.value))}
+            inputMode="text"
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="Enter collaboration code"
+            className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-base font-black uppercase tracking-[0.12em] text-slate-900 shadow-sm outline-none placeholder:normal-case placeholder:tracking-normal placeholder:font-semibold placeholder:text-slate-400 focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100"
+          />
+
+          <button
+            type="button"
+            onClick={goToCollabJoin}
+            className="rounded-2xl bg-gradient-to-r from-cyan-500 via-sky-500 to-emerald-500 px-5 py-4 text-sm font-black text-white shadow-lg active:scale-[0.99] sm:min-w-[150px]"
+          >
+            Join Board
+          </button>
+        </div>
+
+        {collabJoinError ? (
+          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+            {collabJoinError}
+          </div>
+        ) : null}
+
+        <div className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50/70 px-4 py-3 text-xs leading-5 text-cyan-900">
+          Tip: use the collaboration code from your teacher’s board screen or QR join panel.
+        </div>
+      </div>
+    );
+  }
+
   function ResourcesView() {
     if (!notes.length) return <EmptyState title="Resources" hint="No resources uploaded yet." />;
 
-    return (
-      <div className="space-y-4">
-        <div className={`${card} p-5`}>
-          <div className="text-base font-black text-slate-900">Resources</div>
-          <div className="mt-1 text-sm text-slate-600">Tap any item to open.</div>
-        </div>
+    if (selectedTopic) {
+      const items =
+        notesByTopic.find(([topic]) => topic === selectedTopic)?.[1] ?? [];
 
-        {notesByTopic.map(([topic, items]) => (
-          <div key={topic} className={`${card} p-5`}>
-            <div className="mb-3 text-sm font-black uppercase tracking-[0.14em] text-slate-500">
-              {topic}
+      return (
+        <div className="space-y-4">
+          <div className={`${card} p-5`}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-base font-black text-slate-900">{selectedTopic}</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  {items.length} file{items.length === 1 ? "" : "s"}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedTopic(null)}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 shadow-sm active:scale-[0.99]"
+              >
+                ← Categories
+              </button>
             </div>
+          </div>
+
+          <div className={`${card} p-5`}>
             <div className="space-y-2">
               {items.map((n) => {
                 const label = n.filename || "Resource";
@@ -576,7 +674,49 @@ export default function StudentClassPage() {
               })}
             </div>
           </div>
-        ))}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        <div className={`${card} p-5`}>
+          <div className="text-base font-black text-slate-900">Resources</div>
+          <div className="mt-1 text-sm text-slate-600">Tap a category to open its files.</div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {notesByTopic.map(([topic, items], idx) => {
+            const accents = [
+              "from-yellow-300 to-yellow-400",
+              "from-purple-500 to-violet-600",
+              "from-lime-400 to-emerald-500",
+              "from-pink-400 to-fuchsia-500",
+            ];
+            const accent = accents[idx % accents.length];
+
+            return (
+              <button
+                key={topic}
+                type="button"
+                onClick={() => setSelectedTopic(topic)}
+                className="overflow-hidden rounded-[28px] border-2 border-slate-900 bg-white text-left shadow-[0_8px_0_rgba(0,0,0,0.25)] active:translate-y-[2px]"
+              >
+                <div className={`p-5 bg-gradient-to-br ${accent}`}>
+                  <div className="text-2xl font-black tracking-tight text-white">
+                    {topic}
+                  </div>
+                  <div className="mt-3 text-sm font-bold text-white/90">
+                    {items.length} file{items.length === 1 ? "" : "s"}
+                  </div>
+                  <div className="mt-2 text-xs font-semibold text-slate-500">
+                    Tap to open
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
     );
   }
@@ -639,6 +779,7 @@ export default function StudentClassPage() {
         {view === "home" && (
           <div className="mt-5 space-y-4">
             <LiveQuizCard />
+            <LiveCollabCard />
             <Announcements />
           </div>
         )}

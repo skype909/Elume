@@ -192,6 +192,7 @@ export default function CollaborationPage() {
         { id: uid("panel"), selectedBoard: "room-4" },
     ]);
 
+    const [focusedReviewBoard, setFocusedReviewBoard] = useState<string | null>(null);
     const joinCode = sessionCode;
     const hasSession = Boolean(joinCode);
 
@@ -263,6 +264,8 @@ export default function CollaborationPage() {
                 selectedBoard: `room-${Math.min(idx + 1, roomCount)}`,
             }))
         );
+
+        setFocusedReviewBoard(null);
     }, [roomCount]);
 
     useEffect(() => {
@@ -500,9 +503,29 @@ export default function CollaborationPage() {
         }
     }
 
-    function endBreakout() {
-        setSessionState("review");
-        setTimeLeftSeconds(null);
+    async function endBreakout() {
+        const code = joinCodeRef.current;
+        if (!code) {
+            window.alert("No active session.");
+            return;
+        }
+
+        try {
+            const res = await fetch(`${API_BASE}/collab/${code}/end`, {
+                method: "POST",
+            });
+
+            if (!res.ok) {
+                const txt = await res.text().catch(() => "");
+                throw new Error(txt || "Failed to end breakout.");
+            }
+
+            await Promise.all([fetchStatus(code), fetchParticipants(code)]);
+            setSessionState("review");
+            setTimeLeftSeconds(null);
+        } catch (e: any) {
+            window.alert(e?.message || "Failed to end breakout.");
+        }
     }
 
     function saveBoard() {
@@ -913,13 +936,54 @@ export default function CollaborationPage() {
                                             </div>
                                         )}
                                     </div>
-                                ) : (
-                                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                                        {reviewPanels.map((panel, idx) => (
-                                            <div key={panel.id} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                                                <div className="mb-3 flex items-center justify-between gap-3">
-                                                    <div className="text-sm font-black text-slate-900">Review Panel {idx + 1}</div>
+                                ) : focusedReviewBoard ? (
+                                <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                                    <div className="mb-4 flex items-center justify-between gap-3">
+                                        <div className="text-sm font-black text-slate-900">
+                                            {boardOptions.find((b) => b.value === focusedReviewBoard)?.label || "Board"}
+                                        </div>
 
+                                        <button
+                                            type="button"
+                                            onClick={() => setFocusedReviewBoard(null)}
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                                        >
+                                            Back to 2×2 grid
+                                        </button>
+                                    </div>
+
+                                    <div className="relative min-h-[760px] overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+                                        <div className="absolute left-3 top-3 z-10 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
+                                            {boardOptions.find((b) => b.value === focusedReviewBoard)?.label || "Board"}
+                                        </div>
+
+                                        {hasSession ? (
+                                            <CollabBoard
+                                                key={`focused-${focusedReviewBoard}`}
+                                                sessionCode={joinCode}
+                                                roomKey={focusedReviewBoard}
+                                                participantId="teacher-review-focus"
+                                                tool="select"
+                                                penColor={penColor}
+                                                penSize={penSize}
+                                                highlighterColor={highlightColor}
+                                                eraserSize={eraserSize}
+                                                height={760}
+                                                readOnly
+                                            />
+                                        ) : (
+                                            <div className="grid min-h-[760px] place-items-center text-slate-500">No session.</div>
+                                        )}
+                                    </div>
+                                </div>
+                                ) : (
+                                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                                    {reviewPanels.map((panel, idx) => (
+                                        <div key={panel.id} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                                            <div className="mb-3 flex items-center justify-between gap-3">
+                                                <div className="text-sm font-black text-slate-900">Review Panel {idx + 1}</div>
+
+                                                <div className="flex items-center gap-2">
                                                     <select
                                                         value={panel.selectedBoard}
                                                         onChange={(e) =>
@@ -935,34 +999,45 @@ export default function CollaborationPage() {
                                                             </option>
                                                         ))}
                                                     </select>
-                                                </div>
 
-                                                <div className="relative min-h-[300px] overflow-hidden rounded-[24px] border border-slate-200 bg-white">
-                                                    <div className="absolute left-3 top-3 z-10 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
-                                                        {boardOptions.find((b) => b.value === panel.selectedBoard)?.label || "Board"}
-                                                    </div>
-
-                                                    {hasSession ? (
-                                                        <CollabBoard
-                                                            sessionCode={joinCode}
-                                                            roomKey={panel.selectedBoard}
-                                                            participantId={`review-${panel.id}`}
-                                                            tool="select"
-                                                            penColor={penColor}
-                                                            penSize={penSize}
-                                                            highlighterColor={highlightColor}
-                                                            eraserSize={eraserSize}
-                                                            height={300}
-                                                            readOnly
-                                                        />
-                                                    ) : (
-                                                        <div className="grid min-h-[300px] place-items-center text-slate-500">No session.</div>
-                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setFocusedReviewBoard(panel.selectedBoard)}
+                                                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                                                    >
+                                                        Expand
+                                                    </button>
                                                 </div>
                                             </div>
-                                        ))}
-                                    </div>
-                                )}
+
+                                            <div className="relative min-h-[300px] overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+                                                <div className="absolute left-3 top-3 z-10 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
+                                                    {boardOptions.find((b) => b.value === panel.selectedBoard)?.label || "Board"}
+                                                </div>
+
+                                                {hasSession ? (
+                                                    <CollabBoard
+                                                        key={`${panel.id}-${panel.selectedBoard}`}
+                                                        sessionCode={joinCode}
+                                                        roomKey={panel.selectedBoard}
+                                                        participantId={`review-${panel.id}`}
+                                                        tool="select"
+                                                        penColor={penColor}
+                                                        penSize={penSize}
+                                                        highlighterColor={highlightColor}
+                                                        eraserSize={eraserSize}
+                                                        height={300}
+                                                        readOnly
+                                                    />
+                                                ) : (
+                                                    <div className="grid min-h-[300px] place-items-center text-slate-500">No session.</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                )
+                            }
                             </SectionCard>
                         </div>
 

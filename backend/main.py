@@ -843,11 +843,18 @@ def _get_collab_history(session_code: str, room_key: str) -> list[dict]:
     return collab_room_history.get(key, [])
 
 
-def _seed_breakout_rooms_from_teacher(session_code: str, room_count: int) -> None:
+async def _seed_breakout_rooms_from_teacher(session_code: str, room_count: int) -> None:
     teacher_events = _get_collab_history(session_code, "teacher-main")
+
     for i in range(1, int(room_count) + 1):
         room_key = f"room-{i}"
+
+        # 1) Replace stored history for the room
         _replace_collab_history(session_code, room_key, teacher_events)
+
+        # 2) Push the copied events into any sockets already connected to that room
+        for evt in teacher_events:
+            await collab_room_manager.broadcast(session_code, room_key, deepcopy(evt))
 
 
 def _clear_collab_session_history(session_code: str) -> None:
@@ -1839,13 +1846,13 @@ def collab_assignments(code: str, payload: CollabAssignmentsPayload, db: Session
 
 
 @app.post("/collab/{code}/start")
-def collab_start(code: str, db: Session = Depends(get_db)):
+async def collab_start(code: str, db: Session = Depends(get_db)):
     s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
     if not s:
         raise HTTPException(status_code=404, detail="Session not found")
 
     # Copy the current teacher board into every breakout room
-    _seed_breakout_rooms_from_teacher(code, int(s.room_count or 0))
+    await _seed_breakout_rooms_from_teacher(code, int(s.room_count or 0))
 
     s.state = "live"
     s.started_at = s.started_at or datetime.utcnow()
