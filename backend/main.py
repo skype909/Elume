@@ -650,34 +650,18 @@ class LiveQuizAnswerRequest(BaseModel):
     question_id: str
     choice: str  # A/B/C/D
 
-class TeacherPlannerNoteModel(Base):
-    __tablename__ = "teacher_planner_notes"
-
-    id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(Integer, index=True)
-    week_key = Column(String, index=True)
-    day_index = Column(Integer)
-    slot_index = Column(Integer)
-    title = Column(String, default="")
-    body = Column(Text, default="")
-    relates_to_json = Column(Text, default='{"kind":"general"}')
-    updated_at = Column(Integer, default=0)
-
-class TeacherPlannerTaskModel(Base):
-    __tablename__ = "teacher_planner_tasks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(Integer, index=True)
-    text = Column(Text)
-    due_date_iso = Column(String, nullable=True)
-    created_at = Column(Integer, default=0)
-    done = Column(Boolean, default=False)
-    archived = Column(Boolean, default=False)
-    archived_at = Column(Integer, nullable=True)
-
 class CollabUpdatePayload(BaseModel):
     room_count: Optional[int] = None
     timer_minutes: Optional[int] = None
+
+class TeacherPlannerStateModel(Base):
+    __tablename__ = "teacher_planner_state"
+
+    id = Column(Integer, primary_key=True, index=True)
+    teacher_id = Column(Integer, unique=True, index=True)
+    state_json = Column(Text, default='{"notes":[],"tasks":[]}')
+    updated_at = Column(Text, nullable=True)
+
 
 @app.post("/collab/{code}/config")
 def collab_update_config(code: str, payload: CollabUpdatePayload, db: Session = Depends(get_db)):
@@ -1230,158 +1214,6 @@ def livequiz_answer(code: str, payload: LiveQuizAnswerRequest, db: Session = Dep
 
 def _build_livequiz_results(db: Session, s: LiveQuizSessionModel) -> dict:
     qs = _load_questions(s)
-    correct_map = {}
-    for q in qs:
-        qid = str(q.get("id", "")).strip()
-        corr = q.get("correct", None)
-
-        if corr is None and "correctIndex" in q:
-            try:
-                idx = int(q.get("correctIndex"))
-                if 0 <= idx <= 3:
-                    corr = ["A", "B", "C", "D"][idx]
-            except Exception:
-                corr = None
-
-        corr = (str(corr).strip().upper() if corr is not None else None)
-
-        if qid:
-            correct_map[qid] = corr if corr in ["A", "B", "C", "D"] else None
-
-    participants = (
-        db.query(LiveQuizParticipantModel)
-        .filter(LiveQuizParticipantModel.session_id == s.id)
-        .all()
-    )
-    pid_to_name = {
-        p.id: (p.nickname or ("Anonymous" if s.anonymous else "Player"))
-        for p in participants
-    }
-
-    answers = (
-        db.query(LiveQuizAnswerModel)
-        .filter(LiveQuizAnswerModel.session_id == s.id)
-        .all()
-    )
-
-    # Score per participant
-    by_pid = {}
-    for a in answers:
-        pid = int(a.participant_id)
-        qid = str(a.question_id)
-        choice = str(a.choice).strip().upper()
-        if pid not in by_pid:
-            by_pid[pid] = {"answered": 0, "correct": 0}
-        by_pid[pid]["answered"] += 1
-        corr = correct_map.get(qid, None)
-        if corr and choice == corr:
-            by_pid[pid]["correct"] += 1
-
-    total_qs = len(qs)
-    leaderboard = []
-    for p in participants:
-        stats = by_pid.get(p.id, {"answered": 0, "correct": 0})
-        correct = int(stats["correct"])
-        answered = int(stats["answered"])
-        percent = int(round((correct / total_qs) * 100)) if total_qs else 0
-        leaderboard.append({
-            "participant_id": p.id,
-            "name": pid_to_name.get(p.id, "Player"),
-            "correct": correct,
-            "answered": answered,
-            "total_questions": total_qs,
-            "percent": percent,
-        })
-
-    # Sort: most correct, then most answered, then name
-    leaderboard.sort(key=lambda r: (-r["correct"], -r["answered"], r["name"].lower()))
-
-    top3 = leaderboard[:3]
-
-    # Question stats (most common choice, difficulty)
-    # Build counts by question_id
-    q_counts = {}
-    for a in answers:
-        qid = str(a.question_id)
-        choice = str(a.choice).strip().upper()
-        if qid not in q_counts:
-            q_counts[qid] = {"A": 0, "B": 0, "C": 0, "D": 0, "total": 0}
-        if choice in ["A", "B", "C", "D"]:
-            q_counts[qid][choice] += 1
-            q_counts[qid]["total"] += 1
-
-    question_stats = []
-    for q in qs:
-        qid = str(q.get("id", ""))
-        prompt = str(q.get("prompt", ""))
-        counts = q_counts.get(qid, {"A": 0, "B": 0, "C": 0, "D": 0, "total": 0})
-        corr = correct_map.get(qid, None)
-        total = int(counts["total"])
-        correct_ct = int(counts.get(corr, 0)) if corr else 0
-        correct_rate = (correct_ct / total) if (total and corr) else None
-
-        # Most common wrong choice
-        most_wrong = None
-        if corr and total:
-            wrong_items = [(k, counts[k]) for k in ["A", "B", "C", "D"] if k != corr]
-            wrong_items.sort(key=lambda x: -x[1])
-            if wrong_items and wrong_items[0][1] > 0:
-                most_wrong = wrong_items[0][0]
-
-        question_stats.append({
-            "question_id": qid,
-            "prompt": prompt,
-            "correct": corr,
-            "counts": {k: int(counts[k]) for k in ["A", "B", "C", "D"]},
-            "total_answers": total,
-            "correct_rate": (float(correct_rate) if correct_rate is not None else None),
-            "most_common_wrong": most_wrong,
-        })
-
-    # Snapshot
-    joined = len(participants)
-    attempted_any = sum(1 for r in leaderboard if r["answered"] > 0)
-    avg_percent = int(round(sum(r["percent"] for r in leaderboard) / joined)) if joined else 0
-
-    # Hardest question = lowest correct_rate (ignoring None)
-    hardest = None
-    rated = [q for q in question_stats if isinstance(q["correct_rate"], float)]
-    if rated:
-        rated.sort(key=lambda q: q["correct_rate"])
-        hardest = {"question_id": rated[0]["question_id"], "prompt": rated[0]["prompt"], "correct_rate": rated[0]["correct_rate"]}
-
-    return {
-        "session_code": s.session_code,
-        "class_id": s.class_id,
-        "title": s.title,
-        "anonymous": s.anonymous,
-        "state": s.state,
-        "created_at": s.created_at.isoformat() if s.created_at else None,
-        "started_at": s.started_at.isoformat() if s.started_at else None,
-        "ended_at": s.ended_at.isoformat() if s.ended_at else None,
-        "summary": {
-            "joined": joined,
-            "attempted_any": attempted_any,
-            "total_questions": total_qs,
-            "avg_percent": avg_percent,
-            "hardest_question": hardest,
-        },
-        "top3": top3,
-        "leaderboard": leaderboard,
-        "question_stats": question_stats,
-    }
-
-
-@app.get("/livequiz/{code}/results")
-def livequiz_results(code: str, db: Session = Depends(get_db)):
-    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    return _build_livequiz_results(db, s)
-
-def _build_livequiz_results(db: Session, s: LiveQuizSessionModel) -> dict:
-    qs = _load_questions(s)
 
     # Map question_id -> correct option (A/B/C/D) if available
     correct_map = {}
@@ -1544,99 +1376,73 @@ def livequiz_results(code: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Session not found")
     return _build_livequiz_results(db, s)
 
-
+    
 @app.get("/teacher-planner")
-def get_teacher_planner(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    notes = db.query(TeacherPlannerNoteModel).filter(
-        TeacherPlannerNoteModel.teacher_id == user.id
-    ).all()
+def get_teacher_planner(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    row = (
+        db.query(TeacherPlannerStateModel)
+        .filter(TeacherPlannerStateModel.teacher_id == user.id)
+        .first()
+    )
 
-    tasks = db.query(TeacherPlannerTaskModel).filter(
-        TeacherPlannerTaskModel.teacher_id == user.id
-    ).all()
+    if not row:
+        return {"notes": [], "tasks": [], "updated_at": None}
+
+    try:
+        data = json.loads(row.state_json or '{"notes":[],"tasks":[]}')
+    except Exception:
+        data = {"notes": [], "tasks": []}
 
     return {
-        "notes": [
-    {
-        "id": n.id,
-        "weekKey": n.week_key,
-        "dayIndex": n.day_index,
-        "slotIndex": n.slot_index,
-        "title": n.title,
-        "body": n.body,
-        "relatesTo": json.loads(n.relates_to_json or '{"kind":"general"}'),
-        "updatedAt": n.updated_at,
-    }
-    for n in notes
-],
-        "tasks": [
-    {
-        "id": t.id,
-        "text": t.text,
-        "dueDateISO": getattr(t, "due_date_iso", None),
-        "createdAt": getattr(t, "created_at", 0),
-        "done": getattr(t, "done", False) or t.completed,
-        "archived": getattr(t, "archived", False),
-        "archivedAt": getattr(t, "archived_at", None),
-    }
-    for t in tasks
-],
+        "notes": data.get("notes", []),
+        "tasks": data.get("tasks", []),
+        "updated_at": row.updated_at,
     }
 
-@app.post("/teacher-planner/notes")
-def save_planner_notes(data: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    notes = data.get("notes")
+@app.put("/teacher-planner")
+def save_teacher_planner(
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    notes = payload.get("notes", [])
+    tasks = payload.get("tasks", [])
 
-    if notes is None or not isinstance(notes, list):
-        raise HTTPException(status_code=400, detail="Invalid notes payload")
+    if not isinstance(notes, list) or not isinstance(tasks, list):
+        raise HTTPException(status_code=400, detail="notes and tasks must be arrays")
 
-    db.query(TeacherPlannerNoteModel).filter(
-        TeacherPlannerNoteModel.teacher_id == user.id
-    ).delete()
+    raw = json.dumps(
+        {"notes": notes, "tasks": tasks},
+        ensure_ascii=False,
+    )
 
-    for n in notes:
-        db.add(
-            TeacherPlannerNoteModel(
-                teacher_id=user.id,
-                week_key=n.get("weekKey"),
-                day_index=int(n.get("dayIndex", 0)),
-                slot_index=int(n.get("slotIndex", 0)),
-                title=n.get("title", ""),
-                body=n.get("body", ""),
-                relates_to_json=json.dumps(n.get("relatesTo", {"kind": "general"})),
-                updated_at=int(n.get("updatedAt", 0)),
-            )
+    row = (
+        db.query(TeacherPlannerStateModel)
+        .filter(TeacherPlannerStateModel.teacher_id == user.id)
+        .first()
+    )
+
+    now = datetime.utcnow().isoformat()
+
+    if row:
+        row.state_json = raw
+        row.updated_at = now
+    else:
+        row = TeacherPlannerStateModel(
+            teacher_id=user.id,
+            state_json=raw,
+            updated_at=now,
         )
+        db.add(row)
 
     db.commit()
-    return {"status": "ok"}
+    db.refresh(row)
 
-@app.post("/teacher-planner/tasks")
-def save_planner_tasks(data: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    tasks = data.get("tasks")
+    return {"status": "ok", "updated_at": row.updated_at}
 
-    if tasks is None or not isinstance(tasks, list):
-        raise HTTPException(status_code=400, detail="Invalid tasks payload")
-
-    db.query(TeacherPlannerTaskModel).filter(
-        TeacherPlannerTaskModel.teacher_id == user.id
-    ).delete()
-
-    for t in tasks:
-        db.add(
-            TeacherPlannerTaskModel(
-                teacher_id=user.id,
-                text=t.get("text", ""),
-                due_date_iso=t.get("dueDateISO"),
-                created_at=int(t.get("createdAt", 0)),
-                done=bool(t.get("done", False)),
-                archived=bool(t.get("archived", False)),
-                archived_at=t.get("archivedAt"),
-            )
-        )
-
-    db.commit()
-    return {"status": "ok"}
 
 # =========================================================
 # DB
@@ -3785,6 +3591,7 @@ def generate_report_comment(
         "If behaviour or effort indicators are provided, weave them in naturally. "
         "If a sign-off is provided, place it naturally at the end."
         "Avoid repeating identical sentence structures across comments. "
+        "When mentioning scores, averages, or test results, always format them as whole-number percentages (e.g., 82%) with no decimal places."
     )
 
     if desired_length == "Short":

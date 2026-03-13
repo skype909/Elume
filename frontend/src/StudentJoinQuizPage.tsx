@@ -120,11 +120,14 @@ export default function StudentJoinQuizPage() {
   const [selectedChoice, setSelectedChoice] = useState<ChoiceKey | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  const [lastQuestionId, setLastQuestionId] = useState<string>("");
-  const [lastQuestionIndex, setLastQuestionIndex] = useState<number | null>(null);
+  const lastQuestionIdRef = useRef<string>("");
+  const lastQuestionIndexRef = useRef<number | null>(null);
 
   const [transitioning, setTransitioning] = useState(false);
   const transitionTimerRef = useRef<number | null>(null);
+  const transitionActiveRef = useRef(false);
+  const pendingQuestionRef = useRef<CurrentResponse | null>(null);
+  const [answersLocked, setAnswersLocked] = useState(false);
 
   const pollRef = useRef<number | null>(null);
   const answeringRef = useRef(false);
@@ -218,36 +221,56 @@ export default function StudentJoinQuizPage() {
       const newQid = data.question?.id || "";
       const newIdx = typeof data.current_index === "number" ? data.current_index : null;
 
-      const idChanged = Boolean(newQid) && newQid !== lastQuestionId;
-      const idxChanged = newIdx !== null && newIdx !== lastQuestionIndex;
+      const prevQid = lastQuestionIdRef.current;
+      const prevIdx = lastQuestionIndexRef.current;
+
+      const idChanged = Boolean(newQid) && newQid !== prevQid;
+      const idxChanged = newIdx !== null && newIdx !== prevIdx;
       const questionChanged = idChanged || idxChanged;
 
       if (questionChanged) {
-        window.setTimeout(() => {
+        if (prevQid || prevIdx !== null) {
+          pendingQuestionRef.current = data;
+
+          if (!transitionActiveRef.current) {
+            transitionActiveRef.current = true;
+            setTransitioning(true);
+            setAnswersLocked(true);
+
+            if (transitionTimerRef.current) {
+              window.clearTimeout(transitionTimerRef.current);
+            }
+
+            transitionTimerRef.current = window.setTimeout(() => {
+              const nextData = pendingQuestionRef.current || data;
+              setSelectedChoice(null);
+              setHasAnswered(false);
+              setCurrent(nextData);
+
+              lastQuestionIdRef.current = nextData.question?.id || "";
+              lastQuestionIndexRef.current =
+                typeof nextData.current_index === "number" ? nextData.current_index : null;
+
+              setTransitioning(false);
+              setAnswersLocked(false);
+              transitionActiveRef.current = false;
+              pendingQuestionRef.current = null;
+            }, 1200);
+          }
+        } else {
           setSelectedChoice(null);
           setHasAnswered(false);
-        }, 200);
+          setCurrent(data);
 
-        if (lastQuestionId || lastQuestionIndex !== null) {
-          setTransitioning(true);
-
-          if (transitionTimerRef.current) {
-            window.clearTimeout(transitionTimerRef.current);
-          }
-
-          transitionTimerRef.current = window.setTimeout(() => {
-            setCurrent(data);
-            setTransitioning(false);
-          }, 3000);
-        } else {
+          lastQuestionIdRef.current = newQid;
+          lastQuestionIndexRef.current = newIdx;
+        }
+      } else {
+        if (!transitionActiveRef.current) {
           setCurrent(data);
         }
-
-        setLastQuestionId(newQid);
-        setLastQuestionIndex(newIdx);
-      } else {
-        setCurrent(data);
       }
+
 
       setPollError(null);
 
@@ -325,7 +348,10 @@ export default function StudentJoinQuizPage() {
     return () => {
       stopPolling();
       if (transitionTimerRef.current) window.clearTimeout(transitionTimerRef.current);
+      transitionActiveRef.current = false;
+      pendingQuestionRef.current = null;
     };
+
   }, []);
 
   async function joinWithName() {
@@ -578,22 +604,21 @@ export default function StudentJoinQuizPage() {
                     <img src={elumeLogo} alt="Elume" className="h-10 w-10 object-contain" />
                   </div>
 
-                  <div className="text-center">
-                    <div className="text-3xl font-black text-indigo-600">
-                      Next Question
-                    </div>
-
-                    <div className="mt-2 text-lg text-slate-600">
-                      Get ready…
-                    </div>
-
-                    <div className="mt-3 text-sm font-bold uppercase tracking-[0.2em] text-slate-500">
-                      Question {questionNumberText}
-                    </div>
+                  <div className="mt-5 text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">
+                    Next question
                   </div>
+
+                  <div className="mt-3 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
+                    Get ready…
+                  </div>
+
+                  <div className="mt-3 text-base font-semibold text-slate-600">
+                    A new question is loading now.
+                  </div>
+
                   {questionNumberText ? (
-                    <div className="mt-5 inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-4 py-2 text-sm font-black text-emerald-800">
-                      Up next: Q {questionNumberText}
+                    <div className="mt-6 inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-5 py-2 text-sm font-black text-emerald-800">
+                      Coming up: Question {questionNumberText}
                     </div>
                   ) : null}
                 </div>
@@ -611,6 +636,15 @@ export default function StudentJoinQuizPage() {
                     <div className="mt-2 text-xl font-black leading-tight tracking-tight text-slate-900 sm:text-2xl">
                       {q.prompt}
                     </div>
+
+                    {answersLocked && (
+                      <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-900">
+                        Answers locked ✓
+                        <span className="ml-2 text-xs font-semibold text-amber-700">
+                          Get ready for the next question.
+                        </span>
+                      </div>
+                    )}
 
                     {hasAnswered && selectedChoice ? (
                       <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-900">
@@ -637,7 +671,7 @@ export default function StudentJoinQuizPage() {
                         <button
                           key={k}
                           type="button"
-                          disabled={disabled || hasAnswered}
+                          disabled={disabled}
                           onClick={() => submitAnswer(k)}
                           className={`w-full rounded-[26px] border px-4 py-4 text-left text-base font-black shadow-sm transition active:scale-[0.99] sm:px-5 sm:py-5 ${disabled
                             ? "border-slate-200 bg-slate-50 text-slate-300"

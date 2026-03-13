@@ -5,19 +5,20 @@ import { apiFetch } from "./api";
 /**
  * TeacherPlanner.tsx
  *
- * - Mon–Fri weekly planner (6 slots per day)
+ * - Mon–Fri weekly planner (6 class slots + 1 extra slot per day)
  * - Click slot => modal editor (full note + relates-to dropdown)
  * - Shows calendar events on each day via a bell + hover/click popover
  * - Tasks checklist sticky bottom-right (due date optional) with archive/revive/delete
  *
  * Persistence:
- * - Notes + tasks stored in localStorage (no backend changes required)
+ * - Notes + tasks loaded from and saved to backend
  * - Classes + calendar events fetched from backend
  *
  * Backend references:
- * - GET /classes (teacher-owned classes) :contentReference[oaicite:5]{index=5}
- * - GET /calendar-events (global + class events) :contentReference[oaicite:6]{index=6}
- * - Calendar schema uses event_date/end_date/all_day/event_type :contentReference[oaicite:7]{index=7}
+ * - GET /classes
+ * - GET /calendar-events
+ * - GET /teacher-planner
+ * - PUT /teacher-planner
  */
 
 // -----------------------------
@@ -46,7 +47,7 @@ type PlannerNote = {
     id: string;
     weekKey: string; // YYYY-MM-DD (monday)
     dayIndex: number; // 0..4 (Mon..Fri)
-    slotIndex: number; // 0..5
+    slotIndex: number; // 0..6
     title: string; // short (first line)
     body: string; // full note
     relatesTo: RelatesTo;
@@ -163,7 +164,7 @@ async function loadPlanner(): Promise<{ notes: PlannerNote[]; tasks: TaskItem[] 
             text: String(t.text ?? ""),
             dueDateISO: t.dueDateISO ? String(t.dueDateISO) : undefined,
             createdAt: Number(t.createdAt ?? Date.now()),
-            done: Boolean(t.done ?? t.completed ?? false),
+            done: Boolean(t.done ?? false),
             archived: Boolean(t.archived ?? false),
             archivedAt: t.archivedAt ? Number(t.archivedAt) : undefined,
         }))
@@ -172,17 +173,10 @@ async function loadPlanner(): Promise<{ notes: PlannerNote[]; tasks: TaskItem[] 
     return { notes, tasks };
 }
 
-async function savePlannerNotes(notes: PlannerNote[]) {
-    await apiFetch("/teacher-planner/notes", {
-        method: "POST",
-        body: JSON.stringify({ notes }),
-    });
-}
-
-async function savePlannerTasks(tasks: TaskItem[]) {
-    await apiFetch("/teacher-planner/tasks", {
-        method: "POST",
-        body: JSON.stringify({ tasks }),
+async function savePlanner(notes: PlannerNote[], tasks: TaskItem[]) {
+    await apiFetch("/teacher-planner", {
+        method: "PUT",
+        body: JSON.stringify({ notes, tasks }),
     });
 }
 
@@ -201,6 +195,7 @@ export default function TeacherPlanner() {
     const [notes, setNotes] = useState<PlannerNote[]>([]);
     const [tasks, setTasks] = useState<TaskItem[]>([]);
     const [plannerLoadState, setPlannerLoadState] = useState<"idle" | "success" | "error">("idle");
+    const plannerHydratedRef = useRef(false);
 
     // Week navigation
     const [weekMonday, setWeekMonday] = useState<Date>(() => startOfWeekMonday(new Date()));
@@ -236,33 +231,33 @@ export default function TeacherPlanner() {
             .catch(() => setClasses([]));
     }, []);
 
-    // -----------------------------
-    // Load calendar events (all)
-    // -----------------------------
     useEffect(() => {
         let alive = true;
-        (async () => {
-            setLoadingEvents(true);
-            try {
-                const data = await apiFetch("/calendar-events");
+        setLoadingEvents(true);
+
+        apiFetch("/calendar-events")
+            .then((data) => {
                 if (!alive) return;
                 setEvents(Array.isArray(data) ? data : []);
-            } catch {
+            })
+            .catch((err) => {
                 if (!alive) return;
+                console.error("Failed to load calendar events", err);
                 setEvents([]);
-            } finally {
-                if (!alive) return;
-                setLoadingEvents(false);
-            }
-        })();
+            })
+            .finally(() => {
+                if (alive) setLoadingEvents(false);
+            });
+
         return () => {
             alive = false;
         };
     }, []);
 
     // -----------------------------
-    // Load planner data from backend
+    // Load planner data
     // -----------------------------
+
     useEffect(() => {
         let alive = true;
 
@@ -271,12 +266,16 @@ export default function TeacherPlanner() {
                 const data = await loadPlanner();
                 if (!alive) return;
 
+                plannerHydratedRef.current = false;
                 setNotes(Array.isArray(data.notes) ? data.notes : []);
                 setTasks(Array.isArray(data.tasks) ? data.tasks : []);
                 setPlannerLoadState("success");
+
+                setTimeout(() => {
+                    if (alive) plannerHydratedRef.current = true;
+                }, 0);
             } catch (err) {
                 if (!alive) return;
-
                 console.error("Failed to load planner data", err);
                 setPlannerLoadState("error");
             }
@@ -284,27 +283,23 @@ export default function TeacherPlanner() {
 
         return () => {
             alive = false;
+            plannerHydratedRef.current = false;
         };
     }, []);
 
-    // -----------------------------
-    // Persist planner changes to backend
-    // -----------------------------
     useEffect(() => {
         if (plannerLoadState !== "success") return;
+        if (!plannerHydratedRef.current) return;
 
-        savePlannerNotes(notes).catch((err) => {
-            console.error("Failed to save planner notes", err);
-        });
-    }, [notes, plannerLoadState]);
+        const timer = window.setTimeout(() => {
+            savePlanner(notes, tasks).catch((err) => {
+                console.error("Failed to save planner", err);
+            });
+        }, 300);
 
-    useEffect(() => {
-        if (plannerLoadState !== "success") return;
+        return () => window.clearTimeout(timer);
+    }, [notes, tasks, plannerLoadState]);
 
-        savePlannerTasks(tasks).catch((err) => {
-            console.error("Failed to save planner tasks", err);
-        });
-    }, [tasks, plannerLoadState]);
     // -----------------------------
     // Derived: week keys/dates
     // -----------------------------
@@ -939,7 +934,7 @@ export default function TeacherPlanner() {
                                         </div>
 
                                         <div className="mt-3 text-xs text-slate-600">
-                                            Saves locally for now (no server work needed). We can move this to SQLite later.
+                                            Saves to your account automatically.
                                         </div>
                                     </div>
                                 </div>

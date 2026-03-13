@@ -178,7 +178,13 @@ function normaliseSavedQuiz(q: SavedQuizAny): NormalisedQuiz | null {
       }
 
       let correct: ChoiceKey | null | undefined = undefined;
-      const rawCorrect = rq.correct ?? rq.answer ?? rq.correctAnswer ?? rq.key ?? null;
+      const rawCorrect =
+        rq.correct ??
+        rq.answer ??
+        rq.correctAnswer ??
+        rq.correctIndex ??
+        rq.key ??
+        null;
 
       if (rawCorrect === null || rawCorrect === undefined || rawCorrect === "") {
         correct = null;
@@ -696,11 +702,10 @@ export default function LiveQuizPage() {
                 <div className="mt-5 grid grid-cols-2 gap-3">
                   <button
                     type="button"
-                    className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${
-                      mode === "saved"
+                    className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${mode === "saved"
                         ? "border-slate-900 bg-slate-900 text-white shadow-md"
                         : "border-slate-200 bg-white text-slate-800 hover:-translate-y-0.5 hover:bg-slate-50"
-                    }`}
+                      }`}
                     onClick={() => setMode("saved")}
                   >
                     Use saved quiz
@@ -708,11 +713,10 @@ export default function LiveQuizPage() {
 
                   <button
                     type="button"
-                    className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${
-                      mode === "custom"
+                    className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${mode === "custom"
                         ? "border-slate-900 bg-slate-900 text-white shadow-md"
                         : "border-slate-200 bg-white text-slate-800 hover:-translate-y-0.5 hover:bg-slate-50"
-                    }`}
+                      }`}
                     onClick={() => setMode("custom")}
                   >
                     Quick custom

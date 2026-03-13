@@ -1117,7 +1117,7 @@ export default function ClassPage() {
             { label: "Whiteboard", to: `/#/whiteboard/${classId}` },
             { label: "Collaborate", to: `/class/${classId}/collaboration` },
             { label: "eBooks", to: null },
-            { label: "Admin", to: `/class/${classId}/admin` },
+            { label: "Class Admin", to: `/class/${classId}/admin` },
           ].map((item) => (
             <button
               key={item.label}
