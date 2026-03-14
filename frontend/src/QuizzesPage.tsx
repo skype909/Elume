@@ -44,6 +44,14 @@ type GenerateQuizResponse = {
 /** ---------------- Helpers ---------------- */
 const API_BASE = "/api";
 
+function authHeaders(includeContentType = true): Record<string, string> {
+  const token = localStorage.getItem("elume_token");
+  return {
+    ...(includeContentType ? { "Content-Type": "application/json" } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
 }
@@ -120,8 +128,6 @@ export default function QuizzesPage() {
   const { id } = useParams<{ id: string }>();
   const classId = Number(id);
 
-  const storageKey = `elume:quizzes:class:${classId}`;
-
   const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -166,28 +172,60 @@ export default function QuizzesPage() {
 
   const [playing, setPlaying] = useState<PlayState | null>(null);
 
-  /** --------- Persistence --------- */
-  useEffect(() => {
+  /** --------- Persistence / API --------- */
+  async function fetchQuizzes() {
+    if (!classId || Number.isNaN(classId)) {
+      setQuizzes([]);
+      return;
+    }
+
     try {
-      const raw = localStorage.getItem(storageKey);
-      if (!raw) {
-        setQuizzes([]);
-        return;
+      setError(null);
+
+      const res = await fetch(`${API_BASE}/classes/${classId}/quizzes`, {
+        headers: authHeaders(),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error((data as any)?.detail || `Failed to load quizzes (${res.status})`);
       }
-      const parsed = JSON.parse(raw) as QuizItem[];
-      setQuizzes(Array.isArray(parsed) ? parsed : []);
-    } catch {
+
+      const mapped: QuizItem[] = (Array.isArray(data) ? data : []).map((q: any) => ({
+        id: String(q.id),
+        title: String(q.title || ""),
+        category: String(q.category || "General"),
+        description: String(q.description || ""),
+        createdAt: q.created_at ? new Date(q.created_at).getTime() : Date.now(),
+        questions: Array.isArray(q.questions)
+          ? [...q.questions]
+            .sort((a: any, b: any) => Number(a.position ?? 0) - Number(b.position ?? 0))
+            .map((qq: any) => ({
+              id: String(qq.id),
+              prompt: String(qq.prompt || ""),
+              choices: [
+                String(qq.choices?.[0] || ""),
+                String(qq.choices?.[1] || ""),
+                String(qq.choices?.[2] || ""),
+                String(qq.choices?.[3] || ""),
+              ] as [string, string, string, string],
+              correctIndex: Math.max(0, Math.min(3, Number(qq.correct_index ?? 0))) as 0 | 1 | 2 | 3,
+              explanation: qq.explanation ? String(qq.explanation) : undefined,
+            }))
+          : [],
+      }));
+
+      setQuizzes(mapped);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load quizzes.");
       setQuizzes([]);
     }
-  }, [storageKey]);
+  }
 
   useEffect(() => {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(quizzes));
-    } catch {
-      // ignore
-    }
-  }, [quizzes, storageKey]);
+    fetchQuizzes();
+  }, [classId]);
+
 
   /** --------- Derived --------- */
   const grouped = useMemo(() => {
@@ -208,6 +246,13 @@ export default function QuizzesPage() {
     if (!editingQuizId) return null;
     return quizzes.find((q) => q.id === editingQuizId) || null;
   }, [editingQuizId, quizzes]);
+
+  useEffect(() => {
+    if (editingQuizId && !quizzes.some((q) => q.id === editingQuizId)) {
+      setEditingQuizId(null);
+    }
+  }, [editingQuizId, quizzes]);
+
 
   const playingQuiz = useMemo(() => {
     if (!playing) return null;
@@ -253,41 +298,82 @@ export default function QuizzesPage() {
     setShowQuizModal(true);
   }
 
-  function saveQuizMeta() {
+  async function saveQuizMeta() {
     resetError();
     const title = quizTitle.trim();
     if (!title) return setError("Quiz title can’t be empty.");
 
-    const category = clampCategory(quizCategory);
-    const description = quizDescription.trim();
+    const payload = {
+      title,
+      category: clampCategory(quizCategory),
+      description: quizDescription.trim(),
+    };
 
-    if (editingQuizId) {
-      setQuizzes((prev) =>
-        prev.map((q) =>
-          q.id === editingQuizId ? { ...q, title, category, description } : q
-        )
-      );
-    } else {
-      const newQuiz: QuizItem = {
-        id: uid("quiz"),
-        title,
-        category,
-        description,
-        createdAt: Date.now(),
-        questions: [],
-      };
-      setQuizzes((prev) => [newQuiz, ...prev]);
-      setEditingQuizId(newQuiz.id);
+    try {
+      if (editingQuizId) {
+        const res = await fetch(`${API_BASE}/quizzes/${editingQuizId}`, {
+          method: "PUT",
+          headers: authHeaders(),
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error((data as any)?.detail || `Save failed (${res.status})`);
+        }
+      } else {
+        const res = await fetch(`${API_BASE}/classes/${classId}/quizzes`, {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            ...payload,
+            questions: [],
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error((data as any)?.detail || `Create failed (${res.status})`);
+        }
+
+        setEditingQuizId(String(data.id));
+      }
+
+      await fetchQuizzes();
+      setShowQuizModal(false);
+    } catch (e: any) {
+      setError(e?.message || "Failed to save quiz.");
     }
-
-    setShowQuizModal(false);
   }
 
-  function deleteQuiz(quizId: string) {
-    setQuizzes((prev) => prev.filter((q) => q.id !== quizId));
-    if (editingQuizId === quizId) setEditingQuizId(null);
-    if (playing?.quizId === quizId) setPlaying(null);
+
+  async function deleteQuiz(quizId: string) {
+    try {
+      const res = await fetch(`${API_BASE}/quizzes/${quizId}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.detail || `Delete failed (${res.status})`);
+      }
+
+      await fetchQuizzes();
+
+      if (editingQuizId === quizId) setEditingQuizId(null);
+      if (playing?.quizId === quizId) setPlaying(null);
+    } catch (e: any) {
+      setError(e?.message || "Failed to delete quiz.");
+    }
   }
+
 
   function resetQuestionDraft() {
     setQPrompt("");
@@ -326,7 +412,7 @@ export default function QuizzesPage() {
     setShowQuestionModal(true);
   }
 
-  function saveQuestion() {
+  async function saveQuestion() {
     resetError();
     if (!editingQuizId) return setError("No quiz selected.");
 
@@ -340,41 +426,65 @@ export default function QuizzesPage() {
 
     if (!a || !b || !c || !d) return setError("All 4 options must be filled.");
 
-    const newQ: MCQQuestion = {
-      id: editingQuestionId || uid("q"),
+    const payload = {
       prompt,
       choices: [a, b, c, d],
-      correctIndex: qCorrect,
-      explanation: qExplanation.trim() || undefined,
+      correct_index: qCorrect,
+      explanation: qExplanation.trim() || null,
     };
 
-    setQuizzes((prev) =>
-      prev.map((quiz) => {
-        if (quiz.id !== editingQuizId) return quiz;
-        const existing = quiz.questions.find((x) => x.id === newQ.id);
-        if (existing) {
-          return {
-            ...quiz,
-            questions: quiz.questions.map((x) => (x.id === newQ.id ? newQ : x)),
-          };
-        }
-        return { ...quiz, questions: [newQ, ...quiz.questions] };
-      })
-    );
+    try {
+      const url = editingQuestionId
+        ? `${API_BASE}/quizzes/${editingQuizId}/questions/${editingQuestionId}`
+        : `${API_BASE}/quizzes/${editingQuizId}/questions`;
 
-    setShowQuestionModal(false);
+      const method = editingQuestionId ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error((data as any)?.detail || `Save failed (${res.status})`);
+      }
+
+      await fetchQuizzes();
+      setShowQuestionModal(false);
+      resetQuestionDraft();
+    } catch (e: any) {
+      setError(e?.message || "Failed to save question.");
+    }
   }
 
-  function deleteQuestion(questionId: string) {
+  async function deleteQuestion(questionId: string) {
     if (!editingQuizId) return;
-    setQuizzes((prev) =>
-      prev.map((quiz) =>
-        quiz.id === editingQuizId
-          ? { ...quiz, questions: quiz.questions.filter((q) => q.id !== questionId) }
-          : quiz
-      )
-    );
+
+    try {
+      const res = await fetch(`${API_BASE}/quizzes/${editingQuizId}/questions/${questionId}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.detail || `Delete failed (${res.status})`);
+      }
+
+      await fetchQuizzes();
+    } catch (e: any) {
+      setError(e?.message || "Failed to delete question.");
+    }
   }
+
 
   /** --------- Play mode --------- */
   function startPlay(quizId: string, shuffleQuestions: boolean) {
@@ -455,7 +565,10 @@ export default function QuizzesPage() {
     setGenLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/notes/${classId}?kind=${kind}`);
+      const res = await fetch(`${API_BASE}/notes/${classId}?kind=${kind}`, {
+        headers: authHeaders(false),
+      });
+
       if (!res.ok) throw new Error(`Failed to load PDFs (${res.status})`);
       const data = (await res.json()) as NoteItem[];
       setGenNotes(Array.isArray(data) ? data : []);
@@ -491,22 +604,22 @@ export default function QuizzesPage() {
     try {
       const res = await fetch(`${API_BASE}/ai/generate-quiz-from-note`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-       body: JSON.stringify({
-  class_id: Number(classId),
-  note_id: Number(genNoteId),
-  num_questions: Number(genNum),
-}),
+        headers: authHeaders(),
+        body: JSON.stringify({
+          class_id: Number(classId),
+          note_id: Number(genNoteId),
+          num_questions: Number(genNum),
+        }),
 
       });
 
-     const data = (await res.json()) as GenerateQuizResponse;
+      const data = (await res.json()) as GenerateQuizResponse;
 
 
-if (!res.ok) {
-  const detail = (data as any)?.detail ?? JSON.stringify(data);
-  throw new Error(detail || `Generate failed (${res.status})`);
-}
+      if (!res.ok) {
+        const detail = (data as any)?.detail ?? JSON.stringify(data);
+        throw new Error(detail || `Generate failed (${res.status})`);
+      }
 
 
       const safeQuestions: MCQQuestion[] = ((data as any).questions || []).map((q: any) => {
@@ -528,19 +641,34 @@ if (!res.ok) {
         };
       });
 
-      const newQuiz: QuizItem = {
-        id: uid("quiz"),
+      const createPayload = {
         title: (data.title || "Generated Quiz").trim(),
         category: clampCategory(data.category || "General"),
         description: (data.description || "Generated from PDF").trim(),
-        createdAt: Date.now(),
-        questions: safeQuestions,
+        questions: safeQuestions.map((q, idx) => ({
+          prompt: q.prompt,
+          choices: q.choices,
+          correct_index: q.correctIndex,
+          explanation: q.explanation || null,
+          position: idx,
+        })),
       };
 
-      setQuizzes((prev) => [newQuiz, ...prev]);
-      setEditingQuizId(newQuiz.id);
+      const saveRes = await fetch(`${API_BASE}/classes/${classId}/quizzes`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(createPayload),
+      });
 
+      const saved = await saveRes.json();
+      if (!saveRes.ok) {
+        throw new Error((saved as any)?.detail || `Quiz save failed (${saveRes.status})`);
+      }
+
+      await fetchQuizzes();
+      setEditingQuizId(String(saved.id));
       setShowGenerate(false);
+
     } catch (e: any) {
       setError(e?.message || "Generate failed.");
     } finally {
@@ -647,11 +775,10 @@ if (!res.ok) {
                           key={idx}
                           type="button"
                           onClick={() => setAnswer(playView.qid, i)}
-                          className={`w-full text-left rounded-2xl border-2 px-4 py-3 text-sm ${
-                            active
-                              ? "border-emerald-600 bg-emerald-50"
-                              : "border-slate-200 bg-white hover:bg-slate-50"
-                          }`}
+                          className={`w-full text-left rounded-2xl border-2 px-4 py-3 text-sm ${active
+                            ? "border-emerald-600 bg-emerald-50"
+                            : "border-slate-200 bg-white hover:bg-slate-50"
+                            }`}
                         >
                           <span className="font-extrabold mr-2">{["A", "B", "C", "D"][idx]}.</span>
                           {choice}
@@ -1011,11 +1138,10 @@ if (!res.ok) {
                           key={label}
                           type="button"
                           onClick={() => setQCorrect(i)}
-                          className={`rounded-full border-2 px-4 py-2 text-sm ${
-                            active
-                              ? "border-emerald-700 bg-emerald-600 text-white"
-                              : "border-slate-200 bg-white hover:bg-slate-50"
-                          }`}
+                          className={`rounded-full border-2 px-4 py-2 text-sm ${active
+                            ? "border-emerald-700 bg-emerald-600 text-white"
+                            : "border-slate-200 bg-white hover:bg-slate-50"
+                            }`}
                         >
                           {label}
                         </button>
@@ -1085,11 +1211,10 @@ if (!res.ok) {
             <div className="mt-4 flex items-center gap-2">
               <button
                 type="button"
-                className={`rounded-full border-2 px-4 py-2 text-sm ${
-                  genKind === "notes"
-                    ? "border-emerald-700 bg-emerald-600 text-white"
-                    : "border-slate-200 bg-white hover:bg-slate-50"
-                }`}
+                className={`rounded-full border-2 px-4 py-2 text-sm ${genKind === "notes"
+                  ? "border-emerald-700 bg-emerald-600 text-white"
+                  : "border-slate-200 bg-white hover:bg-slate-50"
+                  }`}
                 onClick={() => {
                   setGenKind("notes");
                   fetchNotes("notes");
@@ -1099,11 +1224,10 @@ if (!res.ok) {
               </button>
               <button
                 type="button"
-                className={`rounded-full border-2 px-4 py-2 text-sm ${
-                  genKind === "exam"
-                    ? "border-emerald-700 bg-emerald-600 text-white"
-                    : "border-slate-200 bg-white hover:bg-slate-50"
-                }`}
+                className={`rounded-full border-2 px-4 py-2 text-sm ${genKind === "exam"
+                  ? "border-emerald-700 bg-emerald-600 text-white"
+                  : "border-slate-200 bg-white hover:bg-slate-50"
+                  }`}
                 onClick={() => {
                   setGenKind("exam");
                   fetchNotes("exam");
@@ -1155,11 +1279,10 @@ if (!res.ok) {
                                 key={n.id}
                                 type="button"
                                 onClick={() => setGenNoteId(n.id)}
-                                className={`w-full rounded-xl border-2 px-3 py-2 text-left text-sm ${
-                                  active
-                                    ? "border-emerald-600 bg-emerald-50"
-                                    : "border-slate-200 bg-white hover:bg-slate-50"
-                                }`}
+                                className={`w-full rounded-xl border-2 px-3 py-2 text-left text-sm ${active
+                                  ? "border-emerald-600 bg-emerald-50"
+                                  : "border-slate-200 bg-white hover:bg-slate-50"
+                                  }`}
                               >
                                 <div className="font-semibold truncate">{n.filename}</div>
                                 <div className="text-xs text-slate-500">ID: {n.id}</div>

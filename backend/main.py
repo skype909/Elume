@@ -934,6 +934,296 @@ async def collab_room_socket(websocket: WebSocket, code: str, room_key: str):
     except Exception:
         collab_room_manager.disconnect(code, room_key, websocket)
 
+def _assert_class_access(class_id: int, db: Session, user: models.UserModel):
+    cls = (
+        db.query(ClassModel)
+        .filter(ClassModel.id == class_id)
+        .filter(ClassModel.owner_user_id == user.id)
+        .first()
+    )
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+    return cls
+
+
+def _quiz_out(q: models.SavedQuizModel) -> dict:
+    return {
+        "id": q.id,
+        "class_id": q.class_id,
+        "title": q.title,
+        "category": q.category,
+        "description": q.description,
+        "created_at": q.created_at,
+        "updated_at": q.updated_at,
+        "questions": [
+            {
+                "id": qq.id,
+                "prompt": qq.prompt,
+                "choices": [qq.choice_a, qq.choice_b, qq.choice_c, qq.choice_d],
+                "correct_index": qq.correct_index,
+                "explanation": qq.explanation,
+                "position": qq.position,
+            }
+            for qq in sorted(q.questions, key=lambda x: x.position)
+        ],
+    }
+
+
+def _normalise_choices(choices: list[str]) -> list[str]:
+    vals = [str(x).strip() for x in (choices or [])][:4]
+    while len(vals) < 4:
+        vals.append("")
+    if not all(vals[:4]):
+        raise HTTPException(status_code=400, detail="Exactly 4 non-empty choices are required")
+    return vals[:4]
+
+@app.get("/classes/{class_id}/quizzes", response_model=List[schemas.SavedQuizOut])
+def list_saved_quizzes(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    _assert_class_access(class_id, db, user)
+
+    rows = (
+        db.query(models.SavedQuizModel)
+        .filter(models.SavedQuizModel.class_id == class_id)
+        .filter(models.SavedQuizModel.owner_user_id == user.id)
+        .order_by(models.SavedQuizModel.created_at.desc())
+        .all()
+    )
+    return [_quiz_out(row) for row in rows]
+
+
+@app.post("/classes/{class_id}/quizzes", response_model=schemas.SavedQuizOut)
+def create_saved_quiz(
+    class_id: int,
+    payload: schemas.SavedQuizCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    _assert_class_access(class_id, db, user)
+
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+
+    now = datetime.utcnow()
+    quiz = models.SavedQuizModel(
+        class_id=class_id,
+        owner_user_id=user.id,
+        title=title,
+        category=(payload.category or "General").strip() or "General",
+        description=(payload.description or "").strip() or None,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(quiz)
+    db.flush()
+
+    for idx, q in enumerate(payload.questions or []):
+        choices = _normalise_choices(q.choices)
+        row = models.SavedQuizQuestionModel(
+            quiz_id=quiz.id,
+            prompt=(q.prompt or "").strip(),
+            choice_a=choices[0],
+            choice_b=choices[1],
+            choice_c=choices[2],
+            choice_d=choices[3],
+            correct_index=max(0, min(3, int(q.correct_index or 0))),
+            explanation=(q.explanation or "").strip() or None,
+            position=int(q.position if q.position is not None else idx),
+            created_at=now,
+            updated_at=now,
+        )
+        if not row.prompt:
+            raise HTTPException(status_code=400, detail="Question prompt is required")
+        db.add(row)
+
+    db.commit()
+    db.refresh(quiz)
+    return _quiz_out(quiz)
+
+
+@app.put("/quizzes/{quiz_id}", response_model=schemas.SavedQuizOut)
+def update_saved_quiz(
+    quiz_id: int,
+    payload: schemas.SavedQuizUpdate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    quiz = (
+        db.query(models.SavedQuizModel)
+        .filter(models.SavedQuizModel.id == quiz_id)
+        .filter(models.SavedQuizModel.owner_user_id == user.id)
+        .first()
+    )
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    if payload.title is not None:
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Title is required")
+        quiz.title = title
+
+    if payload.category is not None:
+        quiz.category = payload.category.strip() or "General"
+
+    if payload.description is not None:
+        quiz.description = payload.description.strip() or None
+
+    quiz.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(quiz)
+    return _quiz_out(quiz)
+
+
+@app.delete("/quizzes/{quiz_id}")
+def delete_saved_quiz(
+    quiz_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    quiz = (
+        db.query(models.SavedQuizModel)
+        .filter(models.SavedQuizModel.id == quiz_id)
+        .filter(models.SavedQuizModel.owner_user_id == user.id)
+        .first()
+    )
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    db.delete(quiz)
+    db.commit()
+    return {"message": "deleted"}
+
+
+@app.post("/quizzes/{quiz_id}/questions", response_model=schemas.SavedQuizOut)
+def add_quiz_question(
+    quiz_id: int,
+    payload: schemas.SavedQuizQuestionCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    quiz = (
+        db.query(models.SavedQuizModel)
+        .filter(models.SavedQuizModel.id == quiz_id)
+        .filter(models.SavedQuizModel.owner_user_id == user.id)
+        .first()
+    )
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    choices = _normalise_choices(payload.choices)
+    prompt = (payload.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Question prompt is required")
+
+    max_pos = max([q.position for q in quiz.questions], default=-1)
+    row = models.SavedQuizQuestionModel(
+        quiz_id=quiz.id,
+        prompt=prompt,
+        choice_a=choices[0],
+        choice_b=choices[1],
+        choice_c=choices[2],
+        choice_d=choices[3],
+        correct_index=max(0, min(3, int(payload.correct_index or 0))),
+        explanation=(payload.explanation or "").strip() or None,
+        position=int(payload.position) if payload.position is not None else max_pos + 1,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(row)
+    quiz.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(quiz)
+    return _quiz_out(quiz)
+
+
+@app.put("/quizzes/{quiz_id}/questions/{question_id}", response_model=schemas.SavedQuizOut)
+def update_quiz_question(
+    quiz_id: int,
+    question_id: int,
+    payload: schemas.SavedQuizQuestionUpdate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    quiz = (
+        db.query(models.SavedQuizModel)
+        .filter(models.SavedQuizModel.id == quiz_id)
+        .filter(models.SavedQuizModel.owner_user_id == user.id)
+        .first()
+    )
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    q = (
+        db.query(models.SavedQuizQuestionModel)
+        .filter(models.SavedQuizQuestionModel.id == question_id)
+        .filter(models.SavedQuizQuestionModel.quiz_id == quiz.id)
+        .first()
+    )
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    if payload.prompt is not None:
+        prompt = payload.prompt.strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Question prompt is required")
+        q.prompt = prompt
+
+    if payload.choices is not None:
+        choices = _normalise_choices(payload.choices)
+        q.choice_a, q.choice_b, q.choice_c, q.choice_d = choices
+
+    if payload.correct_index is not None:
+        q.correct_index = max(0, min(3, int(payload.correct_index)))
+
+    if payload.explanation is not None:
+        q.explanation = payload.explanation.strip() or None
+
+    if payload.position is not None:
+        q.position = int(payload.position)
+
+    q.updated_at = datetime.utcnow()
+    quiz.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(quiz)
+    return _quiz_out(quiz)
+
+
+@app.delete("/quizzes/{quiz_id}/questions/{question_id}", response_model=schemas.SavedQuizOut)
+def delete_quiz_question(
+    quiz_id: int,
+    question_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    quiz = (
+        db.query(models.SavedQuizModel)
+        .filter(models.SavedQuizModel.id == quiz_id)
+        .filter(models.SavedQuizModel.owner_user_id == user.id)
+        .first()
+    )
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    q = (
+        db.query(models.SavedQuizQuestionModel)
+        .filter(models.SavedQuizQuestionModel.id == question_id)
+        .filter(models.SavedQuizQuestionModel.quiz_id == quiz.id)
+        .first()
+    )
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    db.delete(q)
+    quiz.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(quiz)
+    return _quiz_out(quiz)
+
 @app.post("/livequiz/create", response_model=LiveQuizCreateResponse)
 def livequiz_create(payload: LiveQuizCreateRequest, db: Session = Depends(get_db)):
     cls = db.query(ClassModel).filter(ClassModel.id == payload.class_id).first()

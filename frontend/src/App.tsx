@@ -30,6 +30,7 @@ import CollaborationPage from "./CollaborationPage";
 
 import ELogo2 from "./assets/ELogo2.png";
 import PlannerLogo from "./assets/Planner_Logo.png";
+import pilotUserBadge from "./assets/Elume Pilot User.png";
 
 
 type ClassItem = {
@@ -1317,15 +1318,19 @@ export default function App() {
   );
   const userEmail = useMemo(() => getEmailFromToken(), [isAuthed]);
   const userLabel = userEmail ?? "";
-
+  const pilotUsers = new Set(["admin@elume.ie", "rob@elume.ie", "emma@elume.ie", "gillian@elume.ie"]);
+  const isPilotUser = userEmail ? pilotUsers.has(userEmail.toLowerCase()) : false;
   const location = useLocation();
   const navigate = useNavigate();
 
+  // Dashboard is the root route in App.tsx
+  const isDashboard = location.pathname === "/";
+
   // Public routes should NOT require login
   const isPublicRoute =
-  location.pathname.startsWith("/s/") ||
-  location.pathname.startsWith("/join/") ||
-  location.pathname.startsWith("/collab/join/");
+    location.pathname.startsWith("/s/") ||
+    location.pathname.startsWith("/join/") ||
+    location.pathname.startsWith("/collab/join/");
 
   function logout() {
     clearToken();
@@ -1388,10 +1393,18 @@ export default function App() {
         <Route path="/create-resources" element={<CreateResources />} />
       </Routes>
       {userEmail && (
-        <div className="fixed bottom-3 right-3 z-50 rounded-lg border border-slate-200 bg-white/90 px-2 py-1 text-[10px] leading-tight text-slate-600 shadow-sm">
-          <div className="opacity-70">Signed in</div>
-          <div className="font-semibold truncate max-w-[140px]">
-            {userEmail}
+        <div className="fixed bottom-3 right-3 z-50 flex flex-col items-end gap-2">
+          {isDashboard && isPilotUser && (
+            <img
+              src={pilotUserBadge}
+              alt="Pilot User"
+              className="hidden md:block w-[75px] h-auto object-contain drop-shadow-md"
+            />
+          )}
+
+          <div className="rounded-lg border border-slate-200 bg-white/90 px-2 py-1 text-[10px] leading-tight text-slate-600 shadow-sm">
+            <div className="opacity-70">Signed in</div>
+            <div className="font-semibold truncate max-w-[140px]">{userEmail}</div>
           </div>
         </div>
       )}

@@ -398,65 +398,10 @@ export default function ClassPage() {
   const [postToDelete, setPostToDelete] = useState<number | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [bellOpen, setBellOpen] = useState(false);
-  // Random Number Generator (RNG) widget (right panel)
-  const [rngOpen, setRngOpen] = useState(false);
-  const [rngMin, setRngMin] = useState(1);
-  const [rngMax, setRngMax] = useState(20);
-  const [rngResult, setRngResult] = useState<number | null>(null);
-  const [rngSpinning, setRngSpinning] = useState(false);
-  const [rngRotation, setRngRotation] = useState(0);
-
-
-  const navigate = useNavigate();
-
   // UI-only: mock "group" like your PDF
   const [groupLabel, setGroupLabel] = useState("1E");
+  const navigate = useNavigate();
 
-  const rngCount = Math.max(1, Math.min(40, rngMax - rngMin + 1)); // cap to keep wheel sane
-  const rngValid = Number.isFinite(rngMin) && Number.isFinite(rngMax) && rngMin < rngMax && rngCount <= 40;
-
-  const buildWheelBackground = (n: number) => {
-    const colors = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#a855f7", "#06b6d4"]; // bright classroom
-    const stops: string[] = [];
-    for (let i = 0; i < n; i++) {
-      const a0 = (i / n) * 360;
-      const a1 = ((i + 1) / n) * 360;
-      const c = colors[i % colors.length];
-      stops.push(`${c} ${a0}deg ${a1}deg`);
-    }
-    return `conic-gradient(${stops.join(",")})`;
-  };
-
-  const spinName = () => {
-    if (!nameValid || nameSpinning) return;
-
-    const n = studentNames.length;
-    const idx = Math.floor(Math.random() * n);
-    const picked = studentNames[idx];
-
-    const anglePer = 360 / n;
-    const spins = 6;
-    const targetDelta = spins * 360 + (360 - (idx + 0.5) * anglePer);
-
-    setNameResult(null);
-    setNameSpinning(false);
-
-    setNameRotation((prev) => {
-      const normalized = ((prev % 360) + 360) % 360;
-
-      requestAnimationFrame(() => {
-        setNameSpinning(true);
-        setNameRotation(normalized + targetDelta);
-
-        window.setTimeout(() => {
-          setNameResult(picked);
-          setNameSpinning(false);
-        }, 2400);
-      });
-
-      return normalized;
-    });
-  };
 
   useEffect(() => {
     if (!validClassId) {
@@ -673,8 +618,8 @@ export default function ClassPage() {
   // Random Name Generator (right panel)
   const [nameGenOpen, setNameGenOpen] = useState(false);
   const [nameResult, setNameResult] = useState<string | null>(null);
-  const [nameSpinning, setNameSpinning] = useState(false);
-  const [nameRotation, setNameRotation] = useState(0);
+  const [namePicking, setNamePicking] = useState(false);
+
 
   const studentNames = useMemo(() => {
     const names = students
@@ -687,7 +632,31 @@ export default function ClassPage() {
   }, [students]);
 
   const nameCount = studentNames.length;
-  const nameValid = nameCount >= 2 && nameCount <= 40; // keep same wheel sanity cap as before
+  const nameValid = nameCount >= 1;
+
+  function pickRandomName() {
+    if (!nameValid || namePicking) return;
+
+    setNamePicking(true);
+    setNameResult(null);
+
+    const previewNames = studentNames.slice();
+    let count = 0;
+
+    const flicker = window.setInterval(() => {
+      const idx = Math.floor(Math.random() * previewNames.length);
+      setNameResult(previewNames[idx]);
+      count += 1;
+
+      if (count >= 14) {
+        window.clearInterval(flicker);
+        const finalIdx = Math.floor(Math.random() * previewNames.length);
+        setNameResult(previewNames[finalIdx]);
+        setNamePicking(false);
+      }
+    }, 90);
+  }
+
 
   // --- fetch calendar events (for bell alerts) ---
   // --- fetch calendar events (GLOBAL: same calendar across all ClassPages) ---
@@ -1371,6 +1340,8 @@ export default function ClassPage() {
   const RightPanel = () => (
     <aside className="col-span-12 md:col-span-3 lg:col-span-3">
       <div className={`${card} ${cardPad}`}>
+
+        {/* Resources */}
         <div className="flex items-center justify-between">
           <div className="text-lg font-extrabold tracking-tight">Resources</div>
           <div className="grid h-10 w-10 place-items-center rounded-2xl border-2 border-slate-200 bg-slate-50">
@@ -1405,39 +1376,7 @@ export default function ClassPage() {
           ))}
         </div>
 
-
-        <div className={`mt-6 rounded-3xl border-2 border-slate-200 ${soft} p-4`}>
-          <div className="flex items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
-              <Icon name="spark" />
-            </span>
-            <div className="text-lg font-extrabold tracking-tight">Generate</div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            {[
-              { name: "Blooket", url: "https://www.blooket.com", logo: blooketLogo },
-              { name: "Kahoot", url: "https://www.kahoot.com", logo: kahootLogo },
-              { name: "Google Forms", url: "https://forms.google.com", logo: googleFormsLogo },
-              { name: "Canva", url: "https://www.canva.com", logo: canvaLogo },
-            ].map((tool) => (
-              <button
-                key={tool.name}
-                title={tool.name}
-                onClick={() => window.open(tool.url, "_blank")}
-                className="rounded-3xl border-2 border-slate-200 bg-white h-28 flex items-center justify-center hover:bg-slate-50"
-                type="button"
-              >
-                <img
-                  src={tool.logo}
-                  alt={tool.name}
-                  className="max-h-full max-w-full object-contain p-2"
-                />
-              </button>
-            ))}
-          </div>
-        </div>
-        {/* Classroom Tools (new box) */}
+        {/* Classroom Tools */}
         <div className="mt-6 rounded-3xl border-2 border-amber-300 bg-amber-50 p-4 shadow-md">
           <div className="flex items-center gap-2">
             <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
@@ -1458,7 +1397,7 @@ export default function ClassPage() {
                   <button
                     type="button"
                     className={toolTile}
-                    onClick={() => setNameGenOpen((v) => !v)}
+                    onClick={() => setNameGenOpen(true)}
                   >
                     <div className={toolIcon}>🙋</div>
                     <div className={toolLabel}>
@@ -1513,91 +1452,45 @@ export default function ClassPage() {
               );
             })()}
           </div>
-
-          {nameGenOpen && (
-            <div className="mt-4 rounded-3xl border-2 border-slate-200 bg-white p-4">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-extrabold">Random Name Generator</div>
-                <button className={pill} type="button" onClick={() => setNameGenOpen(false)}>
-                  Close
-                </button>
-              </div>
-
-              <div className="mt-2 text-xs text-slate-600">
-                Pulls <span className="font-bold">active</span> first names from Class Admin.
-              </div>
-
-              {!loadingStudents && nameCount === 0 && (
-                <div className="mt-3 text-sm text-red-700">
-                  No active students found. Add students in Class Admin.
-                </div>
-              )}
-
-              {!loadingStudents && nameCount === 1 && (
-                <div className="mt-3 text-sm text-red-700">
-                  Only 1 active student found. Add more students to use Random Name.
-                </div>
-              )}
-
-              {!loadingStudents && nameCount > 40 && (
-                <div className="mt-3 text-sm text-red-700">
-                  This class has {nameCount} active students. For performance, Random Name supports up to 40.
-                </div>
-              )}
-
-              <div className="mt-4 flex items-center justify-center">
-                <div className="relative">
-                  <div className="absolute left-1/2 top-[-10px] z-10 h-0 w-0 -translate-x-1/2 border-l-[10px] border-r-[10px] border-b-[16px] border-l-transparent border-r-transparent border-b-slate-900" />
-
-                  <div
-                    className="grid h-44 w-44 place-items-center rounded-full border-4 border-slate-900"
-                    style={{
-                      background: buildWheelBackground(Math.max(2, Math.min(40, nameCount || 2))),
-                      transform: `rotate(${nameRotation}deg)`,
-                      transition: nameSpinning ? "transform 2.4s cubic-bezier(0.2, 0.9, 0.2, 1)" : "none",
-                    }}
-                  >
-                    <div
-                      className="grid h-20 w-20 place-items-center rounded-full border-4 border-slate-900 bg-white px-2 text-center text-sm font-extrabold leading-tight"
-                      style={{ transform: `rotate(${-nameRotation}deg)` }}
-                    >
-                      {nameResult ?? "?"}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 flex gap-2">
-                <button
-                  type="button"
-                  className="flex-1 rounded-2xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                  onClick={spinName}
-                  disabled={!nameValid || nameSpinning || loadingStudents}
-                >
-                  {loadingStudents ? "Loading..." : nameSpinning ? "Spinning..." : "Pick Name"}
-                </button>
-
-                <button
-                  type="button"
-                  className={pill}
-                  onClick={() => setNameResult(null)}
-                  disabled={nameSpinning}
-                >
-                  Reset
-                </button>
-              </div>
-
-              {nameValid && (
-                <div className="mt-3 text-[11px] text-slate-500">
-                  Loaded: {nameCount} active student{nameCount === 1 ? "" : "s"}.
-                </div>
-              )}
-            </div>
-          )}
         </div>
+
+        {/* Generate Links */}
+        <div className={`mt-6 rounded-3xl border-2 border-slate-200 ${soft} p-4`}>
+          <div className="flex items-center gap-2">
+            <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
+              <Icon name="spark" />
+            </span>
+            <div className="text-lg font-extrabold tracking-tight">Generate Links</div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            {[
+              { name: "Blooket", url: "https://www.blooket.com", logo: blooketLogo },
+              { name: "Kahoot", url: "https://www.kahoot.com", logo: kahootLogo },
+              { name: "Google Forms", url: "https://forms.google.com", logo: googleFormsLogo },
+              { name: "Canva", url: "https://www.canva.com", logo: canvaLogo },
+            ].map((tool) => (
+              <button
+                key={tool.name}
+                title={tool.name}
+                onClick={() => window.open(tool.url, "_blank")}
+                className="rounded-3xl border-2 border-slate-200 bg-white h-28 flex items-center justify-center hover:bg-slate-50"
+                type="button"
+              >
+                <img
+                  src={tool.logo}
+                  alt={tool.name}
+                  className="max-h-full max-w-full object-contain p-2"
+                />
+              </button>
+            ))}
+          </div>
+        </div>
+
       </div>
     </aside>
   );
+
 
   return (
     <div className="min-h-screen bg-emerald-100 p-6">
@@ -1919,6 +1812,89 @@ export default function ClassPage() {
               </div>
             </div>
           )}
+
+          {nameGenOpen && (
+            <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+              <div className="w-full max-w-md rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-lg font-extrabold text-slate-900">Random Name Generator</div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      Picks from active students in Class Admin.
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setNameGenOpen(false)}
+                    className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="mt-5 rounded-3xl border-2 border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-5 text-center shadow-sm">
+                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-white/80 bg-white shadow-md text-2xl">
+                    🙋
+                  </div>
+
+                  <div className="mt-4 text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Selected Student
+                  </div>
+
+                  <div
+                    className={[
+                      "mt-3 rounded-3xl border-2 px-4 py-6 text-3xl font-extrabold tracking-tight shadow-sm transition-all",
+                      namePicking
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700 animate-pulse"
+                        : "border-slate-200 bg-white text-slate-900",
+                    ].join(" ")}
+                  >
+                    {loadingStudents ? "Loading..." : nameResult ?? "—"}
+                  </div>
+
+                  <div className="mt-3 text-xs text-slate-500">
+                    {loadingStudents
+                      ? "Loading students..."
+                      : `${nameCount} active student${nameCount === 1 ? "" : "s"} available`}
+                  </div>
+                </div>
+
+                {!loadingStudents && !nameValid && (
+                  <div className="mt-4 rounded-2xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    No active students found. Add students in Class Admin.
+                  </div>
+                )}
+
+                <div className="mt-5 flex gap-2">
+                  <button
+                    type="button"
+                    className="flex-1 rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                    onClick={pickRandomName}
+                    disabled={!nameValid || namePicking || loadingStudents}
+                  >
+                    {loadingStudents ? "Loading..." : namePicking ? "Picking..." : "Pick Name"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className={pill}
+                    onClick={() => setNameResult(null)}
+                    disabled={namePicking}
+                  >
+                    Reset
+                  </button>
+                </div>
+
+                {nameValid && (
+                  <div className="mt-3 text-[11px] text-slate-500">
+                    Loaded: {nameCount} active student{nameCount === 1 ? "" : "s"}.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
 
           {showClassSettings && (
             <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">

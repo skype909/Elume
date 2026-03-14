@@ -80,6 +80,61 @@ class TestPatch(BaseModel):
     description: Optional[str] = None
     category_id: Optional[int] = None
 
+# -------------------------
+# Quizzes
+# -------------------------
+
+class SavedQuizQuestionCreate(BaseModel):
+    prompt: str
+    choices: List[str]
+    correct_index: int = 0
+    explanation: Optional[str] = None
+    position: Optional[int] = 0
+
+
+class SavedQuizQuestionUpdate(BaseModel):
+    prompt: Optional[str] = None
+    choices: Optional[List[str]] = None
+    correct_index: Optional[int] = None
+    explanation: Optional[str] = None
+    position: Optional[int] = None
+
+
+class SavedQuizQuestionOut(BaseModel):
+    id: int
+    prompt: str
+    choices: List[str]
+    correct_index: int
+    explanation: Optional[str] = None
+    position: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SavedQuizCreate(BaseModel):
+    title: str
+    category: Optional[str] = "General"
+    description: Optional[str] = None
+    questions: List[SavedQuizQuestionCreate] = []
+
+
+class SavedQuizUpdate(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+
+
+class SavedQuizOut(BaseModel):
+    id: int
+    class_id: int
+    title: str
+    category: str
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    questions: List[SavedQuizQuestionOut] = []
+
+    model_config = ConfigDict(from_attributes=True)
 
 # -------------------------
 # Calendar Schemas (canonical)

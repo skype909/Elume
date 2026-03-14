@@ -7,7 +7,7 @@ import { apiFetch } from "./api";
  *
  * - Mon–Fri weekly planner (6 class slots + 1 extra slot per day)
  * - Click slot => modal editor (full note + relates-to dropdown)
- * - Shows calendar events on each day via a bell + hover/click popover
+ * - Shows calendar events on each day via a bell + popover
  * - Tasks checklist sticky bottom-right (due date optional) with archive/revive/delete
  *
  * Persistence:
@@ -32,7 +32,7 @@ type CalendarEvent = {
     class_id: number | null;
     title: string;
     description?: string | null;
-    event_date: string; // ISO datetime
+    event_date: string;
     end_date?: string | null;
     all_day?: boolean;
     event_type: string;
@@ -45,11 +45,11 @@ type RelatesTo =
 
 type PlannerNote = {
     id: string;
-    weekKey: string; // YYYY-MM-DD (monday)
-    dayIndex: number; // 0..4 (Mon..Fri)
-    slotIndex: number; // 0..6
-    title: string; // short (first line)
-    body: string; // full note
+    weekKey: string;
+    dayIndex: number;
+    slotIndex: number;
+    title: string;
+    body: string;
     relatesTo: RelatesTo;
     updatedAt: number;
 };
@@ -57,7 +57,7 @@ type PlannerNote = {
 type TaskItem = {
     id: string;
     text: string;
-    dueDateISO?: string; // YYYY-MM-DD (optional)
+    dueDateISO?: string;
     createdAt: number;
     done: boolean;
     archived: boolean;
@@ -78,8 +78,8 @@ function toYMD(d: Date) {
 
 function startOfWeekMonday(d: Date) {
     const x = new Date(d);
-    const day = x.getDay(); // 0=Sun
-    const diff = (day + 6) % 7; // Mon=0
+    const day = x.getDay();
+    const diff = (day + 6) % 7;
     x.setDate(x.getDate() - diff);
     x.setHours(0, 0, 0, 0);
     return x;
@@ -113,16 +113,14 @@ function fmtTime12h(iso: string) {
 }
 
 function safeId() {
-    // crypto.randomUUID not always available on older browsers
-    // (but should be fine on modern Chrome/Chromebooks)
-    return (globalThis.crypto?.randomUUID?.() || `id_${Math.random().toString(16).slice(2)}_${Date.now()}`);
+    return globalThis.crypto?.randomUUID?.() || `id_${Math.random().toString(16).slice(2)}_${Date.now()}`;
 }
 
 function truncateOneLine(s: string, max = 26) {
     const t = (s || "").replace(/\s+/g, " ").trim();
     if (!t) return "";
     if (t.length <= max) return t;
-    return t.slice(0, max - 1) + "…";
+    return `${t.slice(0, max - 1)}…`;
 }
 
 function typeDotClass(t: string) {
@@ -135,6 +133,19 @@ function typeDotClass(t: string) {
             return "bg-blue-500";
         default:
             return "bg-emerald-500";
+    }
+}
+
+function eventTypeLabel(t: string) {
+    switch ((t || "").toLowerCase()) {
+        case "test":
+            return "Test";
+        case "homework":
+            return "Homework";
+        case "trip":
+            return "Trip";
+        default:
+            return "General";
     }
 }
 
@@ -187,7 +198,6 @@ async function savePlanner(notes: PlannerNote[], tasks: TaskItem[]) {
 export default function TeacherPlanner() {
     const navigate = useNavigate();
 
-    // Data from backend
     const [classes, setClasses] = useState<ClassItem[]>([]);
     const [events, setEvents] = useState<CalendarEvent[]>([]);
     const [loadingEvents, setLoadingEvents] = useState(false);
@@ -197,10 +207,8 @@ export default function TeacherPlanner() {
     const [plannerLoadState, setPlannerLoadState] = useState<"idle" | "success" | "error">("idle");
     const plannerHydratedRef = useRef(false);
 
-    // Week navigation
     const [weekMonday, setWeekMonday] = useState<Date>(() => startOfWeekMonday(new Date()));
 
-    // Slot editor modal
     const [editing, setEditing] = useState<{
         open: boolean;
         weekKey: string;
@@ -214,7 +222,6 @@ export default function TeacherPlanner() {
     const [draftRelatesKind, setDraftRelatesKind] = useState<"general" | "personal" | "class">("general");
     const [draftRelatesClassId, setDraftRelatesClassId] = useState<number>(() => 0);
 
-    // Day events popover
     const [eventsPopover, setEventsPopover] = useState<{ open: boolean; dayISO: string | null }>({
         open: false,
         dayISO: null,
@@ -257,7 +264,6 @@ export default function TeacherPlanner() {
     // -----------------------------
     // Load planner data
     // -----------------------------
-
     useEffect(() => {
         let alive = true;
 
@@ -301,21 +307,15 @@ export default function TeacherPlanner() {
     }, [notes, tasks, plannerLoadState]);
 
     // -----------------------------
-    // Derived: week keys/dates
+    // Derived
     // -----------------------------
     const weekKey = useMemo(() => toYMD(weekMonday), [weekMonday]);
     const prevWeekMonday = useMemo(() => addWeeks(weekMonday, -1), [weekMonday]);
     const nextWeekMonday = useMemo(() => addWeeks(weekMonday, 1), [weekMonday]);
     const todayISO = useMemo(() => toYMD(new Date()), []);
 
-    const weekDays = useMemo(() => {
-        // Mon..Fri
-        return Array.from({ length: 5 }).map((_, i) => addDays(weekMonday, i));
-    }, [weekMonday]);
+    const weekDays = useMemo(() => Array.from({ length: 5 }).map((_, i) => addDays(weekMonday, i)), [weekMonday]);
 
-    // -----------------------------
-    // Derived: notes map for this week
-    // -----------------------------
     const notesByCell = useMemo(() => {
         const map = new Map<string, PlannerNote>();
         for (const n of notes) {
@@ -325,14 +325,11 @@ export default function TeacherPlanner() {
         return map;
     }, [notes, weekKey]);
 
-    // -----------------------------
-    // Derived: events within visible weeks (prev/current/next) grouped by day
-    // -----------------------------
     const eventsByDay = useMemo(() => {
         const map = new Map<string, CalendarEvent[]>();
 
-        const rangeStart = prevWeekMonday; // show bells for prev/current/next
-        const rangeEnd = addDays(nextWeekMonday, 7); // monday after next week
+        const rangeStart = prevWeekMonday;
+        const rangeEnd = addDays(nextWeekMonday, 7);
 
         const startMs = rangeStart.getTime();
         const endMs = rangeEnd.getTime();
@@ -348,7 +345,6 @@ export default function TeacherPlanner() {
             map.get(iso)!.push(ev);
         }
 
-        // sort within each day
         for (const [k, arr] of map.entries()) {
             arr.sort((a, b) => (a.event_date || "").localeCompare(b.event_date || "") || b.id - a.id);
             map.set(k, arr);
@@ -357,19 +353,34 @@ export default function TeacherPlanner() {
         return map;
     }, [events, prevWeekMonday, nextWeekMonday]);
 
-    // -----------------------------
-    // Relates-to options
-    // -----------------------------
     const relatesOptions = useMemo(() => {
-        const classOpts = classes.map((c) => ({
+        return classes.map((c) => ({
             value: String(c.id),
             label: `${c.name}`,
         }));
-        return classOpts;
     }, [classes]);
 
+    const activeTasks = useMemo(() => {
+        const arr = tasks.filter((t) => !t.archived);
+        arr.sort((a, b) => {
+            const ad = a.dueDateISO || "9999-12-31";
+            const bd = b.dueDateISO || "9999-12-31";
+            if (ad !== bd) return ad.localeCompare(bd);
+            return b.createdAt - a.createdAt;
+        });
+        return arr;
+    }, [tasks]);
+
+    const archivedTasks = useMemo(() => {
+        const arr = tasks.filter((t) => t.archived);
+        arr.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
+        return arr;
+    }, [tasks]);
+
+    const [showArchived, setShowArchived] = useState(false);
+
     // -----------------------------
-    // Open editor
+    // Actions
     // -----------------------------
     function openSlot(dayIndex: number, slotIndex: number) {
         const existing = notesByCell.get(`${dayIndex}:${slotIndex}`);
@@ -384,7 +395,6 @@ export default function TeacherPlanner() {
         setDraftTitle(existing?.title || "");
         setDraftBody(existing?.body || "");
 
-        // relates-to
         if (!existing) {
             setDraftRelatesKind("general");
             setDraftRelatesClassId(relatesOptions.length ? Number(relatesOptions[0].value) : 0);
@@ -411,8 +421,6 @@ export default function TeacherPlanner() {
     function saveEditor() {
         const title = (draftTitle || "").trim();
         const body = (draftBody || "").trim();
-
-        // allow clearing note
         const shouldDelete = !title && !body;
 
         const key = `${editing.dayIndex}:${editing.slotIndex}`;
@@ -456,9 +464,6 @@ export default function TeacherPlanner() {
         closeEditor();
     }
 
-    // -----------------------------
-    // Tasks
-    // -----------------------------
     const [taskDraft, setTaskDraft] = useState("");
     const [taskDueDraft, setTaskDueDraft] = useState("");
 
@@ -485,9 +490,7 @@ export default function TeacherPlanner() {
     }
 
     function archiveTask(id: string) {
-        setTasks((prev) =>
-            prev.map((t) => (t.id === id ? { ...t, archived: true, archivedAt: Date.now() } : t))
-        );
+        setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, archived: true, archivedAt: Date.now() } : t)));
     }
 
     function reviveTask(id: string) {
@@ -500,55 +503,25 @@ export default function TeacherPlanner() {
         setTasks((prev) => prev.filter((t) => t.id !== id));
     }
 
-    const activeTasks = useMemo(() => {
-        const arr = tasks.filter((t) => !t.archived);
-        // due date first, then createdAt
-        arr.sort((a, b) => {
-            const ad = a.dueDateISO || "9999-12-31";
-            const bd = b.dueDateISO || "9999-12-31";
-            if (ad !== bd) return ad.localeCompare(bd);
-            return b.createdAt - a.createdAt;
-        });
-        return arr;
-    }, [tasks]);
-
-    const archivedTasks = useMemo(() => {
-        const arr = tasks.filter((t) => t.archived);
-        arr.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
-        return arr;
-    }, [tasks]);
-
-    const [showArchived, setShowArchived] = useState(false);
-
     // -----------------------------
     // UI Pieces
     // -----------------------------
     function WeekPreviewCard({
         monday,
-        active,
         onClick,
-        side = "left",
     }: {
         monday: Date;
-        active: boolean;
         onClick: () => void;
-        side?: "left" | "right";
     }) {
         return (
             <button
                 type="button"
                 onClick={onClick}
-                className={[
-                    "w-full text-left rounded-3xl border-2 p-3 transition",
-                    active ? "border-emerald-700 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50",
-                    side === "left" ? "opacity-90" : "opacity-90",
-                ].join(" ")}
+                className="w-full rounded-[28px] border border-white/70 bg-white/70 p-4 text-left shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_18px_45px_rgba(15,23,42,0.12)]"
             >
-                <div className="text-xs font-semibold text-slate-600">Week</div>
-                <div className="text-lg font-extrabold tracking-tight">{fmtWeekRange(monday)}</div>
-                <div className="mt-1 text-xs text-slate-600">
-                    {toYMD(monday)}
-                </div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Week</div>
+                <div className="mt-2 text-3xl font-black tracking-tight text-slate-900">{fmtWeekRange(monday)}</div>
+                <div className="mt-2 text-sm font-medium text-slate-500">{toYMD(monday)}</div>
             </button>
         );
     }
@@ -559,26 +532,26 @@ export default function TeacherPlanner() {
         const hasEvents = evs.length > 0;
 
         return (
-            <div className="flex items-center justify-between gap-2">
-                <div>
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                        <div className={["font-extrabold tracking-tight", isToday ? "text-base" : "text-sm"].join(" ")}>
+                        <div className="text-xl font-black tracking-tight text-slate-900">
                             {d.toLocaleDateString("en-IE", { weekday: "long" })}
                         </div>
                         {isToday ? (
-                            <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+                            <span className="rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
                                 Today
                             </span>
                         ) : null}
                     </div>
-                    <div className="text-xs text-slate-600">
+                    <div className="mt-1 text-sm font-medium text-slate-500">
                         {d.toLocaleDateString("en-IE", { day: "numeric", month: "short" })}
                     </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                     {loadingEvents ? (
-                        <div className="text-[11px] text-slate-500">…</div>
+                        <div className="text-[11px] text-slate-400">…</div>
                     ) : (
                         <button
                             type="button"
@@ -588,12 +561,15 @@ export default function TeacherPlanner() {
                                 setEventsPopover({ open: true, dayISO: iso });
                             }}
                             className={[
-                                "h-9 w-9 grid place-items-center rounded-2xl border-2",
-                                hasEvents ? "border-emerald-700 bg-white hover:bg-emerald-50" : "border-slate-200 bg-slate-50",
+                                "h-6 w-6 mt-8 grid place-items-center rounded-full border shadow-sm",
+                                hasEvents
+                                    ? "border-emerald-400 bg-white hover:bg-emerald-50"
+                                    : "border-slate-200 bg-slate-50",
                             ].join(" ")}
                         >
-                            <span className="text-lg leading-none">🔔</span>
+                            <span className="text-[12px] leading-none">🔔</span>
                         </button>
+
                     )}
                 </div>
             </div>
@@ -601,88 +577,92 @@ export default function TeacherPlanner() {
     }
 
     function relatesPill(r: RelatesTo) {
-        if (r.kind === "personal") return <span className="text-[10px] text-purple-700 font-semibold">Personal</span>;
-        if (r.kind === "class") return <span className="text-[10px] text-emerald-700 font-semibold">{r.label}</span>;
-        return <span className="text-[10px] text-slate-600 font-semibold">General</span>;
+        if (r.kind === "personal") {
+            return (
+                <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-purple-700">
+                    Personal
+                </span>
+            );
+        }
+        if (r.kind === "class") {
+            return (
+                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
+                    {r.label}
+                </span>
+            );
+        }
+        return (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">
+                General
+            </span>
+        );
     }
 
     // -----------------------------
     // Render
     // -----------------------------
     return (
-        <div className="min-h-screen bg-[#dff3df]">
-            <div className="mx-auto max-w-7xl px-4 pt-6 pb-14">
-                {/* Top bar */}
-                <div className="flex items-center gap-3">
-                    <button
-                        onClick={() => navigate(`/`)}
-                        className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                        type="button"
-                    >
-                        ← Back
-                    </button>
+        <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
+            <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                <div className="absolute -left-24 top-[-60px] h-80 w-80 rounded-full bg-cyan-300/20 blur-3xl" />
+                <div className="absolute right-[-80px] top-24 h-96 w-96 rounded-full bg-violet-300/15 blur-3xl" />
+                <div className="absolute bottom-[-80px] left-[10%] h-80 w-80 rounded-full bg-emerald-300/20 blur-3xl" />
+                <div className="absolute bottom-10 right-[18%] h-72 w-72 rounded-full bg-lime-300/15 blur-3xl" />
+            </div>
 
-                    <div className="flex-1">
-                        <div className="text-3xl font-extrabold tracking-tight text-slate-700"
-                            style={{ textShadow: "0 3px 8px rgba(0,0,0,0.25)" }}>Teacher Planner </div>
-                        <div className="text-sm text-slate-600">
-                            Weekly diary + tasks (Mon–Fri) • Click any line to expand
+            <div className="pointer-events-none absolute inset-0 opacity-[0.08] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:36px_36px]" />
+
+            <div className="relative z-10 mx-auto max-w-7xl px-4 pb-16 pt-8">
+                {/* Header */}
+                <div className="mb-4 rounded-[28px] border border-white/70 bg-white/80 px-5 py-4 shadow-sm backdrop-blur-xl">
+
+                    <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200/70 bg-emerald-50/80 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-800 shadow-sm">
+                                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                                Weekly planning workspace
+                            </div>
+
+                            <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900">
+                                Teacher Planner
+                            </h1>
+
+                            <p className="mt-1 text-sm text-slate-600">
+                                Weekly diary + tasks for your teaching week. Keep lesson notes, reminders and upcoming
+                                events in one clean workspace.
+                            </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                            <button
+                                onClick={() => navigate(`/`)}
+                                className="rounded-2xl border border-slate-200 bg-white/90 px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-white hover:shadow-md"
+                                type="button"
+                            >
+                                ← Back to Dashboard
+                            </button>
+
+                            <button
+                                onClick={() => setWeekMonday(startOfWeekMonday(new Date()))}
+                                className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-sm font-bold text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl"
+                                type="button"
+                            >
+                                This week
+                            </button>
                         </div>
                     </div>
-
-                    <button
-                        onClick={() => setWeekMonday(startOfWeekMonday(new Date()))}
-                        className="rounded-xl border-2 border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
-                        type="button"
-                    >
-                        This week
-                    </button>
                 </div>
 
-                {/* Book layout */}
-                <div className="mt-6 grid gap-4 lg:grid-cols-[0.6fr_3.2fr_0.6fr]">
+                {/* Main layout */}
+                <div className="grid gap-5 lg:grid-cols-[0.72fr_3.2fr_0.72fr]">
                     {/* Left preview */}
                     <div className="hidden lg:block">
-                        <WeekPreviewCard
-                            monday={prevWeekMonday}
-                            active={false}
-                            onClick={() => setWeekMonday(prevWeekMonday)}
-                            side="left"
-                        />
+                        <WeekPreviewCard monday={prevWeekMonday} onClick={() => setWeekMonday(prevWeekMonday)} />
                     </div>
 
                     {/* Main planner */}
-                    <div className="rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-sm">
-                        {/* Week nav row */}
-                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                            <div>
-                                <div className="text-xs font-semibold text-slate-600">Week of</div>
-                                <div className="text-xl font-extrabold tracking-tight">{fmtWeekRange(weekMonday)}</div>
-                                <div className="text-xs text-slate-600 mt-1">
-                                    Week key: <span className="font-mono">{weekKey}</span>
-                                </div>
-                            </div>
-
-                            <div className="flex gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setWeekMonday(addWeeks(weekMonday, -1))}
-                                    className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                >
-                                    ← Prev
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setWeekMonday(addWeeks(weekMonday, 1))}
-                                    className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                >
-                                    Next →
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Days grid */}
-                        <div className="mt-5 grid gap-4 md:grid-cols-5">
+                    <div className="rounded-[34px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+                        <div className="mt-2 grid gap-3 md:grid-cols-5">
                             {weekDays.map((d, dayIndex) => {
                                 const isToday = toYMD(d) === todayISO;
 
@@ -690,36 +670,51 @@ export default function TeacherPlanner() {
                                     <div
                                         key={toYMD(d)}
                                         className={[
-                                            "rounded-3xl border-2 p-3 transition-transform",
+                                            "rounded-[28px] border p-3 shadow-sm backdrop-blur transition-all duration-200",
                                             isToday
-                                                ? "border-emerald-500 bg-white shadow-lg ring-2 ring-emerald-200 scale-[1.03]"
-                                                : "border-slate-200 bg-slate-50",
+                                                ? "border-emerald-200 bg-gradient-to-b from-white to-emerald-50/80 shadow-[0_18px_45px_rgba(16,185,129,0.14)] ring-2 ring-emerald-200"
+                                                : "border-white/70 bg-white/70 hover:bg-white",
                                         ].join(" ")}
                                     >
                                         <DayHeader d={d} isToday={isToday} />
 
-                                        <div className="mt-3 grid gap-2">
+                                        <div className="mt-4 grid gap-2.5">
                                             {Array.from({ length: 7 }).map((_, slotIndex) => {
                                                 const note = notesByCell.get(`${dayIndex}:${slotIndex}`);
+
                                                 return (
                                                     <button
                                                         key={slotIndex}
                                                         type="button"
                                                         onClick={() => openSlot(dayIndex, slotIndex)}
                                                         className={[
-                                                            "w-full text-left rounded-2xl border-2 px-3 py-2 transition",
-                                                            note ? "border-emerald-200 bg-white hover:bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-100",
+                                                            "w-full rounded-2xl border px-3 py-3 text-left shadow-sm transition-all duration-150",
+                                                            note
+                                                                ? "border-emerald-200 bg-white hover:-translate-y-[1px] hover:bg-emerald-50/70 hover:shadow-md"
+                                                                : "border-slate-200 bg-white/90 hover:-translate-y-[1px] hover:bg-slate-50 hover:shadow-md",
                                                         ].join(" ")}
                                                     >
                                                         <div className="flex items-center justify-between gap-2">
-                                                            <div className="text-xs font-semibold text-slate-500">
+                                                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                                                                 {slotIndex < 6 ? `Class ${slotIndex + 1}` : "Extra"}
                                                             </div>
-                                                            {note ? relatesPill(note.relatesTo) : <span className="text-[10px] text-slate-400">Empty</span>}
+                                                            {note ? (
+                                                                relatesPill(note.relatesTo)
+                                                            ) : (
+                                                                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                                                    Empty
+                                                                </span>
+                                                            )}
                                                         </div>
 
-                                                        <div className="mt-1 text-sm font-semibold text-slate-800">
-                                                            {note ? truncateOneLine(note.title || note.body, 28) : <span className="text-slate-400">Click to add…</span>}
+                                                        <div className="mt-2 text-base font-bold tracking-tight text-slate-800">
+                                                            {note ? (
+                                                                truncateOneLine(note.title || note.body, 28)
+                                                            ) : (
+                                                                <span className="font-medium text-slate-400">
+                                                                    Click to add…
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </button>
                                                 );
@@ -733,46 +728,58 @@ export default function TeacherPlanner() {
 
                     {/* Right preview */}
                     <div className="hidden lg:block">
-                        <WeekPreviewCard
-                            monday={nextWeekMonday}
-                            active={false}
-                            onClick={() => setWeekMonday(nextWeekMonday)}
-                            side="right"
-                        />
+                        <WeekPreviewCard monday={nextWeekMonday} onClick={() => setWeekMonday(nextWeekMonday)} />
                     </div>
                 </div>
 
                 {/* Events popover */}
                 {eventsPopover.open && eventsPopover.dayISO && (
                     <div className="fixed inset-0 z-40">
-                        <div className="absolute inset-0 bg-black/10" />
-                        <div className="absolute left-1/2 top-24 w-[min(560px,92vw)] -translate-x-1/2">
-                            <div ref={popoverRef} className="rounded-3xl border-2 border-slate-200 bg-white p-4 shadow-xl">
-                                <div className="flex items-center justify-between gap-2">
+                        <div
+                            className="absolute inset-0 bg-slate-900/20 backdrop-blur-[2px]"
+                            onClick={() => setEventsPopover({ open: false, dayISO: null })}
+                        />
+                        <div className="absolute left-1/2 top-24 w-[min(620px,92vw)] -translate-x-1/2">
+                            <div
+                                ref={popoverRef}
+                                className="rounded-[30px] border border-white/70 bg-white/90 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+                            >
+                                <div className="flex items-center justify-between gap-3">
                                     <div>
-                                        <div className="text-sm font-extrabold">Events</div>
-                                        <div className="text-xs text-slate-600">{eventsPopover.dayISO}</div>
+                                        <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
+                                            Events
+                                        </div>
+                                        <div className="mt-1 text-xl font-black tracking-tight text-slate-900">
+                                            {eventsPopover.dayISO}
+                                        </div>
                                     </div>
+
                                     <button
                                         type="button"
                                         onClick={() => setEventsPopover({ open: false, dayISO: null })}
-                                        className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                        className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                                     >
                                         Close
                                     </button>
                                 </div>
 
-                                <div className="mt-3 grid gap-2">
+                                <div className="mt-4 grid gap-3">
                                     {(eventsByDay.get(eventsPopover.dayISO) || []).map((e) => (
-                                        <div key={e.id} className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
+                                        <div
+                                            key={e.id}
+                                            className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm"
+                                        >
                                             <div className="flex items-start justify-between gap-3">
                                                 <div className="min-w-0">
                                                     <div className="flex items-center gap-2">
                                                         <span className={`h-2.5 w-2.5 rounded-full ${typeDotClass(e.event_type)}`} />
-                                                        <div className="font-semibold truncate">{e.title}</div>
+                                                        <div className="truncate text-base font-bold text-slate-900">{e.title}</div>
+                                                        <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">
+                                                            {eventTypeLabel(e.event_type)}
+                                                        </span>
                                                     </div>
 
-                                                    <div className="mt-1 text-xs text-slate-700">
+                                                    <div className="mt-2 text-xs font-medium text-slate-600">
                                                         {e.all_day ? (
                                                             <span>All day</span>
                                                         ) : (
@@ -781,6 +788,7 @@ export default function TeacherPlanner() {
                                                                 {e.end_date ? ` – ${fmtTime12h(e.end_date)}` : ""}
                                                             </span>
                                                         )}
+
                                                         {typeof e.class_id === "number" ? (
                                                             <span className="ml-2 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px]">
                                                                 Class #{e.class_id}
@@ -793,14 +801,16 @@ export default function TeacherPlanner() {
                                                     </div>
 
                                                     {e.description ? (
-                                                        <div className="mt-2 text-xs text-slate-700 whitespace-pre-wrap">{e.description}</div>
+                                                        <div className="mt-3 whitespace-pre-wrap text-sm text-slate-700">
+                                                            {e.description}
+                                                        </div>
                                                     ) : null}
                                                 </div>
 
                                                 <button
                                                     type="button"
                                                     onClick={() => navigate(`/calendar`)}
-                                                    className="shrink-0 rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                                    className="shrink-0 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                                                     title="Open calendar"
                                                 >
                                                     Open
@@ -808,6 +818,7 @@ export default function TeacherPlanner() {
                                             </div>
                                         </div>
                                     ))}
+
                                     {(eventsByDay.get(eventsPopover.dayISO) || []).length === 0 && (
                                         <div className="text-sm text-slate-600">No events.</div>
                                     )}
@@ -820,57 +831,69 @@ export default function TeacherPlanner() {
                 {/* Slot editor modal */}
                 {editing.open && (
                     <div className="fixed inset-0 z-50">
-                        <div className="absolute inset-0 bg-black/20" />
-                        <div className="absolute left-1/2 top-16 w-[min(760px,94vw)] -translate-x-1/2">
-                            <div className="rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-2xl">
+                        <div className="absolute inset-0 bg-slate-900/25 backdrop-blur-[3px]" />
+                        <div className="absolute left-1/2 top-14 w-[min(820px,94vw)] -translate-x-1/2">
+                            <div className="rounded-[32px] border border-white/70 bg-white/85 p-4 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur-xl">
                                 <div className="flex items-center justify-between gap-3">
                                     <div className="min-w-0">
-                                        <div className="text-sm font-extrabold">
-                                            Edit note • Day {editing.dayIndex + 1} • Line {editing.slotIndex + 1}
+                                        <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
+                                            Edit note
                                         </div>
-                                        <div className="text-xs text-slate-600">
-                                            Week: <span className="font-mono">{editing.weekKey}</span>
+                                        <div className="mt-1 text-xl font-black tracking-tight text-slate-900">
+                                            Day {editing.dayIndex + 1} • Line {editing.slotIndex + 1}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-500">
+                                            Week:{" "}
+                                            <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-slate-700">
+                                                {editing.weekKey}
+                                            </span>
                                         </div>
                                     </div>
 
                                     <button
                                         type="button"
                                         onClick={closeEditor}
-                                        className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                        className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                                     >
                                         Close
                                     </button>
                                 </div>
 
-                                <div className="mt-4 grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
-                                    <div>
-                                        <label className="text-xs font-semibold text-slate-600">Short title</label>
+                                <div className="mt-5 grid gap-5 md:grid-cols-[1.25fr_0.82fr]">
+                                    <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                                        <label className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                                            Short title
+                                        </label>
                                         <input
                                             value={draftTitle}
                                             onChange={(e) => setDraftTitle(e.target.value)}
-                                            className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                            className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
                                             placeholder="e.g. Print worksheets / Prep quiz / Call home…"
                                         />
 
-                                        <label className="mt-3 block text-xs font-semibold text-slate-600">Full note</label>
+                                        <label className="mt-5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                                            Full note
+                                        </label>
                                         <textarea
                                             value={draftBody}
                                             onChange={(e) => setDraftBody(e.target.value)}
-                                            rows={7}
-                                            className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                            rows={8}
+                                            className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
                                             placeholder="Write the full detail here…"
                                         />
 
-                                        <div className="mt-2 text-xs text-slate-500">
+                                        <div className="mt-3 text-xs text-slate-500">
                                             Tip: Leave both fields blank and press <b>Save</b> to clear this line.
                                         </div>
                                     </div>
 
-                                    <div className="rounded-3xl border-2 border-slate-200 bg-slate-50 p-4">
-                                        <div className="text-sm font-semibold">Relates to</div>
+                                    <div className="rounded-[28px] border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-5 shadow-sm">
+                                        <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                                            Relates to
+                                        </div>
 
-                                        <div className="mt-3 grid gap-2">
-                                            <label className="flex items-center gap-2 text-sm">
+                                        <div className="mt-4 grid gap-3">
+                                            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700">
                                                 <input
                                                     type="radio"
                                                     checked={draftRelatesKind === "general"}
@@ -879,7 +902,7 @@ export default function TeacherPlanner() {
                                                 General
                                             </label>
 
-                                            <label className="flex items-center gap-2 text-sm">
+                                            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700">
                                                 <input
                                                     type="radio"
                                                     checked={draftRelatesKind === "personal"}
@@ -888,7 +911,7 @@ export default function TeacherPlanner() {
                                                 Personal
                                             </label>
 
-                                            <label className="flex items-center gap-2 text-sm">
+                                            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700">
                                                 <input
                                                     type="radio"
                                                     checked={draftRelatesKind === "class"}
@@ -901,7 +924,7 @@ export default function TeacherPlanner() {
                                                 <select
                                                     value={draftRelatesClassId}
                                                     onChange={(e) => setDraftRelatesClassId(Number(e.target.value))}
-                                                    className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm"
                                                 >
                                                     {relatesOptions.length === 0 ? (
                                                         <option value={0}>No classes found</option>
@@ -916,26 +939,24 @@ export default function TeacherPlanner() {
                                             )}
                                         </div>
 
-                                        <div className="mt-5 flex gap-2">
+                                        <div className="mt-6 flex gap-2">
                                             <button
                                                 type="button"
                                                 onClick={saveEditor}
-                                                className="flex-1 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
+                                                className="flex-1 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-4 py-3 text-sm font-bold text-white shadow-lg transition hover:shadow-xl"
                                             >
                                                 Save
                                             </button>
                                             <button
                                                 type="button"
                                                 onClick={closeEditor}
-                                                className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-3 text-sm hover:bg-slate-50"
+                                                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                                             >
                                                 Cancel
                                             </button>
                                         </div>
 
-                                        <div className="mt-3 text-xs text-slate-600">
-                                            Saves to your account automatically.
-                                        </div>
+                                        <div className="mt-4 text-xs text-slate-500">Saves to your account automatically.</div>
                                     </div>
                                 </div>
                             </div>
@@ -943,18 +964,19 @@ export default function TeacherPlanner() {
                     </div>
                 )}
 
-                {/* Tasks - sticky bottom-right */}
-                <div className="fixed bottom-16 right-3 z-40 w-[min(270px,92vw)]">
-                    <div className="rounded-3xl border-2 border-slate-200 bg-white p-3 shadow-lg">
+                {/* Tasks */}
+                <div className="fixed bottom-16 right-4 z-40 w-[min(320px,92vw)]">
+                    <div className="rounded-[28px] border border-white/70 bg-white/88 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.14)] backdrop-blur-xl">
                         <div className="flex items-center justify-between gap-2">
                             <div>
-                                <div className="text-xs font-extrabold">Tasks</div>
-                                <div className="text-[11px] text-slate-600">Quick checklist • archive for reuse</div>
+                                <div className="text-sm font-black tracking-tight text-slate-900">Tasks</div>
+                                <div className="text-[12px] text-slate-500">Quick checklist • archive for reuse</div>
                             </div>
+
                             <button
                                 type="button"
                                 onClick={() => setShowArchived((s) => !s)}
-                                className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                             >
                                 {showArchived ? "Active" : "Archived"}
                             </button>
@@ -962,42 +984,46 @@ export default function TeacherPlanner() {
 
                         {!showArchived ? (
                             <>
-                                <div className="mt-3 grid gap-2">
+                                <div className="mt-4 grid gap-2">
                                     <input
                                         value={taskDraft}
                                         onChange={(e) => setTaskDraft(e.target.value)}
-                                        className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
                                         placeholder="Add a task…"
                                         onKeyDown={(e) => {
                                             if (e.key === "Enter") addTask();
                                         }}
                                     />
+
                                     <div className="flex items-center gap-2">
                                         <input
                                             type="date"
                                             value={taskDueDraft}
                                             onChange={(e) => setTaskDueDraft(e.target.value)}
-                                            className="flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                                            className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm"
                                         />
+
                                         <button
                                             type="button"
                                             onClick={addTask}
-                                            className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+                                            className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-4 py-3 text-sm font-bold text-white shadow-md transition hover:shadow-lg"
                                         >
                                             Add
                                         </button>
                                     </div>
                                 </div>
 
-                                <div className="mt-3 grid gap-2 max-h-[46vh] overflow-auto pr-1">
+                                <div className="mt-4 grid max-h-[48vh] gap-2 overflow-auto pr-1">
                                     {activeTasks.length === 0 ? (
                                         <div className="text-sm text-slate-600">No tasks yet.</div>
                                     ) : (
                                         activeTasks.map((t) => (
-                                            <div key={t.id} className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-2">
-                                                <div className="flex flex-col gap-2">
-                                                    {/* Top row: checkbox + text gets full width */}
-                                                    <label className="flex items-start gap-2">
+                                            <div
+                                                key={t.id}
+                                                className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm"
+                                            >
+                                                <div className="flex flex-col gap-3">
+                                                    <label className="flex items-start gap-3">
                                                         <input
                                                             type="checkbox"
                                                             checked={t.done}
@@ -1009,16 +1035,16 @@ export default function TeacherPlanner() {
                                                             <div
                                                                 title={t.text}
                                                                 className={[
-                                                                    "text-[13px] font-semibold leading-snug whitespace-pre-wrap break-words",
-                                                                    t.done ? "line-through text-slate-400" : "text-slate-800",
+                                                                    "text-[14px] font-semibold leading-snug whitespace-pre-wrap break-words",
+                                                                    t.done ? "text-slate-400 line-through" : "text-slate-800",
                                                                 ].join(" ")}
                                                             >
                                                                 {t.text}
                                                             </div>
 
-                                                            <div className="mt-1 text-xs text-slate-600">
+                                                            <div className="mt-2 text-xs text-slate-600">
                                                                 {t.dueDateISO ? (
-                                                                    <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">
+                                                                    <span className="rounded-full border border-slate-200 bg-white px-2 py-1">
                                                                         Due: {t.dueDateISO}
                                                                     </span>
                                                                 ) : (
@@ -1028,21 +1054,18 @@ export default function TeacherPlanner() {
                                                         </div>
                                                     </label>
 
-                                                    {/* Bottom row: buttons no longer steal text width */}
                                                     <div className="flex justify-end gap-2">
                                                         <button
                                                             type="button"
                                                             onClick={() => archiveTask(t.id)}
-                                                            className="rounded-xl border-2 border-slate-200 bg-white px-2.5 py-1.5 text-xs hover:bg-slate-50"
-                                                            title="Archive"
+                                                            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                                                         >
                                                             Archive
                                                         </button>
                                                         <button
                                                             type="button"
                                                             onClick={() => deleteTask(t.id)}
-                                                            className="rounded-xl border-2 border-red-200 bg-white px-2.5 py-1.5 text-xs text-red-700 hover:bg-red-50"
-                                                            title="Delete"
+                                                            className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
                                                         >
                                                             Delete
                                                         </button>
@@ -1054,35 +1077,43 @@ export default function TeacherPlanner() {
                                 </div>
                             </>
                         ) : (
-                            <div className="mt-3 grid gap-2 max-h-[58vh] overflow-auto pr-1">
+                            <div className="mt-4 grid max-h-[58vh] gap-2 overflow-auto pr-1">
                                 {archivedTasks.length === 0 ? (
                                     <div className="text-sm text-slate-600">No archived tasks.</div>
                                 ) : (
                                     archivedTasks.map((t) => (
-                                        <div key={t.id} className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
+                                        <div
+                                            key={t.id}
+                                            className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm"
+                                        >
                                             <div className="flex items-start justify-between gap-3">
                                                 <div className="min-w-0">
-                                                    <div title={t.text} className="text-[13px] font-semibold leading-snug whitespace-pre-wrap break-words text-slate-800">
+                                                    <div
+                                                        title={t.text}
+                                                        className="text-[13px] font-semibold leading-snug whitespace-pre-wrap break-words text-slate-800"
+                                                    >
                                                         {t.text}
                                                     </div>
                                                     <div className="mt-1 text-xs text-slate-600">
                                                         {t.dueDateISO ? `Due: ${t.dueDateISO}` : "No due date"}{" "}
-                                                        {t.archivedAt ? `• Archived: ${new Date(t.archivedAt).toLocaleDateString("en-IE")}` : ""}
+                                                        {t.archivedAt
+                                                            ? `• Archived: ${new Date(t.archivedAt).toLocaleDateString("en-IE")}`
+                                                            : ""}
                                                     </div>
                                                 </div>
 
-                                                <div className="flex gap-2 shrink-0">
+                                                <div className="flex shrink-0 gap-2">
                                                     <button
                                                         type="button"
                                                         onClick={() => reviveTask(t.id)}
-                                                        className="rounded-xl border-2 border-slate-200 bg-white px-2.5 py-1.5 text-xs hover:bg-slate-50"
+                                                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                                                     >
                                                         Revive
                                                     </button>
                                                     <button
                                                         type="button"
                                                         onClick={() => deleteTask(t.id)}
-                                                        className="rounded-xl border-2 border-red-200 bg-white px-2.5 py-1.5 text-xs text-red-700 hover:bg-red-50"
+                                                        className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
                                                     >
                                                         Delete
                                                     </button>

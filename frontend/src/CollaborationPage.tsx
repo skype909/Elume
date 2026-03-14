@@ -181,6 +181,20 @@ export default function CollaborationPage() {
     const pollRef = useRef<number | null>(null);
     const joinCodeRef = useRef("");
 
+    const btnGlow =
+        "relative inline-flex items-center gap-3 rounded-2xl border-2 border-violet-600 " +
+        "bg-gradient-to-r from-violet-500 via-purple-500 to-emerald-500 " +
+        "px-7 py-3 text-base font-extrabold text-white " +
+        "shadow-[0_0_18px_rgba(120,120,120,0.35)] " +
+        "ring-4 ring-slate-300/60 " +
+        "hover:shadow-[0_0_40px_rgba(120,120,120,0.6)] hover:ring-slate-400 " +
+        "hover:-translate-y-[2px] hover:scale-[1.03] active:scale-[0.98] " +
+        "transition-all duration-200 overflow-hidden " +
+        "after:absolute after:top-0 after:left-[-60%] after:h-full after:w-[60%] " +
+        "after:bg-gradient-to-r after:from-transparent after:via-white/40 after:to-transparent " +
+        "after:rotate-12 hover:after:left-[120%] after:transition-all after:duration-700";
+
+
     const [rooms, setRooms] = useState<BreakoutRoom[]>(
         Array.from({ length: 4 }, (_, i) => ({ roomNumber: i + 1, participantIds: [] }))
     );
@@ -321,7 +335,13 @@ export default function CollaborationPage() {
     async function fetchStatus(code: string) {
         try {
             const res = await fetch(`${API_BASE}/collab/${code}/status`);
-            if (!res.ok) throw new Error("Status unavailable.");
+            if (!res.ok) {
+                if (res.status === 404) {
+                    throw new Error("No session yet. Create a session first.");
+                }
+                throw new Error("Status unavailable.");
+            }
+
             const data = (await res.json()) as CollabStatus;
             setStatus(data);
             setSessionState(data.state);
@@ -339,7 +359,13 @@ export default function CollaborationPage() {
     async function fetchParticipants(code: string) {
         try {
             const res = await fetch(`${API_BASE}/collab/${code}/participants`);
-            if (!res.ok) throw new Error("Participants unavailable.");
+            if (!res.ok) {
+                if (res.status === 404) {
+                    throw new Error("No session yet.");
+                }
+                throw new Error("Participants unavailable.");
+            }
+
             const data = await res.json();
             const list = (data?.participants || []) as CollabParticipantApi[];
             setParticipants(
@@ -351,9 +377,10 @@ export default function CollaborationPage() {
                     isOnline: p.is_online,
                 }))
             );
-        } catch {
-            // ignore small participant refresh errors for now
+        } catch (e: any) {
+            setStatusError(e?.message || "Participants unavailable.");
         }
+
     }
 
     async function persistAssignments(code: string, nextParticipants: CollabParticipant[]) {
@@ -373,6 +400,23 @@ export default function CollaborationPage() {
             throw new Error(txt || "Failed to save assignments.");
         }
     }
+
+    async function syncBreakoutConfig(code: string) {
+        const res = await fetch(`${API_BASE}/collab/${code}/config`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                room_count: roomCount,
+                timer_minutes: timerMinutes,
+            }),
+        });
+
+        if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            throw new Error(txt || "Failed to sync breakout settings.");
+        }
+    }
+
 
     async function createSession() {
         if (isCreating) return;
@@ -425,12 +469,14 @@ export default function CollaborationPage() {
         setParticipants(nextParticipants);
 
         try {
+            await syncBreakoutConfig(code);
             await persistAssignments(code, nextParticipants);
             await Promise.all([fetchParticipants(code), fetchStatus(code)]);
         } catch (e: any) {
             window.alert(e?.message || "Failed to save assignments.");
         }
     }
+
 
     async function saveAssignments() {
         const code = joinCodeRef.current;
@@ -440,6 +486,7 @@ export default function CollaborationPage() {
         }
 
         try {
+            await syncBreakoutConfig(code);
             await persistAssignments(code, participants);
             await Promise.all([fetchParticipants(code), fetchStatus(code)]);
         } catch (e: any) {
@@ -481,12 +528,13 @@ export default function CollaborationPage() {
             setParticipants(nextParticipants);
             setRooms(buildRoomsFromParticipants(nextParticipants, roomCount));
 
+            await syncBreakoutConfig(code);
             await persistAssignments(code, nextParticipants);
 
             const startRes = await fetch(`${API_BASE}/collab/${code}/start`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ timer_minutes: timerMinutes, room_count: roomCount }),
+                body: JSON.stringify({}),
             });
 
             if (!startRes.ok) {
@@ -502,6 +550,7 @@ export default function CollaborationPage() {
             setIsStartingBreakout(false);
         }
     }
+
 
     async function endBreakout() {
         const code = joinCodeRef.current;
@@ -572,12 +621,15 @@ export default function CollaborationPage() {
                                         onClick={createSession}
                                         disabled={isCreating || hasSession}
                                         className={cls(
-                                            "rounded-lg px-4 py-2 text-sm font-black text-white shadow",
-                                            isCreating || hasSession ? "bg-emerald-300 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700"
+                                            "rounded-2xl px-6 py-3 text-base font-black text-white shadow-lg transition",
+                                            isCreating || hasSession
+                                                ? "cursor-not-allowed bg-emerald-300"
+                                                : "bg-emerald-600 hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-xl"
                                         )}
                                     >
-                                        {hasSession ? "Session created" : isCreating ? "Creating..." : "Create session"}
+                                        {hasSession ? "Session created" : isCreating ? "Creating session..." : "Start by creating session"}
                                     </button>
+
 
                                     <button
                                         onClick={() => hasSession && setShowJoinModal(true)}
@@ -925,9 +977,47 @@ export default function CollaborationPage() {
                                                 height={760}
                                             />
                                         ) : (
-                                            <div className="grid min-h-[760px] place-items-center rounded-[28px] border border-dashed border-slate-300 bg-slate-50 text-slate-500">
-                                                Create a session to start the teacher board.
+                                            <div className="grid min-h-[760px] place-items-center rounded-[28px] border border-dashed border-slate-300 bg-slate-50">
+                                                <div className="text-center">
+                                                    <div className="text-xl font-black text-slate-900">
+                                                        Start a collaboration session
+                                                    </div>
+
+                                                    <div className="mt-2 text-sm text-slate-600">
+                                                        Create a session first, then invite students and assign breakout rooms.
+                                                    </div>
+
+                                                    <button
+                                                        className={`mt-6 ${btnGlow}`}
+                                                        type="button"
+                                                        onClick={createSession}
+                                                        disabled={isCreating}
+                                                        title="Start a live collaboration session"
+                                                    >
+                                                        <span className="relative flex items-center justify-center">
+
+                                                            {/* pulsing collaboration halo */}
+                                                            <span className="absolute inline-flex h-6 w-6 rounded-full bg-violet-400 opacity-60 animate-[ping_2.2s_ease-out_infinite]"></span>
+
+                                                            {/* collaboration icon */}
+                                                            <span className="relative text-lg leading-none drop-shadow-[0_0_6px_rgba(255,255,255,0.9)]">
+                                                                🤝
+                                                            </span>
+
+                                                        </span>
+
+                                                        <span className="drop-shadow-[0_2px_2px_rgba(0,0,0,0.55)]">
+                                                            {isCreating ? "Creating session..." : "Create Collaboration Session"}
+                                                        </span>
+
+                                                        <span className="ml-1 rounded-full bg-white/20 px-2 py-[2px] text-[10px] font-bold tracking-wide text-white border border-white/40">
+                                                            LIVE
+                                                        </span>
+                                                    </button>
+
+                                                </div>
                                             </div>
+
                                         )}
 
                                         {timeLeftSeconds !== null && sessionState === "live" && (
@@ -937,107 +1027,107 @@ export default function CollaborationPage() {
                                         )}
                                     </div>
                                 ) : focusedReviewBoard ? (
-                                <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                                    <div className="mb-4 flex items-center justify-between gap-3">
-                                        <div className="text-sm font-black text-slate-900">
-                                            {boardOptions.find((b) => b.value === focusedReviewBoard)?.label || "Board"}
+                                    <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                                        <div className="mb-4 flex items-center justify-between gap-3">
+                                            <div className="text-sm font-black text-slate-900">
+                                                {boardOptions.find((b) => b.value === focusedReviewBoard)?.label || "Board"}
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => setFocusedReviewBoard(null)}
+                                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                                            >
+                                                Back to 2×2 grid
+                                            </button>
                                         </div>
 
-                                        <button
-                                            type="button"
-                                            onClick={() => setFocusedReviewBoard(null)}
-                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
-                                        >
-                                            Back to 2×2 grid
-                                        </button>
-                                    </div>
+                                        <div className="relative min-h-[760px] overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+                                            <div className="absolute left-3 top-3 z-10 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
+                                                {boardOptions.find((b) => b.value === focusedReviewBoard)?.label || "Board"}
+                                            </div>
 
-                                    <div className="relative min-h-[760px] overflow-hidden rounded-[24px] border border-slate-200 bg-white">
-                                        <div className="absolute left-3 top-3 z-10 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
-                                            {boardOptions.find((b) => b.value === focusedReviewBoard)?.label || "Board"}
+                                            {hasSession ? (
+                                                <CollabBoard
+                                                    key={`focused-${focusedReviewBoard}`}
+                                                    sessionCode={joinCode}
+                                                    roomKey={focusedReviewBoard}
+                                                    participantId="teacher-review-focus"
+                                                    tool="select"
+                                                    penColor={penColor}
+                                                    penSize={penSize}
+                                                    highlighterColor={highlightColor}
+                                                    eraserSize={eraserSize}
+                                                    height={760}
+                                                    readOnly
+                                                />
+                                            ) : (
+                                                <div className="grid min-h-[760px] place-items-center text-slate-500">No session.</div>
+                                            )}
                                         </div>
-
-                                        {hasSession ? (
-                                            <CollabBoard
-                                                key={`focused-${focusedReviewBoard}`}
-                                                sessionCode={joinCode}
-                                                roomKey={focusedReviewBoard}
-                                                participantId="teacher-review-focus"
-                                                tool="select"
-                                                penColor={penColor}
-                                                penSize={penSize}
-                                                highlighterColor={highlightColor}
-                                                eraserSize={eraserSize}
-                                                height={760}
-                                                readOnly
-                                            />
-                                        ) : (
-                                            <div className="grid min-h-[760px] place-items-center text-slate-500">No session.</div>
-                                        )}
                                     </div>
-                                </div>
                                 ) : (
-                                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                                    {reviewPanels.map((panel, idx) => (
-                                        <div key={panel.id} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                                            <div className="mb-3 flex items-center justify-between gap-3">
-                                                <div className="text-sm font-black text-slate-900">Review Panel {idx + 1}</div>
+                                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                                        {reviewPanels.map((panel, idx) => (
+                                            <div key={panel.id} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                                                <div className="mb-3 flex items-center justify-between gap-3">
+                                                    <div className="text-sm font-black text-slate-900">Review Panel {idx + 1}</div>
 
-                                                <div className="flex items-center gap-2">
-                                                    <select
-                                                        value={panel.selectedBoard}
-                                                        onChange={(e) =>
-                                                            setReviewPanels((prev) =>
-                                                                prev.map((p) => (p.id === panel.id ? { ...p, selectedBoard: e.target.value } : p))
-                                                            )
-                                                        }
-                                                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm outline-none"
-                                                    >
-                                                        {boardOptions.map((opt) => (
-                                                            <option key={opt.value} value={opt.value}>
-                                                                {opt.label}
-                                                            </option>
-                                                        ))}
-                                                    </select>
+                                                    <div className="flex items-center gap-2">
+                                                        <select
+                                                            value={panel.selectedBoard}
+                                                            onChange={(e) =>
+                                                                setReviewPanels((prev) =>
+                                                                    prev.map((p) => (p.id === panel.id ? { ...p, selectedBoard: e.target.value } : p))
+                                                                )
+                                                            }
+                                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm outline-none"
+                                                        >
+                                                            {boardOptions.map((opt) => (
+                                                                <option key={opt.value} value={opt.value}>
+                                                                    {opt.label}
+                                                                </option>
+                                                            ))}
+                                                        </select>
 
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setFocusedReviewBoard(panel.selectedBoard)}
-                                                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
-                                                    >
-                                                        Expand
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            <div className="relative min-h-[300px] overflow-hidden rounded-[24px] border border-slate-200 bg-white">
-                                                <div className="absolute left-3 top-3 z-10 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
-                                                    {boardOptions.find((b) => b.value === panel.selectedBoard)?.label || "Board"}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setFocusedReviewBoard(panel.selectedBoard)}
+                                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                                                        >
+                                                            Expand
+                                                        </button>
+                                                    </div>
                                                 </div>
 
-                                                {hasSession ? (
-                                                    <CollabBoard
-                                                        key={`${panel.id}-${panel.selectedBoard}`}
-                                                        sessionCode={joinCode}
-                                                        roomKey={panel.selectedBoard}
-                                                        participantId={`review-${panel.id}`}
-                                                        tool="select"
-                                                        penColor={penColor}
-                                                        penSize={penSize}
-                                                        highlighterColor={highlightColor}
-                                                        eraserSize={eraserSize}
-                                                        height={300}
-                                                        readOnly
-                                                    />
-                                                ) : (
-                                                    <div className="grid min-h-[300px] place-items-center text-slate-500">No session.</div>
-                                                )}
+                                                <div className="relative min-h-[300px] overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+                                                    <div className="absolute left-3 top-3 z-10 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
+                                                        {boardOptions.find((b) => b.value === panel.selectedBoard)?.label || "Board"}
+                                                    </div>
+
+                                                    {hasSession ? (
+                                                        <CollabBoard
+                                                            key={`${panel.id}-${panel.selectedBoard}`}
+                                                            sessionCode={joinCode}
+                                                            roomKey={panel.selectedBoard}
+                                                            participantId={`review-${panel.id}`}
+                                                            tool="select"
+                                                            penColor={penColor}
+                                                            penSize={penSize}
+                                                            highlighterColor={highlightColor}
+                                                            eraserSize={eraserSize}
+                                                            height={300}
+                                                            readOnly
+                                                        />
+                                                    ) : (
+                                                        <div className="grid min-h-[300px] place-items-center text-slate-500">No session.</div>
+                                                    )}
+                                                </div>
                                             </div>
-                                        </div>
-                                    ))}
-                                </div>
+                                        ))}
+                                    </div>
                                 )
-                            }
+                                }
                             </SectionCard>
                         </div>
 
@@ -1309,19 +1399,6 @@ export default function CollaborationPage() {
                                                         No students assigned yet.
                                                     </div>
                                                 )}
-                                            </div>
-
-                                            <div className="mt-4 grid grid-cols-2 gap-2">
-                                                {participants.slice(0, 4).map((p) => (
-                                                    <button
-                                                        key={`${room.roomNumber}_${p.id}`}
-                                                        type="button"
-                                                        onClick={() => assignAndSave(p.id, room.roomNumber)}
-                                                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
-                                                    >
-                                                        + {p.name}
-                                                    </button>
-                                                ))}
                                             </div>
                                         </div>
                                     );

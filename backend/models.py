@@ -187,6 +187,52 @@ class SchoolDay(Base):
     id = Column(Integer, primary_key=True, index=True)
     date = Column(DateTime, nullable=False, unique=True)
 
+# =========================================================
+# Created Quiz Sessions
+# =========================================================
+
+class SavedQuizModel(Base):
+    __tablename__ = "saved_quizzes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False, index=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    title = Column(String, nullable=False)
+    category = Column(String, nullable=False, default="General")
+    description = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    questions = relationship(
+        "SavedQuizQuestionModel",
+        back_populates="quiz",
+        cascade="all, delete-orphan",
+        order_by="SavedQuizQuestionModel.position.asc()",
+    )
+
+
+class SavedQuizQuestionModel(Base):
+    __tablename__ = "saved_quiz_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    quiz_id = Column(Integer, ForeignKey("saved_quizzes.id"), nullable=False, index=True)
+
+    prompt = Column(Text, nullable=False)
+    choice_a = Column(Text, nullable=False)
+    choice_b = Column(Text, nullable=False)
+    choice_c = Column(Text, nullable=False)
+    choice_d = Column(Text, nullable=False)
+
+    correct_index = Column(Integer, nullable=False, default=0)
+    explanation = Column(Text, nullable=True)
+    position = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    quiz = relationship("SavedQuizModel", back_populates="questions")
 
 # =========================================================
 # Live Quiz Session
