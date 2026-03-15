@@ -31,7 +31,7 @@ from jose import jwt, JWTError
 import secrets
 
 from io import BytesIO
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -75,6 +75,19 @@ def _is_local_request(host: Optional[str]) -> bool:
     host = (host or "").split(":")[0].strip().lower()
     return host in {"localhost", "127.0.0.1"}
 
+def _app_env() -> str:
+    return (
+        os.getenv("APP_ENV")
+        or os.getenv("ENV")
+        or ""
+    ).strip().lower()
+
+def _is_explicit_development() -> bool:
+    return _app_env() in {"development", "dev", "local"}
+
+def _jwt_secret_is_weak(secret: str) -> bool:
+    return not secret or secret == "change-me"
+
 
 # =========================================================
 # APP
@@ -83,9 +96,14 @@ app = FastAPI()
 print("✅ LOADED main.py FROM:", __file__)
 
 PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me")
+JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
 JWT_ALG = "HS256"
 JWT_EXPIRE_DAYS = 30
+
+if _jwt_secret_is_weak(JWT_SECRET) and not _is_explicit_development():
+    raise RuntimeError(
+        "JWT_SECRET is missing or insecure. Set a strong JWT_SECRET or run only in explicit development mode."
+    )
 
 class DevAutoLoginResponse(BaseModel):
     access_token: str
@@ -283,8 +301,14 @@ def auth_dev_auto_login(
     if not _dev_autologin_enabled():
         raise HTTPException(status_code=404, detail="Not found")
 
+    if not _is_explicit_development():
+        raise HTTPException(status_code=404, detail="Not found")
+
     if not _is_local_request(host):
         raise HTTPException(status_code=403, detail="Local development only")
+
+    if _jwt_secret_is_weak(JWT_SECRET):
+        raise HTTPException(status_code=403, detail="JWT secret is not configured securely")
 
     email = "admin@elume.ie"
 
@@ -334,6 +358,79 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="User not found")
 
     return user
+
+def get_owned_class_or_404(
+    class_id: int,
+    db: Session,
+    user: models.UserModel,
+) -> ClassModel:
+    cls = db.query(ClassModel).filter(
+        ClassModel.id == class_id,
+        ClassModel.owner_user_id == user.id,
+    ).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+    return cls
+
+def get_owned_livequiz_session_or_404(
+    code: str,
+    db: Session,
+    user: models.UserModel,
+) -> LiveQuizSessionModel:
+    session = db.query(LiveQuizSessionModel).filter(
+        LiveQuizSessionModel.session_code == code
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    get_owned_class_or_404(session.class_id, db, user)
+    return session
+
+def get_owned_collab_session_or_404(
+    code: str,
+    db: Session,
+    user: models.UserModel,
+) -> CollabSessionModel:
+    session = db.query(CollabSessionModel).filter(
+        CollabSessionModel.session_code == code
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    get_owned_class_or_404(session.class_id, db, user)
+    return session
+
+def get_active_student_access_link_or_404(
+    token: str,
+    db: Session,
+) -> models.StudentAccessLink:
+    link = db.query(models.StudentAccessLink).filter(
+        models.StudentAccessLink.token == token,
+        models.StudentAccessLink.is_active == True,
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Invalid link")
+    return link
+
+def _internal_post_upload_relpath_or_none(link: str) -> Optional[str]:
+    value = (link or "").strip()
+    for prefix in ("/uploads/posts/", "/uploads/whiteboards/"):
+        if value.startswith(prefix):
+            return value[len("/uploads/"):]
+    return None
+
+def _post_attachment_path_or_404(post: PostModel, attachment_index: int) -> tuple[Path, str]:
+    links = _links_to_list(getattr(post, "links", None))
+    if attachment_index < 0 or attachment_index >= len(links):
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    rel = _internal_post_upload_relpath_or_none(links[attachment_index])
+    if not rel:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    path = UPLOADS_DIR / Path(rel)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return path, path.name
 
 def require_super_admin(user: models.UserModel):
     if (user.email or "").strip().lower() != "admin@elume.ie":
@@ -664,10 +761,13 @@ class TeacherPlannerStateModel(Base):
 
 
 @app.post("/collab/{code}/config")
-def collab_update_config(code: str, payload: CollabUpdatePayload, db: Session = Depends(get_db)):
-    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
+def collab_update_config(
+    code: str,
+    payload: CollabUpdatePayload,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_collab_session_or_404(code, db, user)
 
     if s.state == "live":
         raise HTTPException(status_code=400, detail="Cannot change config after breakout has started")
@@ -1225,11 +1325,12 @@ def delete_quiz_question(
     return _quiz_out(quiz)
 
 @app.post("/livequiz/create", response_model=LiveQuizCreateResponse)
-def livequiz_create(payload: LiveQuizCreateRequest, db: Session = Depends(get_db)):
-    cls = db.query(ClassModel).filter(ClassModel.id == payload.class_id).first()
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
-
+def livequiz_create(
+    payload: LiveQuizCreateRequest,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(payload.class_id, db, user)
     title = (payload.title or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
@@ -1329,11 +1430,12 @@ def livequiz_status(code: str, db: Session = Depends(get_db)):
     }
 
 @app.post("/livequiz/{code}/start")
-def livequiz_start(code: str, db: Session = Depends(get_db)):
-    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
-
+def livequiz_start(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_livequiz_session_or_404(code, db, user)
     qs = _load_questions(s)
     if not qs:
         raise HTTPException(status_code=400, detail="No questions")
@@ -1346,11 +1448,12 @@ def livequiz_start(code: str, db: Session = Depends(get_db)):
     return {"message": "started"}
 
 @app.post("/livequiz/{code}/next")
-def livequiz_next(code: str, db: Session = Depends(get_db)):
-    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
-
+def livequiz_next(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_livequiz_session_or_404(code, db, user)
     qs = _load_questions(s)
     if not qs:
         raise HTTPException(status_code=400, detail="No questions")
@@ -1371,10 +1474,12 @@ def livequiz_next(code: str, db: Session = Depends(get_db)):
     return {"message": "next"}
 
 @app.post("/livequiz/{code}/end-question")
-def livequiz_end_question(code: str, db: Session = Depends(get_db)):
-    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
+def livequiz_end_question(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_livequiz_session_or_404(code, db, user)
     if s.state != "live":
         raise HTTPException(status_code=400, detail="Session is not live")
 
@@ -1385,10 +1490,12 @@ def livequiz_end_question(code: str, db: Session = Depends(get_db)):
     return {"message": "ended_question"}
 
 @app.post("/livequiz/{code}/end-session")
-def livequiz_end_session(code: str, db: Session = Depends(get_db)):
-    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
+def livequiz_end_session(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_livequiz_session_or_404(code, db, user)
     s.state = "ended"
     s.ended_at = datetime.utcnow()
     db.commit()
@@ -1660,10 +1767,12 @@ def _build_livequiz_results(db: Session, s: LiveQuizSessionModel) -> dict:
 
 
 @app.get("/livequiz/{code}/results")
-def livequiz_results(code: str, db: Session = Depends(get_db)):
-    s = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
+def livequiz_results(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_livequiz_session_or_404(code, db, user)
     return _build_livequiz_results(db, s)
 
     
@@ -1746,9 +1855,7 @@ Base.metadata.create_all(bind=engine)
 BASE_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = BASE_DIR / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-
-# Static serving: /uploads/...
-app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+LEGACY_PUBLIC_UPLOAD_DIRS = {"notes", "tests", "posts", "whiteboards"}
 
 
 def _rel_upload_url(stored_path: str) -> str:
@@ -1775,8 +1882,38 @@ def _rel_upload_url(stored_path: str) -> str:
     return f"/uploads/{p.name}"
 
 
+@app.get("/uploads/{file_path:path}")
+def legacy_upload_access(file_path: str):
+    rel = Path(file_path)
+    if not rel.parts:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if rel.parts[0] not in LEGACY_PUBLIC_UPLOAD_DIRS:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    full_path = (UPLOADS_DIR / rel).resolve()
+    try:
+        full_path.relative_to(UPLOADS_DIR.resolve())
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(
+        path=full_path,
+        filename=full_path.name,
+        headers={"X-Elume-Legacy-Uploads": "true"},
+    )
+
+
 @app.post("/collab/create", response_model=CollabCreateResponse)
-def collab_create(payload: CollabCreatePayload, db: Session = Depends(get_db)):
+def collab_create(
+    payload: CollabCreatePayload,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(payload.class_id, db, user)
     title = (payload.title or "").strip() or "Collaboration Whiteboard"
     room_count = max(1, min(12, int(payload.room_count or 4)))
     timer_minutes = payload.timer_minutes
@@ -1887,10 +2024,12 @@ def collab_join(code: str, payload: CollabJoinPayload, db: Session = Depends(get
 
 
 @app.get("/collab/{code}/participants")
-def collab_participants(code: str, db: Session = Depends(get_db)):
-    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
+def collab_participants(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_collab_session_or_404(code, db, user)
 
     participants = (
         db.query(CollabParticipantModel)
@@ -1914,10 +2053,13 @@ def collab_participants(code: str, db: Session = Depends(get_db)):
 
 
 @app.post("/collab/{code}/assignments")
-def collab_assignments(code: str, payload: CollabAssignmentsPayload, db: Session = Depends(get_db)):
-    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
+def collab_assignments(
+    code: str,
+    payload: CollabAssignmentsPayload,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_collab_session_or_404(code, db, user)
 
     for item in payload.assignments:
         p = (
@@ -1942,10 +2084,12 @@ def collab_assignments(code: str, payload: CollabAssignmentsPayload, db: Session
 
 
 @app.post("/collab/{code}/start")
-async def collab_start(code: str, db: Session = Depends(get_db)):
-    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def collab_start(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_collab_session_or_404(code, db, user)
 
     # Copy the current teacher board into every breakout room
     await _seed_breakout_rooms_from_teacher(code, int(s.room_count or 0))
@@ -1958,10 +2102,12 @@ async def collab_start(code: str, db: Session = Depends(get_db)):
 
 
 @app.post("/collab/{code}/end")
-def collab_end(code: str, db: Session = Depends(get_db)):
-    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
+def collab_end(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_collab_session_or_404(code, db, user)
 
     s.state = "review"
     db.commit()
@@ -1969,10 +2115,12 @@ def collab_end(code: str, db: Session = Depends(get_db)):
 
 
 @app.post("/collab/{code}/end-session")
-def collab_end_session(code: str, db: Session = Depends(get_db)):
-    s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Session not found")
+def collab_end_session(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_collab_session_or_404(code, db, user)
 
     s.state = "ended"
     s.ended_at = datetime.utcnow()
@@ -2058,11 +2206,9 @@ async def save_whiteboard(
     title: str = Form(...),
     image: UploadFile = File(...),
     db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
 ):
-    # Confirm class exists
-    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
+    get_owned_class_or_404(class_id, db, user)
 
     os.makedirs("uploads/whiteboards", exist_ok=True)
 
@@ -2095,23 +2241,26 @@ async def save_whiteboard(
         "class_id": post.class_id,
         "author": post.author,
         "content": post.content,
-        "links": post.links,
+        "links": [f"/posts/{post.id}/attachments/0"],
         "createdAt": getattr(post, "created_at", None),
     }
 
 @app.get("/classes/{class_id}")
-def get_class(class_id: int, db: Session = Depends(get_db)):
-    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
-    return cls
+def get_class(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    return get_owned_class_or_404(class_id, db, user)
 
 @app.put("/classes/{class_id}")
-def update_class(class_id: int, payload: dict, db: Session = Depends(get_db)):
-    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
+def update_class(
+    class_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    cls = get_owned_class_or_404(class_id, db, user)
 
     if "name" in payload and isinstance(payload["name"], str):
         cls.name = payload["name"].strip() or cls.name
@@ -2152,7 +2301,12 @@ def _links_to_storage(v):
 
 
 @app.get("/classes/{class_id}/posts")
-def get_posts(class_id: int, db: Session = Depends(get_db)):
+def get_posts(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     posts = (
         db.query(PostModel)
         .filter(PostModel.class_id == class_id)
@@ -2161,13 +2315,20 @@ def get_posts(class_id: int, db: Session = Depends(get_db)):
     )
     out = []
     for p in posts:
+        links = _links_to_list(getattr(p, "links", None))
+        rewritten_links = []
+        for idx, link in enumerate(links):
+            if _internal_post_upload_relpath_or_none(link):
+                rewritten_links.append(f"/posts/{p.id}/attachments/{idx}")
+            else:
+                rewritten_links.append(link)
         out.append(
             {
                 "id": p.id,
                 "class_id": p.class_id,
                 "author": getattr(p, "author", ""),
                 "content": getattr(p, "content", ""),
-                "links": _links_to_list(getattr(p, "links", None)),
+                "links": rewritten_links,
                 "createdAt": getattr(p, "created_at", None).isoformat() if getattr(p, "created_at", None) else None,
             }
         )
@@ -2182,10 +2343,9 @@ async def add_post(
     links: str = Form("[]"),
     files: list[UploadFile] = File([]),
     db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
 ):
-    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
+    get_owned_class_or_404(class_id, db, user)
 
     content = (content or "").strip()
     author = (author or "Teacher").strip() or "Teacher"
@@ -2230,24 +2390,70 @@ async def add_post(
     db.commit()
     db.refresh(p)
 
+    links = _links_to_list(getattr(p, "links", None))
+    rewritten_links = []
+    for idx, link in enumerate(links):
+        if _internal_post_upload_relpath_or_none(link):
+            rewritten_links.append(f"/posts/{p.id}/attachments/{idx}")
+        else:
+            rewritten_links.append(link)
+
     return {
         "id": p.id,
         "class_id": p.class_id,
         "author": p.author,
         "content": p.content,
-        "links": _links_to_list(getattr(p, "links", None)),
+        "links": rewritten_links,
         "createdAt": getattr(p, "created_at", None).isoformat() if getattr(p, "created_at", None) else None,
     }
 
 
 @app.delete("/posts/{post_id}")
-def delete_post(post_id: int, db: Session = Depends(get_db)):
+def delete_post(
+    post_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     post = db.query(PostModel).filter(PostModel.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    get_owned_class_or_404(post.class_id, db, user)
     db.delete(post)
     db.commit()
     return {"message": "Post deleted"}
+
+
+@app.get("/posts/{post_id}/attachments/{attachment_index}")
+def download_post_attachment(
+    post_id: int,
+    attachment_index: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    post = db.query(PostModel).filter(PostModel.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    get_owned_class_or_404(post.class_id, db, user)
+    path, filename = _post_attachment_path_or_404(post, attachment_index)
+    return FileResponse(path=path, filename=filename)
+
+
+@app.get("/student/{token}/posts/{post_id}/attachments/{attachment_index}")
+def student_download_post_attachment(
+    token: str,
+    post_id: int,
+    attachment_index: int,
+    db: Session = Depends(get_db),
+):
+    link = get_active_student_access_link_or_404(token, db)
+    post = db.query(PostModel).filter(
+        PostModel.id == post_id,
+        PostModel.class_id == link.class_id,
+    ).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    path, filename = _post_attachment_path_or_404(post, attachment_index)
+    return FileResponse(path=path, filename=filename)
 
 
 # =========================================================
@@ -2266,7 +2472,13 @@ def strip_prefix(name: str) -> str:
 
 
 @app.get("/topics/{class_id}", response_model=List[schemas.TopicOut])
-def list_topics(class_id: int, kind: str = "notes", db: Session = Depends(get_db)):
+def list_topics(
+    class_id: int,
+    kind: str = "notes",
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     q = db.query(models.Topic).filter(models.Topic.class_id == class_id)
     if kind == "exam":
         q = q.filter(models.Topic.name.startswith(EXAM_PREFIX))
@@ -2278,7 +2490,13 @@ def list_topics(class_id: int, kind: str = "notes", db: Session = Depends(get_db
 
 
 @app.post("/topics", response_model=schemas.TopicOut)
-def create_topic(payload: schemas.TopicCreate, kind: str = "notes", db: Session = Depends(get_db)):
+def create_topic(
+    payload: schemas.TopicCreate,
+    kind: str = "notes",
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(payload.class_id, db, user)
     prefix = EXAM_PREFIX if kind == "exam" else NOTES_PREFIX
     name = (payload.name or "").strip()
     if not name:
@@ -2292,10 +2510,15 @@ def create_topic(payload: schemas.TopicCreate, kind: str = "notes", db: Session 
 
 
 @app.delete("/topics/{topic_id}")
-def delete_topic(topic_id: int, db: Session = Depends(get_db)):
+def delete_topic(
+    topic_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     topic = db.query(models.Topic).filter(models.Topic.id == topic_id).first()
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
+    get_owned_class_or_404(topic.class_id, db, user)
 
     # delete notes belonging to this topic
     notes = db.query(models.Note).filter(models.Note.topic_id == topic_id).all()
@@ -2313,7 +2536,13 @@ def delete_topic(topic_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/notes/{class_id}", response_model=List[schemas.NoteOut])
-def list_notes(class_id: int, kind: str = "notes", db: Session = Depends(get_db)):
+def list_notes(
+    class_id: int,
+    kind: str = "notes",
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     q = (
         db.query(models.Note, models.Topic)
         .join(models.Topic, models.Note.topic_id == models.Topic.id)
@@ -2335,7 +2564,7 @@ def list_notes(class_id: int, kind: str = "notes", db: Session = Depends(get_db)
                 class_id=note.class_id,
                 topic_id=note.topic_id,
                 filename=note.filename,
-                file_url=_rel_upload_url(note.stored_path),
+                file_url=f"/notes/{note.id}/download",
                 uploaded_at=note.uploaded_at,
                 topic_name=strip_prefix(topic.name) if topic else "Unsorted",
             )
@@ -2349,10 +2578,14 @@ def upload_note(
     topic_id: int = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
 ):
+    get_owned_class_or_404(class_id, db, user)
     topic = db.query(models.Topic).filter(models.Topic.id == topic_id).first()
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
+    if topic.class_id != class_id:
+        raise HTTPException(status_code=400, detail="Topic does not belong to this class")
 
     dest_dir = UPLOADS_DIR / "notes" / str(class_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -2378,17 +2611,22 @@ def upload_note(
         class_id=n.class_id,
         topic_id=n.topic_id,
         filename=n.filename,
-        file_url=_rel_upload_url(n.stored_path),
+        file_url=f"/notes/{n.id}/download",
         uploaded_at=n.uploaded_at,
         topic_name=strip_prefix(topic.name),
     )
 
 
 @app.delete("/notes/{note_id}")
-def delete_note(note_id: int, db: Session = Depends(get_db)):
+def delete_note(
+    note_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     n = db.query(models.Note).filter(models.Note.id == note_id).first()
     if not n:
         raise HTTPException(status_code=404, detail="Note not found")
+    get_owned_class_or_404(n.class_id, db, user)
 
     if n.stored_path and os.path.exists(n.stored_path):
         try:
@@ -2401,11 +2639,49 @@ def delete_note(note_id: int, db: Session = Depends(get_db)):
     return {"message": "Note deleted"}
 
 
+@app.get("/notes/{note_id}/download")
+def download_note(
+    note_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    note = db.query(models.Note).filter(models.Note.id == note_id).first()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    get_owned_class_or_404(note.class_id, db, user)
+    if not note.stored_path or not os.path.exists(note.stored_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path=note.stored_path, filename=note.filename)
+
+
+@app.get("/student/{token}/notes/{note_id}/download")
+def student_download_note(
+    token: str,
+    note_id: int,
+    db: Session = Depends(get_db),
+):
+    link = get_active_student_access_link_or_404(token, db)
+    note = db.query(models.Note).filter(
+        models.Note.id == note_id,
+        models.Note.class_id == link.class_id,
+    ).first()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    if not note.stored_path or not os.path.exists(note.stored_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path=note.stored_path, filename=note.filename)
+
+
 # =========================================================
 # TESTS (Categories + PDF uploads)  — matches schemas.py
 # =========================================================
 @app.get("/classes/{class_id}/test-categories", response_model=List[schemas.TestCategoryOut])
-def list_test_categories(class_id: int, db: Session = Depends(get_db)):
+def list_test_categories(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     cats = (
         db.query(TestCategory)
         .filter(TestCategory.class_id == class_id)
@@ -2424,7 +2700,13 @@ def list_test_categories(class_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/classes/{class_id}/test-categories", response_model=schemas.TestCategoryOut)
-def create_test_category(class_id: int, payload: schemas.TestCategoryCreate, db: Session = Depends(get_db)):
+def create_test_category(
+    class_id: int,
+    payload: schemas.TestCategoryCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     title = (payload.title or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="Category title cannot be empty")
@@ -2447,10 +2729,16 @@ def create_test_category(class_id: int, payload: schemas.TestCategoryCreate, db:
 
 
 @app.put("/test-categories/{cat_id}", response_model=schemas.TestCategoryOut)
-def update_test_category(cat_id: int, payload: schemas.TestCategoryPatch, db: Session = Depends(get_db)):
+def update_test_category(
+    cat_id: int,
+    payload: schemas.TestCategoryPatch,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     c = db.query(TestCategory).filter(TestCategory.id == cat_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Category not found")
+    get_owned_class_or_404(c.class_id, db, user)
 
     if payload.title is not None:
         t = payload.title.strip()
@@ -2473,10 +2761,15 @@ def update_test_category(cat_id: int, payload: schemas.TestCategoryPatch, db: Se
 
 
 @app.delete("/test-categories/{cat_id}")
-def delete_test_category(cat_id: int, db: Session = Depends(get_db)):
+def delete_test_category(
+    cat_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     c = db.query(TestCategory).filter(TestCategory.id == cat_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Category not found")
+    get_owned_class_or_404(c.class_id, db, user)
 
     # detach tests from category
     db.query(TestItem).filter(TestItem.category_id == cat_id).update({"category_id": None})
@@ -2486,7 +2779,12 @@ def delete_test_category(cat_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/classes/{class_id}/tests", response_model=List[schemas.TestOut])
-def list_tests(class_id: int, db: Session = Depends(get_db)):
+def list_tests(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     tests = (
         db.query(TestItem)
         .filter(TestItem.class_id == class_id)
@@ -2504,7 +2802,7 @@ def list_tests(class_id: int, db: Session = Depends(get_db)):
                 title=t.title,
                 description=t.description,
                 filename=t.filename,
-                file_url=_rel_upload_url(t.stored_path),
+                file_url=f"/tests/{t.id}/download",
                 uploaded_at=t.uploaded_at,
             )
         )
@@ -2536,10 +2834,18 @@ def upload_test(
     category_id: Optional[int] = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
 ):
+    get_owned_class_or_404(class_id, db, user)
     title = (title or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
+    if category_id is not None:
+        category = db.query(TestCategory).filter(TestCategory.id == category_id).first()
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
+        if category.class_id != class_id:
+            raise HTTPException(status_code=400, detail="Category does not belong to this class")
 
     dest_dir = UPLOADS_DIR / "tests" / str(class_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -2569,16 +2875,22 @@ def upload_test(
         title=t.title,
         description=t.description,
         filename=t.filename,
-        file_url=_rel_upload_url(t.stored_path),
+        file_url=f"/tests/{t.id}/download",
         uploaded_at=t.uploaded_at,
     )
 
 
 @app.put("/tests/{test_id}", response_model=schemas.TestOut)
-def update_test(test_id: int, payload: schemas.TestPatch, db: Session = Depends(get_db)):
+def update_test(
+    test_id: int,
+    payload: schemas.TestPatch,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     t = db.query(TestItem).filter(TestItem.id == test_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Test not found")
+    get_owned_class_or_404(t.class_id, db, user)
 
     if payload.title is not None:
         new_title = payload.title.strip()
@@ -2591,6 +2903,12 @@ def update_test(test_id: int, payload: schemas.TestPatch, db: Session = Depends(
 
     if payload.category_id is not None or payload.category_id is None:
         # allow explicit null to clear category
+        if payload.category_id is not None:
+            category = db.query(TestCategory).filter(TestCategory.id == payload.category_id).first()
+            if not category:
+                raise HTTPException(status_code=404, detail="Category not found")
+            if category.class_id != t.class_id:
+                raise HTTPException(status_code=400, detail="Category does not belong to this class")
         t.category_id = payload.category_id
 
     db.commit()
@@ -2603,16 +2921,21 @@ def update_test(test_id: int, payload: schemas.TestPatch, db: Session = Depends(
         title=t.title,
         description=t.description,
         filename=t.filename,
-        file_url=_rel_upload_url(t.stored_path),
+        file_url=f"/tests/{t.id}/download",
         uploaded_at=t.uploaded_at,
     )
 
 
 @app.delete("/tests/{test_id}")
-def delete_test(test_id: int, db: Session = Depends(get_db)):
+def delete_test(
+    test_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     t = db.query(TestItem).filter(TestItem.id == test_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Test not found")
+    get_owned_class_or_404(t.class_id, db, user)
 
     if t.stored_path and os.path.exists(t.stored_path):
         try:
@@ -2623,6 +2946,39 @@ def delete_test(test_id: int, db: Session = Depends(get_db)):
     db.delete(t)
     db.commit()
     return {"message": "Test deleted"}
+
+
+@app.get("/tests/{test_id}/download")
+def download_test(
+    test_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    test = db.query(TestItem).filter(TestItem.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+    get_owned_class_or_404(test.class_id, db, user)
+    if not test.stored_path or not os.path.exists(test.stored_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path=test.stored_path, filename=test.filename)
+
+
+@app.get("/student/{token}/tests/{test_id}/download")
+def student_download_test(
+    token: str,
+    test_id: int,
+    db: Session = Depends(get_db),
+):
+    link = get_active_student_access_link_or_404(token, db)
+    test = db.query(TestItem).filter(
+        TestItem.id == test_id,
+        TestItem.class_id == link.class_id,
+    ).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+    if not test.stored_path or not os.path.exists(test.stored_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path=test.stored_path, filename=test.filename)
 
 # -------------------------
 # Calendar Routes (single canonical source of truth)
@@ -2800,6 +3156,7 @@ def get_student_access(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    get_owned_class_or_404(class_id, db, user)
     link = db.query(models.StudentAccessLink).filter(
         models.StudentAccessLink.class_id == class_id,
         models.StudentAccessLink.is_active == True
@@ -2809,13 +3166,7 @@ def get_student_access(
 
 @app.get("/student/{token}")
 def student_view(token: str, db: Session = Depends(get_db)):
-    link = db.query(models.StudentAccessLink).filter(
-        models.StudentAccessLink.token == token,
-        models.StudentAccessLink.is_active == True
-    ).first()
-
-    if not link:
-        raise HTTPException(status_code=404, detail="Invalid link")
+    link = get_active_student_access_link_or_404(token, db)
 
     cls = db.query(ClassModel).filter(ClassModel.id == link.class_id).first()
     if not cls:
@@ -2831,19 +3182,6 @@ def student_view(token: str, db: Session = Depends(get_db)):
     notes = db.query(models.Note).filter(models.Note.class_id == link.class_id).all()
     tests = db.query(TestItem).filter(TestItem.class_id == link.class_id).all()
 
-    # If you already have _rel_upload_url in main.py elsewhere, reuse it here.
-    def _safe_url(stored_path: str | None):
-        if not stored_path:
-            return None
-        # If your project already defines _rel_upload_url earlier, call that instead.
-        # This is a safe fallback:
-        p = stored_path.replace("\\", "/")
-        if "/uploads/" in p:
-            return p[p.index("/uploads/"):]
-        if "uploads/" in p:
-            return "/" + p[p.index("uploads/"):]
-        return None
-
     return {
         "class_name": cls.name,
         "subject": cls.subject,
@@ -2852,7 +3190,14 @@ def student_view(token: str, db: Session = Depends(get_db)):
         "id": p.id,
         "author": p.author,
         "content": p.content,
-        "links": _links_to_list(getattr(p, "links", None)),  # ✅ add this
+        "links": [
+            (
+                f"/student/{token}/posts/{p.id}/attachments/{idx}"
+                if _internal_post_upload_relpath_or_none(post_link)
+                else post_link
+            )
+            for idx, post_link in enumerate(_links_to_list(getattr(p, "links", None)))
+        ],
         "created_at": p.created_at.isoformat() if p.created_at else None,
     }
     for p in posts
@@ -2861,7 +3206,7 @@ def student_view(token: str, db: Session = Depends(get_db)):
             {
                 "id": n.id,
                 "filename": n.filename,
-                "file_url": _safe_url(n.stored_path),
+                "file_url": f"/student/{token}/notes/{n.id}/download",
             }
             for n in notes
         ],
@@ -2869,7 +3214,7 @@ def student_view(token: str, db: Session = Depends(get_db)):
             {
                 "id": t.id,
                 "title": t.title,
-                "file_url": _safe_url(t.stored_path),
+                "file_url": f"/student/{token}/tests/{t.id}/download",
             }
             for t in tests
         ],
@@ -2881,7 +3226,12 @@ def student_view(token: str, db: Session = Depends(get_db)):
 # =========================================================
 
 @app.get("/classes/{class_id}/students")
-def list_students(class_id: int, db: Session = Depends(get_db)):
+def list_students(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     # include inactive too (teacher admin needs to see them)
     rows = (
         db.query(StudentModel)
@@ -2893,11 +3243,13 @@ def list_students(class_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/classes/{class_id}/students")
-def create_student(class_id: int, payload: StudentCreate, db: Session = Depends(get_db)):
-    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
-
+def create_student(
+    class_id: int,
+    payload: StudentCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     name = (payload.first_name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="First name cannot be empty")
@@ -2915,10 +3267,16 @@ def create_student(class_id: int, payload: StudentCreate, db: Session = Depends(
 
 
 @app.put("/students/{student_id}")
-def update_student(student_id: int, payload: StudentUpdate, db: Session = Depends(get_db)):
+def update_student(
+    student_id: int,
+    payload: StudentUpdate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     s = db.query(StudentModel).filter(StudentModel.id == student_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Student not found")
+    get_owned_class_or_404(s.class_id, db, user)
 
     if payload.first_name is not None:
         name = payload.first_name.strip()
@@ -2937,11 +3295,13 @@ def update_student(student_id: int, payload: StudentUpdate, db: Session = Depend
     return s
 
 @app.post("/classes/{class_id}/students/bulk")
-def create_students_bulk(class_id: int, payload: StudentBulkCreate, db: Session = Depends(get_db)):
-    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
-
+def create_students_bulk(
+    class_id: int,
+    payload: StudentBulkCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     cleaned = []
     seen = set()
 
@@ -2993,7 +3353,12 @@ def create_students_bulk(class_id: int, payload: StudentBulkCreate, db: Session 
 # =========================================================
 
 @app.get("/classes/{class_id}/assessments")
-def list_assessments(class_id: int, db: Session = Depends(get_db)):
+def list_assessments(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     rows = (
         db.query(ClassAssessmentModel)
         .filter(ClassAssessmentModel.class_id == class_id)
@@ -3012,11 +3377,13 @@ def list_assessments(class_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/classes/{class_id}/assessments")
-def create_assessment(class_id: int, payload: AssessmentCreate, db: Session = Depends(get_db)):
-    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
-
+def create_assessment(
+    class_id: int,
+    payload: AssessmentCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     title = (payload.title or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
@@ -3043,10 +3410,16 @@ def create_assessment(class_id: int, payload: AssessmentCreate, db: Session = De
     }
 
 @app.put("/assessments/{assessment_id}")
-def update_assessment(assessment_id: int, payload: AssessmentUpdate, db: Session = Depends(get_db)):
+def update_assessment(
+    assessment_id: int,
+    payload: AssessmentUpdate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     a = db.query(ClassAssessmentModel).filter(ClassAssessmentModel.id == assessment_id).first()
     if not a:
         raise HTTPException(status_code=404, detail="Assessment not found")
+    get_owned_class_or_404(a.class_id, db, user)
 
     title = (payload.title or "").strip()
     if not title:
@@ -3075,10 +3448,15 @@ def update_assessment(assessment_id: int, payload: AssessmentUpdate, db: Session
 
 
 @app.delete("/assessments/{assessment_id}")
-def delete_assessment(assessment_id: int, db: Session = Depends(get_db)):
+def delete_assessment(
+    assessment_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     a = db.query(ClassAssessmentModel).filter(ClassAssessmentModel.id == assessment_id).first()
     if not a:
         raise HTTPException(status_code=404, detail="Assessment not found")
+    get_owned_class_or_404(a.class_id, db, user)
 
     # delete linked results first
     db.query(AssessmentResultModel).filter(
@@ -3092,10 +3470,15 @@ def delete_assessment(assessment_id: int, db: Session = Depends(get_db)):
     return {"ok": True, "deleted_assessment_id": assessment_id}
 
 @app.get("/assessments/{assessment_id}/results")
-def get_assessment_results(assessment_id: int, db: Session = Depends(get_db)):
+def get_assessment_results(
+    assessment_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     a = db.query(ClassAssessmentModel).filter(ClassAssessmentModel.id == assessment_id).first()
     if not a:
         raise HTTPException(status_code=404, detail="Assessment not found")
+    get_owned_class_or_404(a.class_id, db, user)
 
     # Use ACTIVE students by default for entry grid
     students = (
@@ -3138,10 +3521,16 @@ def get_assessment_results(assessment_id: int, db: Session = Depends(get_db)):
 
 
 @app.put("/assessments/{assessment_id}/results")
-def upsert_assessment_results(assessment_id: int, payload: BulkResultsUpdate, db: Session = Depends(get_db)):
+def upsert_assessment_results(
+    assessment_id: int,
+    payload: BulkResultsUpdate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     a = db.query(ClassAssessmentModel).filter(ClassAssessmentModel.id == assessment_id).first()
     if not a:
         raise HTTPException(status_code=404, detail="Assessment not found")
+    get_owned_class_or_404(a.class_id, db, user)
 
     # Build map of existing rows for this assessment
     existing = (
@@ -3188,7 +3577,12 @@ def upsert_assessment_results(assessment_id: int, payload: BulkResultsUpdate, db
     return {"message": "Saved"}
 
 @app.get("/classes/{class_id}/insights")
-def class_insights(class_id: int, db: Session = Depends(get_db)):
+def class_insights(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     # Active students only (consistent with your results entry grid)
     students = (
         db.query(StudentModel)
@@ -3306,7 +3700,12 @@ def class_insights(class_id: int, db: Session = Depends(get_db)):
     }
 
 @app.get("/classes/{class_id}/report-data")
-def class_report_data(class_id: int, db: Session = Depends(get_db)):
+def class_report_data(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
     students = (
         db.query(StudentModel)
         .filter(StudentModel.class_id == class_id)
@@ -3377,7 +3776,12 @@ def class_report_data(class_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/classes/{class_id}/students/{student_id}/report-data")
-def student_report_data(class_id: int, student_id: int, db: Session = Depends(get_db)):
+def student_report_data(
+    class_id: int,
+    student_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
     student = (
         db.query(StudentModel)
         .filter(StudentModel.class_id == class_id, StudentModel.id == student_id)
@@ -3385,6 +3789,7 @@ def student_report_data(class_id: int, student_id: int, db: Session = Depends(ge
     )
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+    get_owned_class_or_404(student.class_id, db, user)
 
     assessments = (
         db.query(ClassAssessmentModel)
@@ -3557,7 +3962,10 @@ def student_history(
 # AI Calendar Assistant (draft only - NEVER writes to DB)
 # -------------------------
 @app.post("/ai/parse-event", response_model=schemas.AIParseEventResponse)
-def ai_parse_event(payload: schemas.AIParseEventRequest):
+def ai_parse_event(
+    payload: schemas.AIParseEventRequest,
+    user: models.UserModel = Depends(get_current_user),
+):
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")
@@ -3805,6 +4213,7 @@ def generate_report_comment(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    get_owned_class_or_404(class_id, db, user)
     student = (
         db.query(StudentModel)
         .filter(StudentModel.class_id == class_id, StudentModel.id == student_id)
@@ -3959,12 +4368,17 @@ def extract_pdf_text(path: str):
     return text[:12000]
 
 @app.post("/ai/generate-quiz-from-note")
-def generate_quiz(payload: GenerateQuizRequest, db: Session = Depends(get_db)):
+def generate_quiz(
+    payload: GenerateQuizRequest,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
 
     note = db.query(models.Note).filter(models.Note.id == payload.note_id).first()
 
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
+    get_owned_class_or_404(note.class_id, db, user)
 
     if not os.path.exists(note.stored_path):
         raise HTTPException(status_code=404, detail="PDF missing")

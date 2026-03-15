@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toPng } from "html-to-image";
 
 type ToolKey =
     | "select"
@@ -62,7 +63,9 @@ type SocketPayload =
     | { type: "pong" }
     | { type: "object-create"; object: BoardObject }
     | { type: "object-update"; object: BoardObject }
-    | { type: "object-delete"; id: string };
+    | { type: "object-delete"; id: string }
+    | { type: "snapshot-sync"; snapshot: BoardSnapshot; sourceId: string };
+
 
 type Props = {
     sessionCode: string;
@@ -75,6 +78,7 @@ type Props = {
     eraserSize: number;
     height?: number;
     onUndoReady?: (undoFn: () => void) => void;
+    onExportReady?: (exportFn: () => Promise<void>) => void;
     readOnly?: boolean;
 };
 
@@ -212,6 +216,7 @@ function getObjectDefaultFill(type: BoardObjectType) {
     return "transparent";
 }
 
+
 export default function CollabBoard({
     sessionCode,
     roomKey,
@@ -223,6 +228,7 @@ export default function CollabBoard({
     eraserSize,
     height = 720,
     onUndoReady,
+    onExportReady,
     readOnly = false,
 }: Props) {
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -241,6 +247,8 @@ export default function CollabBoard({
     const interactionRef = useRef<Interaction>({ mode: "idle" });
     const historyRef = useRef<BoardSnapshot[]>([]);
     const eraserGestureSnapshotTakenRef = useRef(false);
+    const activePointerIdRef = useRef<number | null>(null);
+
 
     const boardLabel = useMemo(() => `${sessionCode} / ${roomKey}`, [sessionCode, roomKey]);
 
@@ -259,6 +267,14 @@ export default function CollabBoard({
 
     function broadcastObjectDelete(id: string) {
         sendWsMessage({ type: "object-delete", id });
+    }
+
+    function broadcastSnapshotSync(snapshot: BoardSnapshot) {
+        sendWsMessage({
+            type: "snapshot-sync",
+            snapshot,
+            sourceId: participantId,
+        });
     }
 
     function cloneStroke(stroke: Stroke): Stroke {
@@ -325,8 +341,21 @@ export default function CollabBoard({
     function undoLastAction() {
         const previous = historyRef.current.pop();
         if (!previous) return;
+
         restoreSnapshot(previous);
+        broadcastSnapshotSync(previous);
     }
+
+
+    function cancelActiveInteraction() {
+        liveStrokeRef.current = null;
+        interactionRef.current = { mode: "idle" };
+        eraserGestureSnapshotTakenRef.current = false;
+        activePointerIdRef.current = null;
+        clearPreview();
+        setCursor(null);
+    }
+
 
     const syncCanvasSize = useCallback(() => {
         const container = containerRef.current;
@@ -542,6 +571,22 @@ export default function CollabBoard({
         };
     }
 
+    async function exportBoardAsPng() {
+        const node = containerRef.current;
+        if (!node) return;
+
+        const dataUrl = await toPng(node, {
+            cacheBust: true,
+            pixelRatio: 2,
+            backgroundColor: "#ffffff",
+        });
+
+        const link = document.createElement("a");
+        link.href = dataUrl;
+        link.download = `collab-${sessionCode}-${roomKey}.png`;
+        link.click();
+    }
+
     useEffect(() => {
         syncCanvasSize();
         const onResize = () => syncCanvasSize();
@@ -616,7 +661,20 @@ export default function CollabBoard({
 
                 if (data.type === "clear-preview") {
                     clearPreview();
+                    return;
                 }
+
+                if (data.type === "snapshot-sync" && data.snapshot) {
+                    if (data.sourceId === participantId) return;
+
+                    strokesRef.current = data.snapshot.strokes.map(cloneStroke);
+                    setObjects(data.snapshot.objects.map(cloneObject));
+                    redrawCommitted();
+                    clearPreview();
+                    setSelectedObjectId(null);
+                    return;
+                }
+
             } catch {
                 // ignore malformed packets
             }
@@ -632,12 +690,31 @@ export default function CollabBoard({
         onUndoReady(undoLastAction);
     }, [onUndoReady]);
 
+    useEffect(() => {
+        if (!onExportReady) return;
+        onExportReady(exportBoardAsPng);
+    }, [onExportReady, sessionCode, roomKey]);
+
+
     function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
         const container = containerRef.current;
         if (!container) return;
         if (!editable) return;
 
+        if (e.pointerType === "touch" && !e.isPrimary) {
+            cancelActiveInteraction();
+            return;
+        }
+
+        if (activePointerIdRef.current !== null && activePointerIdRef.current !== e.pointerId) {
+            cancelActiveInteraction();
+            return;
+        }
+
+        activePointerIdRef.current = e.pointerId;
+
         const pt = getPointFromEvent(e, container);
+
 
         setCursor(tool === "eraser" ? { x: pt.x, y: pt.y, size: eraserSize } : null);
 
@@ -693,7 +770,11 @@ export default function CollabBoard({
     function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
         const container = containerRef.current;
         if (!container) return;
+
+        if (activePointerIdRef.current !== e.pointerId) return;
+
         const pt = getPointFromEvent(e, container);
+
 
         if (tool === "eraser") {
             setCursor({ x: pt.x, y: pt.y, size: eraserSize });
@@ -779,7 +860,9 @@ export default function CollabBoard({
         }
     }
 
-    function handlePointerUp() {
+    function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+        if (activePointerIdRef.current !== e.pointerId) return;
+
         if (interactionRef.current.mode === "drawing") {
             if (tool === "pen" || tool === "highlighter") {
                 commitLiveStroke();
@@ -802,19 +885,27 @@ export default function CollabBoard({
         }
 
         interactionRef.current = { mode: "idle" };
+        activePointerIdRef.current = null;
         clearPreview();
-
-        if (tool === "eraser" && cursor) {
-            setCursor(null);
-        }
+        setCursor(null);
     }
 
-    function handlePointerLeave() {
+
+    function handlePointerLeave(e: React.PointerEvent<HTMLDivElement>) {
+        if (activePointerIdRef.current !== null && activePointerIdRef.current !== e.pointerId) return;
+
         if (tool === "eraser") {
             setCursor(null);
             clearPreview();
         }
     }
+
+    function handlePointerCancel(e: React.PointerEvent<HTMLDivElement>) {
+        if (activePointerIdRef.current !== e.pointerId) return;
+        cancelActiveInteraction();
+    }
+
+
 
     function startMoveObject(e: React.PointerEvent, obj: BoardObject) {
         const directEditObject =
@@ -1121,13 +1212,14 @@ export default function CollabBoard({
             <div
                 ref={containerRef}
                 className="relative touch-none select-none"
-                style={{ height }}
+                style={{ height, touchAction: "none" }}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerUp}
+                onPointerCancel={handlePointerCancel}
                 onPointerLeave={handlePointerLeave}
             >
+
                 <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:26px_26px]" />
 
                 <canvas ref={committedCanvasRef} className="absolute inset-0" />

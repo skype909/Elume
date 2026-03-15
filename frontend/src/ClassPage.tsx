@@ -1656,10 +1656,6 @@ export default function ClassPage() {
                 Whiteboard coming soon 🧠
               </div>
             )}
-
-            <div className="mt-8 border-t-2 border-slate-200 pt-4 text-xs text-slate-500">
-              © 2026 ELume Beta. All rights reserved. P Fitzgerald
-            </div>
           </main>
           {timerOpen && (
             <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">

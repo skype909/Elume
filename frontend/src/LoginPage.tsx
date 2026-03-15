@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { apiFetch, setToken } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
+
 
 type Props = { onLoggedIn: () => void };
 
 export default function LoginPage({ onLoggedIn }: Props) {
+    const navigate = useNavigate();
     const [email, setEmail] = useState("");
+
     const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
@@ -23,39 +27,59 @@ export default function LoginPage({ onLoggedIn }: Props) {
     }
 
     useEffect(() => {
-    let cancelled = false;
+        let cancelled = false;
 
-    async function devAutoLogin() {
-        if (!isLocalDev()) return;
-
-        try {
-            const data = await apiFetch("/auth/dev-auto-login", {
-                method: "POST",
-            });
-
-            if (cancelled) return;
-
-            const token = data?.access_token;
-            if (!token) throw new Error("No token returned from dev auto login");
-
-            localStorage.setItem("elume_token", token);
+        async function devAutoLogin() {
+            if (!isLocalDev()) return;
 
             try {
-                setToken(token);
-            } catch { }
+                const data = await apiFetch("/auth/dev-auto-login", {
+                    method: "POST",
+                });
 
-            onLoggedIn();
-        } catch {
-            // silently fail so normal login form still works
+                if (cancelled) return;
+
+                const token = data?.access_token;
+                if (!token) throw new Error("No token returned from dev auto login");
+
+                localStorage.setItem("elume_token", token);
+
+                try {
+                    setToken(token);
+                } catch { }
+
+                onLoggedIn();
+                navigate("/", { replace: true });
+
+            } catch {
+                // silently fail so normal login form still works
+            }
         }
-    }
 
-    devAutoLogin();
+        devAutoLogin();
 
-    return () => {
-        cancelled = true;
-    };
-}, [onLoggedIn]);
+        return () => {
+            cancelled = true;
+        };
+    }, [onLoggedIn, navigate]);
+
+    useEffect(() => {
+        document.title = "Elume – AI Tools for Secondary School Teachers";
+
+        let meta = document.querySelector('meta[name="description"]');
+
+        if (!meta) {
+            meta = document.createElement("meta");
+            meta.setAttribute("name", "description");
+            document.head.appendChild(meta);
+        }
+
+        meta.setAttribute(
+            "content",
+            "Elume is an AI teaching platform for secondary school teachers. Create quizzes, organise class resources, build exam materials and use live classroom tools."
+        );
+    }, []);
+
 
     async function submit(e: React.FormEvent) {
         e.preventDefault();
@@ -81,6 +105,8 @@ export default function LoginPage({ onLoggedIn }: Props) {
             } catch { }
 
             onLoggedIn();
+            navigate("/", { replace: true });
+
         } catch (err: any) {
             setError(err?.message || "Login failed");
         } finally {
@@ -174,9 +200,9 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                 </h2>
 
                                 <p className="mt-5 text-lg leading-8 text-slate-600">
-                                    Elume brings together lesson planning, quizzes, reports,
-                                    seating plans, whiteboards and class tools in one beautiful,
-                                    intelligent workspace built for teachers.
+                                    Elume is an AI teaching platform for secondary school teachers,
+                                    helping you create quizzes, organise class resources, build exam materials,
+                                    and run live classroom tools from one teacher-friendly workspace.
                                 </p>
 
                                 <div className="mt-8 grid max-w-lg grid-cols-1 gap-3 sm:grid-cols-2">
@@ -185,8 +211,9 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                             Save Time
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            Create resources, quizzes and reports in minutes.
+                                            Create quizzes, class resources and teaching materials in minutes.
                                         </div>
+
                                     </div>
 
                                     <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-md backdrop-blur">
@@ -194,7 +221,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                             Engage Classes
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            Use live tools that work beautifully on classroom screens.
+                                            Run live classroom tools and quizzes that work beautifully on screen.
                                         </div>
                                     </div>
 
@@ -203,7 +230,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                             Stay Organised
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            Keep timetables, notes, tests and class spaces together.
+                                            Organise notes, tests, class files and teaching spaces in one place.
                                         </div>
                                     </div>
 
@@ -212,7 +239,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                             Built for Schools
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            Professional, secure and designed for real school life.
+                                            Professional, secure and designed for real secondary school classrooms.
                                         </div>
                                     </div>
                                 </div>

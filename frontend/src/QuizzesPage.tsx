@@ -1303,9 +1303,7 @@ export default function QuizzesPage() {
                   <div className="mt-3 rounded-2xl border-2 border-slate-200 overflow-hidden">
                     <iframe
                       title="PDF Preview"
-                      src={`${API_BASE}/uploads/${encodeURIComponent(
-                        (genNotes.find((x) => x.id === genNoteId)?.file_url || "").split("/uploads/")[1] || ""
-                      )}`}
+                      src={genNotes.find((x) => x.id === genNoteId)?.file_url || ""}
                       className="h-[420px] w-full"
                     />
                   </div>

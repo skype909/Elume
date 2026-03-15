@@ -15,7 +15,7 @@ type Paper = {
   class_id: number;
   topic_id: number;
   filename: string;
-  file_url: string; // backend returns "/uploads/..."
+  file_url: string;
   uploaded_at: string;
   topic_name: string;
 };

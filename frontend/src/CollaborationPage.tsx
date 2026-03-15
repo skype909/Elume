@@ -103,25 +103,38 @@ function JoinChip({
     label,
     value,
     onCopy,
+    large = false,
 }: {
     label: string;
     value: string;
     onCopy: () => void;
+    large?: boolean;
 }) {
     return (
-        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white/90 p-5 shadow-sm">
             <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
-            <div className="mt-1 break-all text-sm font-semibold text-slate-800">{value}</div>
+
+            {large ? (
+                <div className="mt-3 text-4xl font-black tracking-[0.18em] text-slate-900 md:text-5xl">
+                    {value}
+                </div>
+            ) : (
+                <div className="mt-2 break-all text-sm font-semibold text-slate-800 md:text-base">
+                    {value}
+                </div>
+            )}
+
             <button
                 type="button"
                 onClick={onCopy}
-                className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-100"
+                className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100"
             >
                 Copy
             </button>
         </div>
     );
 }
+
 
 function SectionCard({
     title,
@@ -178,6 +191,7 @@ export default function CollaborationPage() {
     const [isCreating, setIsCreating] = useState(false);
     const [isStartingBreakout, setIsStartingBreakout] = useState(false);
 
+
     const pollRef = useRef<number | null>(null);
     const joinCodeRef = useRef("");
 
@@ -205,6 +219,10 @@ export default function CollaborationPage() {
         { id: uid("panel"), selectedBoard: "room-3" },
         { id: uid("panel"), selectedBoard: "room-4" },
     ]);
+
+    const teacherBoardExportRef = useRef<null | (() => Promise<void>)>(null);
+    const reviewBoardExportRefs = useRef<Record<string, () => Promise<void>>>({});
+    const focusedReviewBoardExportRef = useRef<null | (() => Promise<void>)>(null);
 
     const [focusedReviewBoard, setFocusedReviewBoard] = useState<string | null>(null);
     const joinCode = sessionCode;
@@ -577,12 +595,44 @@ export default function CollaborationPage() {
         }
     }
 
-    function saveBoard() {
-        window.alert("Save board hook goes here.");
+    async function downloadTeacherPng() {
+        if (!teacherBoardExportRef.current) {
+            window.alert("Teacher board export is not ready yet.");
+            return;
+        }
+
+        try {
+            await teacherBoardExportRef.current();
+        } catch {
+            window.alert("Could not download teacher board.");
+        }
     }
 
-    function downloadTeacherPng() {
-        window.alert("Teacher PNG export hook goes here.");
+    async function downloadReviewBoardPng(boardKey: string) {
+        const fn = reviewBoardExportRefs.current[boardKey];
+        if (!fn) {
+            window.alert("Board export is not ready yet.");
+            return;
+        }
+
+        try {
+            await fn();
+        } catch {
+            window.alert("Could not download board.");
+        }
+    }
+
+    async function downloadFocusedReviewBoardPng() {
+        if (!focusedReviewBoardExportRef.current) {
+            window.alert("Board export is not ready yet.");
+            return;
+        }
+
+        try {
+            await focusedReviewBoardExportRef.current();
+        } catch {
+            window.alert("Could not download board.");
+        }
     }
 
     const assignedCount = participants.filter((p) => p.roomNumber !== null).length;
@@ -658,19 +708,6 @@ export default function CollaborationPage() {
                                     </button>
 
                                     <button
-                                        onClick={() => setShowBreakoutModal(true)}
-                                        disabled={!hasSession}
-                                        className={cls(
-                                            "rounded-lg border px-4 py-2 text-sm font-black",
-                                            hasSession
-                                                ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-                                                : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                                        )}
-                                    >
-                                        Start breakout
-                                    </button>
-
-                                    <button
                                         onClick={endBreakout}
                                         disabled={!hasSession}
                                         className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 hover:bg-slate-50"
@@ -702,13 +739,6 @@ export default function CollaborationPage() {
                                         className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 hover:bg-slate-50"
                                     >
                                         ← Back
-                                    </button>
-
-                                    <button
-                                        onClick={saveBoard}
-                                        className="rounded-lg bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-4 py-2 text-sm font-black text-white shadow hover:shadow-md"
-                                    >
-                                        Save
                                     </button>
                                 </div>
                             </div>
@@ -975,6 +1005,10 @@ export default function CollaborationPage() {
                                                 highlighterColor={highlightColor}
                                                 eraserSize={eraserSize}
                                                 height={760}
+                                                onExportReady={(fn) => {
+                                                    teacherBoardExportRef.current = fn;
+                                                }}
+
                                             />
                                         ) : (
                                             <div className="grid min-h-[760px] place-items-center rounded-[28px] border border-dashed border-slate-300 bg-slate-50">
@@ -1033,13 +1067,23 @@ export default function CollaborationPage() {
                                                 {boardOptions.find((b) => b.value === focusedReviewBoard)?.label || "Board"}
                                             </div>
 
-                                            <button
-                                                type="button"
-                                                onClick={() => setFocusedReviewBoard(null)}
-                                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
-                                            >
-                                                Back to 2×2 grid
-                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={downloadFocusedReviewBoardPng}
+                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                                                >
+                                                    Download PNG
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setFocusedReviewBoard(null)}
+                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                                                >
+                                                    Back to 2×2 grid
+                                                </button>
+                                            </div>
                                         </div>
 
                                         <div className="relative min-h-[760px] overflow-hidden rounded-[24px] border border-slate-200 bg-white">
@@ -1060,7 +1104,11 @@ export default function CollaborationPage() {
                                                     eraserSize={eraserSize}
                                                     height={760}
                                                     readOnly
+                                                    onExportReady={(fn) => {
+                                                        focusedReviewBoardExportRef.current = fn;
+                                                    }}
                                                 />
+
                                             ) : (
                                                 <div className="grid min-h-[760px] place-items-center text-slate-500">No session.</div>
                                             )}
@@ -1097,6 +1145,14 @@ export default function CollaborationPage() {
                                                         >
                                                             Expand
                                                         </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => downloadReviewBoardPng(panel.selectedBoard)}
+                                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                                                        >
+                                                            Download PNG
+                                                        </button>
+
                                                     </div>
                                                 </div>
 
@@ -1106,19 +1162,60 @@ export default function CollaborationPage() {
                                                     </div>
 
                                                     {hasSession ? (
-                                                        <CollabBoard
-                                                            key={`${panel.id}-${panel.selectedBoard}`}
-                                                            sessionCode={joinCode}
-                                                            roomKey={panel.selectedBoard}
-                                                            participantId={`review-${panel.id}`}
-                                                            tool="select"
-                                                            penColor={penColor}
-                                                            penSize={penSize}
-                                                            highlighterColor={highlightColor}
-                                                            eraserSize={eraserSize}
-                                                            height={300}
-                                                            readOnly
-                                                        />
+                                                        <>
+                                                            <CollabBoard
+                                                                key={`${panel.id}-${panel.selectedBoard}`}
+                                                                sessionCode={joinCode}
+                                                                roomKey={panel.selectedBoard}
+                                                                participantId={`review-${panel.id}`}
+                                                                tool="select"
+                                                                penColor={penColor}
+                                                                penSize={penSize}
+                                                                highlighterColor={highlightColor}
+                                                                eraserSize={eraserSize}
+                                                                height={300}
+                                                                readOnly
+                                                            />
+
+                                                            <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
+                                                                <>
+                                                                    <CollabBoard
+                                                                        key={`${panel.id}-${panel.selectedBoard}`}
+                                                                        sessionCode={joinCode}
+                                                                        roomKey={panel.selectedBoard}
+                                                                        participantId={`review-${panel.id}`}
+                                                                        tool="select"
+                                                                        penColor={penColor}
+                                                                        penSize={penSize}
+                                                                        highlighterColor={highlightColor}
+                                                                        eraserSize={eraserSize}
+                                                                        height={300}
+                                                                        readOnly
+                                                                    />
+
+                                                                    <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
+                                                                        <CollabBoard
+                                                                            key={`export-${panel.id}-${panel.selectedBoard}`}
+                                                                            sessionCode={joinCode}
+                                                                            roomKey={panel.selectedBoard}
+                                                                            participantId={`review-export-${panel.id}`}
+                                                                            tool="select"
+                                                                            penColor={penColor}
+                                                                            penSize={penSize}
+                                                                            highlighterColor={highlightColor}
+                                                                            eraserSize={eraserSize}
+                                                                            height={760}
+                                                                            readOnly
+                                                                            onExportReady={(fn) => {
+                                                                                reviewBoardExportRefs.current[panel.selectedBoard] = fn;
+                                                                            }}
+                                                                        />
+                                                                    </div>
+                                                                </>
+
+                                                            </div>
+                                                        </>
+
                                                     ) : (
                                                         <div className="grid min-h-[300px] place-items-center text-slate-500">No session.</div>
                                                     )}
@@ -1241,7 +1338,13 @@ export default function CollaborationPage() {
                             </div>
 
                             <div className="space-y-4">
-                                <JoinChip label="Session code" value={joinCode || "Create session first"} onCopy={() => joinCode && copyToClipboard(joinCode)} />
+                                <JoinChip
+                                    label="Session code"
+                                    value={joinCode || "Create session first"}
+                                    onCopy={() => joinCode && copyToClipboard(joinCode)}
+                                    large
+                                />
+
                                 <JoinChip label="Join link" value={joinUrl || "Create session first"} onCopy={() => joinUrl && copyToClipboard(joinUrl)} />
 
                                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">

@@ -1,4 +1,4 @@
-import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { Routes, Route, useNavigate, useLocation, Link } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import ClassPage from "./ClassPage";
@@ -26,6 +26,7 @@ import CreateResources from "./CreateResources";
 import AdminUsersPage from "./AdminUsersPage";
 import StudentCollabRoomPage from "./StudentCollabRoomPage";
 import CollaborationPage from "./CollaborationPage";
+import LegalPage from "./LegalPage";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -119,7 +120,6 @@ function loadTeacherTimetableLocal(): StoredAdminState | null {
     return null;
   }
 }
-
 
 // 12 bright classroom colours
 const COLOURS: { name: string; bg: string; ring: string }[] = [
@@ -1008,8 +1008,6 @@ function Dashboard() {
               );
             })}
         </div>
-
-        <div className="mt-8 text-xs text-slate-500">© 2026 ELume Beta. P Fitzgerald</div>
       </main>
 
       {/* Mobile Timetable Quick View */}
@@ -1391,7 +1389,42 @@ export default function App() {
         <Route path="/class/:id/collaboration" element={<CollaborationPage />} />
         <Route path="/planner" element={<TeacherPlanner />} />
         <Route path="/create-resources" element={<CreateResources />} />
+        <Route path="/legal" element={<LegalPage />} />
       </Routes>
+
+      {!location.pathname.startsWith("/join/") &&
+        !location.pathname.startsWith("/s/") &&
+        !location.pathname.startsWith("/collab/join/") && (
+          <footer className="mt-10 border-t border-slate-200/80 bg-white/85 backdrop-blur">
+            <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-5 text-sm text-slate-600 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
+              <div className="text-xs sm:text-sm">© 2026 Elume. All rights reserved.</div>
+
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs sm:text-sm">
+                <Link
+                  to="/legal"
+                  className="font-medium text-slate-600 transition hover:text-emerald-700 hover:underline underline-offset-4"
+                >
+                  Legal & Privacy
+                </Link>
+
+                <a
+                  href="mailto:admin@elume.ie"
+                  className="font-medium text-slate-600 transition hover:text-emerald-700 hover:underline underline-offset-4"
+                >
+                  admin@elume.ie
+                </a>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-100 bg-slate-50/70">
+              <div className="mx-auto max-w-7xl px-4 py-3 text-[11px] leading-relaxed text-slate-500 sm:px-6 lg:px-8">
+                Elume is operated in Ireland. For legal, privacy, or data queries, contact admin@elume.ie.
+              </div>
+            </div>
+          </footer>
+        )}
+
+
       {userEmail && (
         <div className="fixed bottom-3 right-3 z-50 flex flex-col items-end gap-2">
           {isDashboard && isPilotUser && (
