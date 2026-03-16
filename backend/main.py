@@ -922,6 +922,24 @@ def _replace_collab_history(session_code: str, room_key: str, events: list[dict]
     collab_room_history[key] = [deepcopy(evt) for evt in events]
 
 
+def _events_from_snapshot(snapshot: dict) -> list[dict]:
+    events: list[dict] = []
+
+    for stroke in snapshot.get("strokes", []):
+        events.append({
+            "type": "stroke",
+            "stroke": stroke,
+        })
+
+    for obj in snapshot.get("objects", []):
+        events.append({
+            "type": "object-create",
+            "object": obj,
+        })
+
+    return events
+
+
 def _get_collab_history(session_code: str, room_key: str) -> list[dict]:
     key = _collab_history_key(session_code, room_key)
     return collab_room_history.get(key, [])
@@ -1011,6 +1029,13 @@ async def collab_room_socket(websocket: WebSocket, code: str, room_key: str):
                 "object-delete",
             }:
                 _append_collab_event(code, room_key, data)
+                await collab_room_manager.broadcast(code, room_key, data)
+                continue
+
+            if msg_type == "snapshot-sync":
+                snapshot = data.get("snapshot") or {"strokes": [], "objects": []}
+                replacement_events = _events_from_snapshot(snapshot)
+                _replace_collab_history(code, room_key, replacement_events)
                 await collab_room_manager.broadcast(code, room_key, data)
                 continue
 

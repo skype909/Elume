@@ -548,6 +548,7 @@ export default function CollabBoard({
 
         if (strokesRef.current.length !== before) {
             redrawCommitted();
+            broadcastSnapshotSync(createSnapshot());
         }
     }
 
