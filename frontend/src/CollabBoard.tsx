@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 
+let pdfJsLoaderPromise: Promise<any> | null = null;
+
 type ToolKey =
     | "select"
     | "pen"
@@ -35,7 +37,8 @@ type BoardObjectType =
     | "sticky"
     | "arrow"
     | "curved-arrow"
-    | "speech";
+    | "speech"
+    | "image";
 
 type BoardObject = {
     id: string;
@@ -46,6 +49,7 @@ type BoardObject = {
     h: number;
     text?: string;
     fill?: string;
+    src?: string;
     createdBy: string;
     updatedAt: number;
 };
@@ -66,6 +70,11 @@ type SocketPayload =
     | { type: "object-delete"; id: string }
     | { type: "snapshot-sync"; snapshot: BoardSnapshot; sourceId: string };
 
+type NoteItem = {
+    id: number;
+    filename: string;
+    file_url: string;
+};
 
 type Props = {
     sessionCode: string;
@@ -80,6 +89,10 @@ type Props = {
     onUndoReady?: (undoFn: () => void) => void;
     onExportReady?: (exportFn: () => Promise<void>) => void;
     readOnly?: boolean;
+    classId?: string;
+    apiBase?: string;
+    apiFetch?: (url: string, init?: RequestInit) => Promise<any>;
+    pdfImportRequestNonce?: number;
 };
 
 type Interaction =
@@ -230,6 +243,10 @@ export default function CollabBoard({
     onUndoReady,
     onExportReady,
     readOnly = false,
+    classId,
+    apiBase,
+    apiFetch,
+    pdfImportRequestNonce,
 }: Props) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const committedCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -242,6 +259,19 @@ export default function CollabBoard({
     const [cursor, setCursor] = useState<{ x: number; y: number; size: number } | null>(null);
     const [objects, setObjects] = useState<BoardObject[]>([]);
     const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+    const [importList, setImportList] = useState<Array<{ kind: "notes" | "exam"; item: NoteItem }>>([]);
+    const [importLoading, setImportLoading] = useState(false);
+    const [importError, setImportError] = useState<string | null>(null);
+    const [importedPdf, setImportedPdf] = useState<{ kind: "notes" | "exam"; item: NoteItem } | null>(null);
+    const [showImportModal, setShowImportModal] = useState(false);
+    const [showPdfPanel, setShowPdfPanel] = useState(false);
+    const [pdfPageNum, setPdfPageNum] = useState(1);
+    const [pdfNumPages, setPdfNumPages] = useState(1);
+    const [pdfViewScale, setPdfViewScale] = useState(1.25);
+    const [pdfInsertScale, setPdfInsertScale] = useState(1);
+    const [pdfCanvasSize, setPdfCanvasSize] = useState({ w: 0, h: 0 });
+    const [clipRect, setClipRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    const [snipMode, setSnipMode] = useState(false);
 
     const strokesRef = useRef<Stroke[]>([]);
     const liveStrokeRef = useRef<Stroke | null>(null);
@@ -249,9 +279,124 @@ export default function CollabBoard({
     const historyRef = useRef<BoardSnapshot[]>([]);
     const eraserGestureSnapshotTakenRef = useRef(false);
     const activePointerIdRef = useRef<number | null>(null);
+    const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const pdfViewerRef = useRef<HTMLDivElement | null>(null);
+    const pdfOverlayRef = useRef<HTMLDivElement | null>(null);
+    const pdfDocRef = useRef<any>(null);
+    const pdfUrlRef = useRef<string | null>(null);
+    const pdfBlobUrlRef = useRef<string | null>(null);
+    const pdfSourceUrlRef = useRef<string | null>(null);
+    const pdfRenderTokenRef = useRef(0);
+    const clipDragRef = useRef(false);
+    const clipStartRef = useRef<{ x: number; y: number } | null>(null);
+    const pdfImportNonceRef = useRef<number | undefined>(undefined);
+    const hasSeenPdfImportNonceRef = useRef(false);
 
 
     const boardLabel = useMemo(() => `${sessionCode} / ${roomKey}`, [sessionCode, roomKey]);
+    const canLoadPdfImports = Boolean(editable && classId && apiBase && apiFetch);
+
+    function resolveFileUrl(fileUrl: string): string {
+        if (!fileUrl) return fileUrl;
+        if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
+
+        const base = (apiBase || "").replace(/\/$/, "");
+        if (!base) return fileUrl;
+        if (fileUrl.startsWith("/")) return `${base}${fileUrl}`;
+        return `${base}/${fileUrl}`;
+    }
+
+    async function loadPdfJs(): Promise<any> {
+        const win = window as any;
+        if (win.pdfjsLib) {
+            win.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+            return win.pdfjsLib;
+        }
+
+        if (!pdfJsLoaderPromise) {
+            pdfJsLoaderPromise = new Promise<void>((resolve, reject) => {
+                const script = document.createElement("script");
+                script.src = "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js";
+                script.async = true;
+                script.onload = () => resolve();
+                script.onerror = () => reject(new Error("Failed to load PDF.js"));
+                document.head.appendChild(script);
+            }).then(() => {
+                const lib = (window as any).pdfjsLib;
+                if (!lib) throw new Error("PDF.js not available after load");
+                lib.GlobalWorkerOptions.workerSrc =
+                    "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+                return lib;
+            });
+        }
+
+        return pdfJsLoaderPromise;
+    }
+
+    async function getAuthenticatedPdfUrl(fileUrl: string): Promise<string> {
+        const resolvedUrl = resolveFileUrl(fileUrl);
+        if (!resolvedUrl) throw new Error("Missing PDF URL");
+
+        if (pdfBlobUrlRef.current && pdfSourceUrlRef.current === resolvedUrl) {
+            return pdfBlobUrlRef.current;
+        }
+
+        if (pdfBlobUrlRef.current) {
+            window.URL.revokeObjectURL(pdfBlobUrlRef.current);
+            pdfBlobUrlRef.current = null;
+        }
+
+        pdfSourceUrlRef.current = resolvedUrl;
+
+        let blob: Blob;
+        if (apiFetch) {
+            const token = (() => {
+                try {
+                    return localStorage.getItem("elume_token");
+                } catch {
+                    return null;
+                }
+            })();
+
+            const headers = new Headers();
+            if (token) {
+                headers.set("Authorization", `Bearer ${token}`);
+            }
+
+            const res = await fetch(resolvedUrl, { method: "GET", headers });
+            if (!res.ok) {
+                const text = await res.text().catch(() => "");
+                throw new Error(text || `Request failed (${res.status})`);
+            }
+            blob = await res.blob();
+        } else {
+            const token = (() => {
+                try {
+                    return localStorage.getItem("elume_token");
+                } catch {
+                    return null;
+                }
+            })();
+
+            const headers = new Headers();
+            if (token) {
+                headers.set("Authorization", `Bearer ${token}`);
+            }
+
+            const res = await fetch(resolvedUrl, { method: "GET", headers });
+            if (!res.ok) {
+                const text = await res.text().catch(() => "");
+                throw new Error(text || `Request failed (${res.status})`);
+            }
+            blob = await res.blob();
+        }
+
+        const blobUrl = window.URL.createObjectURL(blob);
+        pdfBlobUrlRef.current = blobUrl;
+        pdfSourceUrlRef.current = resolvedUrl;
+        return blobUrl;
+    }
 
     function sendWsMessage(payload: SocketPayload) {
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -501,6 +646,56 @@ export default function CollabBoard({
         broadcastObjectUpdate(nextObject);
     }
 
+    function insertImageObject(src: string, x = 48, y = 48, w = 320, h = 220) {
+        if (!editable) return;
+
+        const obj: BoardObject = {
+            id: uid("obj"),
+            type: "image",
+            x,
+            y,
+            w,
+            h,
+            src,
+            createdBy: participantId,
+            updatedAt: Date.now(),
+        };
+
+        pushHistorySnapshot();
+        setObjects((prev) => [...prev, obj]);
+        setSelectedObjectId(obj.id);
+        broadcastObjectCreate(obj);
+    }
+
+    async function loadImportList() {
+        if (!canLoadPdfImports) {
+            setImportError("PDF import is not configured for this board yet.");
+            setImportLoading(false);
+            return;
+        }
+
+        setImportLoading(true);
+        setImportError(null);
+        try {
+            const fetcher = apiFetch!;
+            const [notes, exam] = await Promise.all([
+                fetcher(`${apiBase}/notes/${classId}?kind=notes`),
+                fetcher(`${apiBase}/notes/${classId}?kind=exam`),
+            ]);
+
+            const combined = [
+                ...(Array.isArray(notes) ? notes : []).map((item: NoteItem) => ({ kind: "notes" as const, item })),
+                ...(Array.isArray(exam) ? exam : []).map((item: NoteItem) => ({ kind: "exam" as const, item })),
+            ];
+
+            setImportList(combined);
+        } catch {
+            setImportError("Could not load PDFs.");
+        } finally {
+            setImportLoading(false);
+        }
+    }
+
     function eraseAtPoint(pt: StrokePoint) {
         const threshold = eraserSize * 8;
 
@@ -587,6 +782,165 @@ export default function CollabBoard({
         link.href = dataUrl;
         link.download = `collab-${sessionCode}-${roomKey}.png`;
         link.click();
+    }
+
+    async function renderPdfToViewer(pageNum: number) {
+        if (!importedPdf || !showPdfPanel) return;
+
+        const canvas = pdfCanvasRef.current;
+        const viewer = pdfViewerRef.current;
+        if (!canvas || !viewer) return;
+
+        const renderToken = ++pdfRenderTokenRef.current;
+
+        const pdfjsLib = await loadPdfJs();
+        const pdfUrl = await getAuthenticatedPdfUrl(importedPdf.item.file_url);
+        if (!pdfUrl) throw new Error("Missing PDF URL");
+
+        if (!pdfDocRef.current || pdfUrlRef.current !== pdfUrl) {
+            const loadingTask = pdfjsLib.getDocument(pdfUrl);
+            pdfDocRef.current = await loadingTask.promise;
+            pdfUrlRef.current = pdfUrl;
+        }
+
+        const pdfDoc = pdfDocRef.current;
+        const safePage = Math.max(1, Math.min(pageNum, pdfDoc.numPages || 1));
+        const page = await pdfDoc.getPage(safePage);
+        const viewport1 = page.getViewport({ scale: 1 });
+        const parentW = Math.max(320, viewer.clientWidth - 24);
+        const fitScale = (parentW / viewport1.width) * pdfViewScale;
+        const viewport = page.getViewport({ scale: fitScale });
+
+        if (renderToken !== pdfRenderTokenRef.current) return;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+        setPdfCanvasSize({ w: viewport.width, h: viewport.height });
+
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        if (renderToken !== pdfRenderTokenRef.current) return;
+
+        setPdfNumPages(pdfDoc.numPages || 1);
+        setPdfPageNum(safePage);
+        setClipRect(null);
+    }
+
+    async function insertPdfPage1() {
+        if (!importedPdf) return;
+
+        try {
+            const pdfjsLib = await loadPdfJs();
+            const pdfUrl = await getAuthenticatedPdfUrl(importedPdf.item.file_url);
+            const loadingTask = pdfjsLib.getDocument(pdfUrl);
+            const pdfDoc = await loadingTask.promise;
+            const page = await pdfDoc.getPage(1);
+
+            const boardW = Math.max(320, (containerRef.current?.clientWidth || 720) - 40);
+            const viewport1 = page.getViewport({ scale: 1 });
+            const fitScale = (Math.min(boardW, 900) / viewport1.width) * pdfInsertScale;
+            const viewport = page.getViewport({ scale: fitScale });
+
+            const temp = document.createElement("canvas");
+            temp.width = Math.floor(viewport.width);
+            temp.height = Math.floor(viewport.height);
+            const tempCtx = temp.getContext("2d");
+            if (!tempCtx) throw new Error("Canvas unavailable");
+
+            await page.render({ canvasContext: tempCtx, viewport }).promise;
+
+            const maxWidth = Math.max(220, boardW);
+            const wCss = Math.min(maxWidth, viewport.width);
+            const hCss = (viewport.height / viewport.width) * wCss;
+            insertImageObject(temp.toDataURL("image/png"), 20, 20, wCss, hCss);
+        } catch {
+            alert("Could not insert that PDF page.");
+        }
+    }
+
+    function overlayXY(e: React.PointerEvent<HTMLDivElement>) {
+        const el = pdfOverlayRef.current;
+        if (!el) return { x: 0, y: 0 };
+        const rect = el.getBoundingClientRect();
+        const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+        return { x, y };
+    }
+
+    function onClipDown(e: React.PointerEvent<HTMLDivElement>) {
+        const pt = overlayXY(e);
+        clipDragRef.current = true;
+        clipStartRef.current = pt;
+        setClipRect({ x: pt.x, y: pt.y, w: 0, h: 0 });
+    }
+
+    function onClipMove(e: React.PointerEvent<HTMLDivElement>) {
+        if (!clipDragRef.current || !clipStartRef.current) return;
+        const pt = overlayXY(e);
+        const start = clipStartRef.current;
+        const x = Math.min(start.x, pt.x);
+        const y = Math.min(start.y, pt.y);
+        const w = Math.abs(pt.x - start.x);
+        const h = Math.abs(pt.y - start.y);
+        setClipRect({ x, y, w, h });
+    }
+
+    function onClipUp() {
+        clipDragRef.current = false;
+        clipStartRef.current = null;
+    }
+
+    function closePdfImport() {
+        setShowPdfPanel(false);
+        setShowImportModal(false);
+        setImportedPdf(null);
+        setSnipMode(false);
+        setClipRect(null);
+    }
+
+    async function snipToBoardAndClose() {
+        if (!clipRect) return;
+
+        const src = pdfCanvasRef.current;
+        if (!src) return;
+
+        const min = 12;
+        if (clipRect.w < min || clipRect.h < min) {
+            alert("Selection is too small.");
+            return;
+        }
+
+        const scaleX = src.width / Math.max(pdfCanvasSize.w || 1, 1);
+        const scaleY = src.height / Math.max(pdfCanvasSize.h || 1, 1);
+
+        const crop = document.createElement("canvas");
+        crop.width = Math.floor(clipRect.w * scaleX);
+        crop.height = Math.floor(clipRect.h * scaleY);
+        const cropCtx = crop.getContext("2d");
+        if (!cropCtx) return;
+
+        cropCtx.drawImage(
+            src,
+            clipRect.x * scaleX,
+            clipRect.y * scaleY,
+            clipRect.w * scaleX,
+            clipRect.h * scaleY,
+            0,
+            0,
+            crop.width,
+            crop.height
+        );
+
+        const boardW = Math.max(260, (containerRef.current?.clientWidth || 720) - 40);
+        const w = Math.min(boardW, clipRect.w);
+        const h = (clipRect.h / clipRect.w) * w;
+        insertImageObject(crop.toDataURL("image/png"), 20, 20, w, h);
+        closePdfImport();
     }
 
     useEffect(() => {
@@ -712,6 +1066,96 @@ export default function CollabBoard({
         onExportReady(exportBoardAsPng);
     }, [onExportReady, sessionCode, roomKey]);
 
+    useEffect(() => {
+        pdfDocRef.current = null;
+        pdfUrlRef.current = null;
+        if (pdfBlobUrlRef.current) {
+            window.URL.revokeObjectURL(pdfBlobUrlRef.current);
+            pdfBlobUrlRef.current = null;
+        }
+        pdfSourceUrlRef.current = null;
+    }, [importedPdf]);
+
+    useEffect(() => {
+        return () => {
+            if (pdfBlobUrlRef.current) {
+                window.URL.revokeObjectURL(pdfBlobUrlRef.current);
+                pdfBlobUrlRef.current = null;
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!editable || pdfImportRequestNonce == null) return;
+        if (!hasSeenPdfImportNonceRef.current) {
+            hasSeenPdfImportNonceRef.current = true;
+            pdfImportNonceRef.current = pdfImportRequestNonce;
+            return;
+        }
+        if (pdfImportNonceRef.current === pdfImportRequestNonce) return;
+        pdfImportNonceRef.current = pdfImportRequestNonce;
+        setShowImportModal(true);
+        setShowPdfPanel(false);
+        setSnipMode(false);
+        setClipRect(null);
+    }, [editable, pdfImportRequestNonce]);
+
+    useEffect(() => {
+        if (!editable) return;
+
+        function handlePaste(event: Event) {
+            const clipboardEvent = event as ClipboardEvent;
+            const items = clipboardEvent.clipboardData?.items;
+            if (!items) return;
+
+            for (const item of Array.from(items)) {
+                if (!item.type.startsWith("image/")) continue;
+
+                const file = item.getAsFile();
+                if (!file) continue;
+
+                const reader = new FileReader();
+                reader.onload = () => {
+                    if (typeof reader.result === "string") {
+                        insertImageObject(reader.result);
+                    }
+                };
+                reader.readAsDataURL(file);
+                clipboardEvent.preventDefault();
+                return;
+            }
+        }
+
+        window.addEventListener("paste", handlePaste);
+        return () => window.removeEventListener("paste", handlePaste);
+    }, [editable, participantId]);
+
+    useEffect(() => {
+        if (!showImportModal || !canLoadPdfImports || importList.length > 0 || importLoading) return;
+        void loadImportList();
+    }, [showImportModal, canLoadPdfImports, importList.length, importLoading, classId, apiBase, apiFetch]);
+
+    useEffect(() => {
+        if (!importedPdf || !showPdfPanel) return;
+
+        const frame = window.requestAnimationFrame(() => {
+            void renderPdfToViewer(pdfPageNum);
+        });
+
+        let ro: ResizeObserver | null = null;
+        if (pdfViewerRef.current && "ResizeObserver" in window) {
+            ro = new ResizeObserver(() => {
+                void renderPdfToViewer(pdfPageNum);
+            });
+            ro.observe(pdfViewerRef.current);
+        }
+
+        return () => {
+            window.cancelAnimationFrame(frame);
+            ro?.disconnect();
+        };
+    }, [importedPdf, showPdfPanel, pdfPageNum, pdfViewScale]);
+
 
     function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
         const container = containerRef.current;
@@ -736,6 +1180,7 @@ export default function CollabBoard({
         setCursor(tool === "eraser" ? { x: pt.x, y: pt.y, size: eraserSize } : null);
 
         if (tool === "select") {
+            setSelectedObjectId(null);
             interactionRef.current = { mode: "idle" };
             return;
         }
@@ -880,6 +1325,10 @@ export default function CollabBoard({
     function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
         if (activePointerIdRef.current !== e.pointerId) return;
 
+        try {
+            containerRef.current?.releasePointerCapture?.(e.pointerId);
+        } catch { }
+
         if (interactionRef.current.mode === "drawing") {
             if (tool === "pen" || tool === "highlighter") {
                 commitLiveStroke();
@@ -919,6 +1368,9 @@ export default function CollabBoard({
 
     function handlePointerCancel(e: React.PointerEvent<HTMLDivElement>) {
         if (activePointerIdRef.current !== e.pointerId) return;
+        try {
+            containerRef.current?.releasePointerCapture?.(e.pointerId);
+        } catch { }
         cancelActiveInteraction();
     }
 
@@ -936,6 +1388,9 @@ export default function CollabBoard({
         const container = containerRef.current;
         if (!container) return;
         const pt = getPointFromEvent(e, container);
+
+        activePointerIdRef.current = e.pointerId;
+        container.setPointerCapture?.(e.pointerId);
 
         pushHistorySnapshot();
 
@@ -961,6 +1416,9 @@ export default function CollabBoard({
         if (!container) return;
 
         const pt = getPointFromEvent(e, container);
+
+        activePointerIdRef.current = e.pointerId;
+        container.setPointerCapture?.(e.pointerId);
 
         pushHistorySnapshot();
 
@@ -1198,6 +1656,32 @@ export default function CollabBoard({
             );
         }
 
+        if (obj.type === "image" && obj.src) {
+            return (
+                <div
+                    key={obj.id}
+                    className={`${wrapperClass} ${selectedRing}`}
+                    style={{ left: obj.x, top: obj.y, width: obj.w, height: obj.h }}
+                    onPointerDown={(e) => startMoveObject(e, obj)}
+                >
+                    <div className="relative h-full w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                        <img
+                            src={obj.src}
+                            alt=""
+                            draggable={false}
+                            className="h-full w-full object-contain pointer-events-none"
+                        />
+                        {isSelected && editable && (
+                            <div
+                                className="absolute bottom-1 right-1 h-4 w-4 cursor-se-resize rounded-sm bg-slate-700"
+                                onPointerDown={(e) => startResizeObject(e, obj)}
+                            />
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
         return null;
     }
 
@@ -1207,6 +1691,20 @@ export default function CollabBoard({
                 <div className="text-sm font-black text-slate-900">{boardLabel}</div>
 
                 <div className="flex items-center gap-2">
+                    {editable && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setShowImportModal(true);
+                                setShowPdfPanel(false);
+                                setSnipMode(false);
+                                setClipRect(null);
+                            }}
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+                        >
+                            Import PDF
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={undoLastAction}
@@ -1244,6 +1742,226 @@ export default function CollabBoard({
 
                 <div className="absolute inset-0">{objects.map((obj) => renderObject(obj))}</div>
             </div>
+
+            {editable && showImportModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 px-4 backdrop-blur-sm">
+                    <div className="flex h-[80vh] w-full max-w-6xl overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
+                        <div className="w-full max-w-sm border-r border-slate-200 bg-slate-50/70 p-5">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">
+                                        Import PDF
+                                    </div>
+                                    <div className="mt-1 text-xl font-black tracking-tight text-slate-900">
+                                        Add notes or exam pages
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-white"
+                                    onClick={closePdfImport}
+                                >
+                                    Close
+                                </button>
+                            </div>
+
+                            <div className="mt-4 flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                                    onClick={() => void loadImportList()}
+                                    disabled={importLoading}
+                                >
+                                    {importLoading ? "Loading..." : "Refresh list"}
+                                </button>
+                            </div>
+
+                            {importError && (
+                                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                                    {importError}
+                                </div>
+                            )}
+
+                            {!canLoadPdfImports && !importError && (
+                                <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                                    PDF import is not connected yet in this view.
+                                </div>
+                            )}
+
+                            <div className="mt-4 space-y-2 overflow-y-auto pr-1" style={{ maxHeight: "62vh" }}>
+                                {canLoadPdfImports && importList.map((entry) => (
+                                    <button
+                                        key={`${entry.kind}-${entry.item.id}`}
+                                        type="button"
+                                        onClick={() => {
+                                            setImportedPdf(entry);
+                                            setShowPdfPanel(true);
+                                            setPdfPageNum(1);
+                                            setPdfNumPages(1);
+                                            setClipRect(null);
+                                            setSnipMode(false);
+                                        }}
+                                        className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+                                            importedPdf?.item.id === entry.item.id && importedPdf?.kind === entry.kind
+                                                ? "border-emerald-300 bg-emerald-50"
+                                                : "border-slate-200 bg-white hover:bg-slate-50"
+                                        }`}
+                                    >
+                                        <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                                            {entry.kind === "notes" ? "Notes" : "Exam Papers"}
+                                        </div>
+                                        <div className="mt-1 text-sm font-semibold text-slate-900 break-words">
+                                            {entry.item.filename}
+                                        </div>
+                                    </button>
+                                ))}
+
+                                {canLoadPdfImports && !importLoading && importList.length === 0 && !importError && (
+                                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+                                        No PDFs available to import.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="flex min-w-0 flex-1 flex-col bg-white">
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+                                <div className="min-w-0">
+                                    <div className="text-sm font-black text-slate-900">
+                                        {importedPdf ? importedPdf.item.filename : "Select a PDF to preview"}
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                        {showPdfPanel && importedPdf ? `${pdfPageNum} / ${pdfNumPages}` : "PDF preview"}
+                                    </div>
+                                </div>
+
+                                {showPdfPanel && importedPdf && (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <button
+                                            type="button"
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                            onClick={() => setPdfPageNum((p) => Math.max(1, p - 1))}
+                                            disabled={pdfPageNum <= 1}
+                                        >
+                                            Prev
+                                        </button>
+                                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+                                            Page {pdfPageNum} / {pdfNumPages}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                            onClick={() => setPdfPageNum((p) => Math.min(pdfNumPages, p + 1))}
+                                            disabled={pdfPageNum >= pdfNumPages}
+                                        >
+                                            Next
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                                            onClick={() => setPdfViewScale((v) => Math.max(0.6, Number((v - 0.15).toFixed(2))))}
+                                        >
+                                            Zoom -
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                                            onClick={() => setPdfViewScale((v) => Math.min(2.5, Number((v + 0.15).toFixed(2))))}
+                                        >
+                                            Zoom +
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
+                                            onClick={() => void insertPdfPage1()}
+                                        >
+                                            Insert page 1
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100"
+                                            onClick={() => {
+                                                setSnipMode(true);
+                                                setClipRect(null);
+                                            }}
+                                        >
+                                            Snip to board
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                            onClick={() => void snipToBoardAndClose()}
+                                            disabled={!clipRect}
+                                        >
+                                            Add snip
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                                            onClick={closePdfImport}
+                                        >
+                                            Close
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex-1 p-5">
+                                {!showPdfPanel || !importedPdf ? (
+                                    <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+                                        Choose a PDF from the list to preview and import it.
+                                    </div>
+                                ) : (
+                                    <div className="flex h-full flex-col gap-3">
+                                        <div className="text-xs text-slate-500">
+                                            Zoom {pdfViewScale.toFixed(2)}x | Insert scale {pdfInsertScale.toFixed(2)}x
+                                        </div>
+                                        <div
+                                            ref={pdfViewerRef}
+                                            className="relative min-h-0 flex-1 overflow-auto rounded-[24px] border border-slate-200 bg-slate-50 p-3"
+                                        >
+                                            <div className="relative inline-block">
+                                                <canvas ref={pdfCanvasRef} className="block rounded-xl bg-white shadow-sm" />
+                                                <div
+                                                    ref={pdfOverlayRef}
+                                                    className="absolute inset-0"
+                                                    style={{
+                                                        width: pdfCanvasSize.w || undefined,
+                                                        height: pdfCanvasSize.h || undefined,
+                                                        cursor: snipMode ? "crosshair" : "default",
+                                                        pointerEvents: snipMode ? "auto" : "none",
+                                                    }}
+                                                    onPointerDown={snipMode ? onClipDown : undefined}
+                                                    onPointerMove={snipMode ? onClipMove : undefined}
+                                                    onPointerUp={snipMode ? onClipUp : undefined}
+                                                    onPointerCancel={snipMode ? onClipUp : undefined}
+                                                >
+                                                    {clipRect && (
+                                                        <div
+                                                            className="absolute border-2 border-sky-500 bg-sky-400/15"
+                                                            style={{
+                                                                left: clipRect.x,
+                                                                top: clipRect.y,
+                                                                width: clipRect.w,
+                                                                height: clipRect.h,
+                                                            }}
+                                                        />
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {snipMode && (
+                                            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                                                Drag a rectangle over the PDF, then click <span className="font-semibold">Add snip</span>.
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

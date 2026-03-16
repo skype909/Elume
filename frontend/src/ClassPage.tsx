@@ -1047,7 +1047,7 @@ export default function ClassPage() {
         <nav className="space-y-2">
           {[
             { label: "Dashboard", to: `/` },
-            { label: "Whiteboard", to: `/#/whiteboard/${classId}` },
+            { label: "Whiteboard", to: `/whiteboard/${classId}` },
             { label: "Collaborate", to: `/class/${classId}/collaboration` },
             { label: "eBooks", to: null },
             { label: "Class Admin", to: `/class/${classId}/admin` },
@@ -1058,11 +1058,6 @@ export default function ClassPage() {
               onClick={() => {
                 if (!item.to) {
                   alert("Coming soon 🙂");
-                  return;
-                }
-
-                if (item.label === "Whiteboard") {
-                  window.open(item.to, "_blank", "noopener,noreferrer");
                   return;
                 }
 

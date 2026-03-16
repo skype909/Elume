@@ -27,9 +27,10 @@ export function clearToken() {
 
 export async function apiFetch(path: string, init: RequestInit = {}) {
   const token = getToken();
+  const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
 
   const headers = new Headers(init.headers || {});
-  if (!headers.has("Content-Type") && init.body) {
+  if (!headers.has("Content-Type") && init.body && !isFormData) {
     headers.set("Content-Type", "application/json");
   }
   if (token) {

@@ -31,6 +31,10 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 import secrets
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from io import BytesIO
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -382,13 +386,14 @@ def auth_forgot_password(payload: schemas.ForgotPasswordRequest, db: Session = D
         "This link will expire in 1 hour.\n\n"
         "Elume"
     )
+
     try:
         _send_email(user.email, "Reset your Elume password", body)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send reset email: {str(e)}")
+    except Exception:
+        logger.exception("Failed to send password reset email to %s", user.email)
+        raise HTTPException(status_code=500, detail="Failed to send reset email")
 
     return generic_response
-
 
 @app.post("/auth/reset-password")
 def auth_reset_password(payload: schemas.ResetPasswordRequest, db: Session = Depends(get_db)):

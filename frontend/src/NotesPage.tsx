@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiFetch } from "./api";
+import { apiFetch, apiFetchBlob } from "./api";
 
 const API_BASE = "/api";
 const META_KEY = "elume_class_layout_v1";
@@ -324,6 +324,35 @@ export default function NotesPage() {
     }
   }
 
+  async function handleOpenNote(note: NoteItem) {
+    try {
+      setBusy(true);
+      setError(null);
+
+      const blob = await apiFetchBlob(resolveFileUrl(note.file_url), {
+        method: "GET",
+      });
+      const objectUrl = window.URL.createObjectURL(blob);
+      const opened = window.open(objectUrl, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+      window.setTimeout(() => {
+        window.URL.revokeObjectURL(objectUrl);
+      }, 60_000);
+    } catch (e: any) {
+      setError(e?.message || "Failed to open file");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openUploadForTopic(topicId?: number) {
     setShowUploadModal(true);
     setUploadMode(topicId ? "existing" : topics.length ? "existing" : "new");
@@ -566,14 +595,13 @@ export default function NotesPage() {
                     </div>
 
                     <div className="flex shrink-0 items-center gap-3">
-                      <a
-                        href={resolveFileUrl(n.file_url)}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => handleOpenNote(n)}
                         className="rounded-2xl border-2 border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100"
                       >
                         Open
-                      </a>
+                      </button>
 
                       <button
                         type="button"

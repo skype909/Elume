@@ -1371,7 +1371,7 @@ export default function App() {
         <Route path="/class/:id" element={<ClassPage />} />
         <Route path="/class/:id/seating-plan" element={<SeatingPlanPage />} />
         <Route path="/class/:id/live-quiz" element={<LiveQuizPage />} />
-        <Route path="/whiteBoard/:id" element={<WhiteBoardPage />} />
+        <Route path="/whiteboard/:id" element={<WhiteBoardPage />} />
         <Route path="/class/:id/notes" element={<NotesPage />} />
         <Route path="/class/:id/exam-papers" element={<ExamPapersPage />} />
         <Route path="/class/:id/videos" element={<VideosPage />} />

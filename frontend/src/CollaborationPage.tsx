@@ -176,10 +176,10 @@ export default function CollaborationPage() {
     const [penSize, setPenSize] = useState<PenSize>(1);
     const [eraserSize, setEraserSize] = useState<EraserSize>(1);
     const [highlightColor, setHighlightColor] = useState<HighlightColor>("yellow");
+    const [pdfImportRequestNonce, setPdfImportRequestNonce] = useState(0);
 
     const [showJoinModal, setShowJoinModal] = useState(false);
     const [showBreakoutModal, setShowBreakoutModal] = useState(false);
-    const [showPdfModal, setShowPdfModal] = useState(false);
 
     const [roomCount, setRoomCount] = useState(4);
     const [timerMinutes, setTimerMinutes] = useState(10);
@@ -597,6 +597,41 @@ export default function CollaborationPage() {
         }
     }
 
+    function handleStartNewSession() {
+        stopPolling();
+        joinCodeRef.current = "";
+        teacherBoardExportRef.current = null;
+        reviewBoardExportRefs.current = {};
+        focusedReviewBoardExportRef.current = null;
+
+        setSessionTitle("Collaboration Whiteboard");
+        setSessionState("draft");
+        setTool("pen");
+        setPenColor("black");
+        setPenSize(1);
+        setEraserSize(1);
+        setHighlightColor("yellow");
+        setShowJoinModal(false);
+        setShowBreakoutModal(false);
+        setRoomCount(4);
+        setTimerMinutes(10);
+        setTimeLeftSeconds(null);
+        setParticipants([]);
+        setSessionCode("");
+        setStatus(null);
+        setStatusError(null);
+        setIsCreating(false);
+        setIsStartingBreakout(false);
+        setRooms(Array.from({ length: 4 }, (_, i) => ({ roomNumber: i + 1, participantIds: [] })));
+        setReviewPanels([
+            { id: uid("panel"), selectedBoard: "room-1" },
+            { id: uid("panel"), selectedBoard: "room-2" },
+            { id: uid("panel"), selectedBoard: "room-3" },
+            { id: uid("panel"), selectedBoard: "room-4" },
+        ]);
+        setFocusedReviewBoard(null);
+    }
+
     const assignedCount = participants.filter((p) => p.roomNumber !== null).length;
     const unassigned = participants.filter((p) => p.roomNumber === null);
 
@@ -677,7 +712,7 @@ export default function CollaborationPage() {
                                     </button>
 
                                     <button
-                                        onClick={() => window.location.reload()}
+                                        onClick={handleStartNewSession}
                                         disabled={!hasSession}
                                         className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
@@ -776,7 +811,7 @@ export default function CollaborationPage() {
 
                                     <button
                                         type="button"
-                                        onClick={() => setShowPdfModal(true)}
+                                        onClick={() => setPdfImportRequestNonce((n) => n + 1)}
                                         className="flex h-14 flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white text-xs font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
                                     >
                                         <span className="text-lg">📄</span>
@@ -904,7 +939,7 @@ export default function CollaborationPage() {
                                     <div className="flex flex-wrap items-center gap-2">
                                         <button
                                             type="button"
-                                            onClick={() => setShowPdfModal(true)}
+                                            onClick={() => setPdfImportRequestNonce((n) => n + 1)}
                                             className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50"
                                         >
                                             Import PDF
@@ -955,6 +990,10 @@ export default function CollaborationPage() {
                                                 highlighterColor={highlightColor}
                                                 eraserSize={eraserSize}
                                                 height={760}
+                                                classId={String(classId)}
+                                                apiBase={API_BASE}
+                                                apiFetch={apiFetch}
+                                                pdfImportRequestNonce={pdfImportRequestNonce}
                                                 onExportReady={(fn) => {
                                                     teacherBoardExportRef.current = fn;
                                                 }}
@@ -1462,7 +1501,7 @@ export default function CollaborationPage() {
                 </div>
             )}
 
-            {showPdfModal && (
+            {false && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm">
                     <div className="w-full max-w-3xl rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
                         <div className="flex items-start justify-between gap-4">
@@ -1476,7 +1515,7 @@ export default function CollaborationPage() {
 
                             <button
                                 type="button"
-                                onClick={() => setShowPdfModal(false)}
+                                onClick={() => { }}
                                 className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
                             >
                                 Close
