@@ -20,6 +20,11 @@ export default function LoginPage({ onLoggedIn }: Props) {
     const [waitlistLoading, setWaitlistLoading] = useState(false);
     const [waitlistSuccess, setWaitlistSuccess] = useState<string | null>(null);
     const [waitlistError, setWaitlistError] = useState<string | null>(null);
+    const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+    const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
+    const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
+    const [forgotPasswordSuccess, setForgotPasswordSuccess] = useState<string | null>(null);
+    const [forgotPasswordError, setForgotPasswordError] = useState<string | null>(null);
 
     function isLocalDev() {
         const h = window.location.hostname;
@@ -80,6 +85,29 @@ export default function LoginPage({ onLoggedIn }: Props) {
         );
     }, []);
 
+    async function submitForgotPassword(e: React.FormEvent) {
+        e.preventDefault();
+        setForgotPasswordError(null);
+        setForgotPasswordSuccess(null);
+        setForgotPasswordLoading(true);
+
+        try {
+            await apiFetch("/auth/forgot-password", {
+                method: "POST",
+                body: JSON.stringify({
+                    email: forgotPasswordEmail.trim(),
+                }),
+            });
+
+            setForgotPasswordSuccess(
+                "If that email is registered, a password reset link has been sent."
+            );
+        } catch (err: any) {
+            setForgotPasswordError(err?.message || "Could not send reset link");
+        } finally {
+            setForgotPasswordLoading(false);
+        }
+    }
 
     async function submit(e: React.FormEvent) {
         e.preventDefault();
@@ -341,6 +369,21 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                         />
                                     </label>
 
+                                    <div className="flex justify-end">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setForgotPasswordEmail(email.trim());
+                                                setForgotPasswordError(null);
+                                                setForgotPasswordSuccess(null);
+                                                setShowForgotPasswordModal(true);
+                                            }}
+                                            className="text-sm font-semibold text-emerald-700 transition hover:text-emerald-800 hover:underline"
+                                        >
+                                            Forgot password?
+                                        </button>
+                                    </div>
+
                                     {error && (
                                         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
                                             {error}
@@ -415,6 +458,70 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                     </div>
                                 </div>
                             </div>
+
+                            {showForgotPasswordModal && (
+                                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 px-4 backdrop-blur-sm">
+                                    <div className="w-full max-w-md rounded-[28px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div>
+                                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">
+                                                    Account recovery
+                                                </div>
+                                                <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">
+                                                    Reset your password
+                                                </h3>
+                                                <p className="mt-2 text-sm leading-6 text-slate-600">
+                                                    Enter your email and we’ll send you a secure password reset link.
+                                                </p>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowForgotPasswordModal(false)}
+                                                className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
+                                            >
+                                                Close
+                                            </button>
+                                        </div>
+
+                                        <form className="mt-5 space-y-4" onSubmit={submitForgotPassword}>
+                                            <label className="block">
+                                                <span className="mb-1.5 block text-sm font-bold text-slate-800">
+                                                    Email
+                                                </span>
+                                                <input
+                                                    type="email"
+                                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                                                    value={forgotPasswordEmail}
+                                                    onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                                                    placeholder="you@school.ie"
+                                                    required
+                                                />
+                                            </label>
+
+                                            {forgotPasswordError && (
+                                                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                                                    {forgotPasswordError}
+                                                </div>
+                                            )}
+
+                                            {forgotPasswordSuccess && (
+                                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+                                                    {forgotPasswordSuccess}
+                                                </div>
+                                            )}
+
+                                            <button
+                                                type="submit"
+                                                disabled={forgotPasswordLoading}
+                                                className="w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-base font-black text-white shadow-lg transition hover:shadow-xl disabled:opacity-60"
+                                            >
+                                                {forgotPasswordLoading ? "Sending link..." : "Send reset link"}
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="mt-4 text-center text-xs text-slate-500">
                                 Designed to help teachers save time, stay organised and make

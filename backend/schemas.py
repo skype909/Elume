@@ -186,6 +186,15 @@ class AIParseEventResponse(BaseModel):
     draft: CalendarEventCreate
     warnings: List[str] = []
 
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
 # -------------------------
 # Teacher Admin State
 # -------------------------

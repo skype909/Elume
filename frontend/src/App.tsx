@@ -27,6 +27,7 @@ import AdminUsersPage from "./AdminUsersPage";
 import StudentCollabRoomPage from "./StudentCollabRoomPage";
 import CollaborationPage from "./CollaborationPage";
 import LegalPage from "./LegalPage";
+import ResetPasswordPage from "./ResetPasswordPage";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -1328,7 +1329,8 @@ export default function App() {
   const isPublicRoute =
     location.pathname.startsWith("/s/") ||
     location.pathname.startsWith("/join/") ||
-    location.pathname.startsWith("/collab/join/");
+    location.pathname.startsWith("/collab/join/") ||
+    location.pathname.startsWith("/reset-password");
 
   function logout() {
     clearToken();
@@ -1390,11 +1392,13 @@ export default function App() {
         <Route path="/planner" element={<TeacherPlanner />} />
         <Route path="/create-resources" element={<CreateResources />} />
         <Route path="/legal" element={<LegalPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
       </Routes>
 
       {!location.pathname.startsWith("/join/") &&
         !location.pathname.startsWith("/s/") &&
-        !location.pathname.startsWith("/collab/join/") && (
+        !location.pathname.startsWith("/collab/join/") &&
+        !location.pathname.startsWith("/reset-password") && (
           <footer className="mt-10 border-t border-slate-200/80 bg-white/85 backdrop-blur">
             <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-5 text-sm text-slate-600 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
               <div className="text-xs sm:text-sm">© 2026 Elume. All rights reserved.</div>

@@ -235,6 +235,7 @@ export default function CollabBoard({
     const committedCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
+    const connectionVersionRef = useRef(0);
     const editable = !readOnly;
 
     const [isConnected, setIsConnected] = useState(false);
@@ -596,6 +597,9 @@ export default function CollabBoard({
     }, [syncCanvasSize]);
 
     useEffect(() => {
+        connectionVersionRef.current += 1;
+        const connectionVersion = connectionVersionRef.current;
+
         strokesRef.current = [];
         liveStrokeRef.current = null;
         historyRef.current = [];
@@ -613,19 +617,23 @@ export default function CollabBoard({
         wsRef.current = ws;
 
         ws.onopen = () => {
+            if (connectionVersion !== connectionVersionRef.current) return;
             setIsConnected(true);
             ws.send(JSON.stringify({ type: "ping" }));
         };
 
         ws.onclose = () => {
+            if (connectionVersion !== connectionVersionRef.current) return;
             setIsConnected(false);
         };
 
         ws.onerror = () => {
+            if (connectionVersion !== connectionVersionRef.current) return;
             setIsConnected(false);
         };
 
         ws.onmessage = (event) => {
+            if (connectionVersion !== connectionVersionRef.current) return;
             try {
                 const data = JSON.parse(event.data) as SocketPayload;
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json, os, uuid
+import hashlib
 import re
 import shutil
 import random
@@ -97,8 +98,10 @@ print("✅ LOADED main.py FROM:", __file__)
 
 PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
 JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
+APP_BASE_URL = (os.getenv("APP_BASE_URL") or "http://localhost:5173").strip()
 JWT_ALG = "HS256"
 JWT_EXPIRE_DAYS = 30
+
 
 if _jwt_secret_is_weak(JWT_SECRET) and not _is_explicit_development():
     raise RuntimeError(
@@ -337,6 +340,81 @@ def auth_login(payload: AuthLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     return {"access_token": _make_token(user.id, user.email), "token_type": "bearer"}
+
+
+@app.post("/auth/forgot-password")
+def auth_forgot_password(payload: schemas.ForgotPasswordRequest, db: Session = Depends(get_db)):
+    email = (payload.email or "").strip().lower()
+    generic_response = {
+        "success": True,
+        "message": "If that email is registered, a password reset link has been sent.",
+    }
+
+    if not email:
+        return generic_response
+
+    user = db.query(models.UserModel).filter(models.UserModel.email == email).first()
+    if not user:
+        return generic_response
+
+    now = datetime.utcnow()
+    db.query(models.PasswordResetTokenModel).filter(
+        models.PasswordResetTokenModel.user_id == user.id,
+        models.PasswordResetTokenModel.used_at.is_(None),
+    ).update({"used_at": now}, synchronize_session=False)
+
+    raw_token = secrets.token_urlsafe(32)
+    db.add(
+        models.PasswordResetTokenModel(
+            user_id=user.id,
+            token_hash=_hash_reset_token(raw_token),
+            expires_at=now + timedelta(hours=1),
+        )
+    )
+    db.commit()
+
+    reset_link = f"{APP_BASE_URL.rstrip('/')}/#/reset-password?token={raw_token}"
+    body = (
+        "Hello,\n\n"
+        "We received a request to reset your Elume password.\n\n"
+        f"Reset your password here:\n{reset_link}\n\n"
+        "If you did not request this, you can ignore this email.\n"
+        "This link will expire in 1 hour.\n\n"
+        "Elume"
+    )
+    try:
+        _send_email(user.email, "Reset your Elume password", body)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send reset email: {str(e)}")
+
+    return generic_response
+
+
+@app.post("/auth/reset-password")
+def auth_reset_password(payload: schemas.ResetPasswordRequest, db: Session = Depends(get_db)):
+    token = (payload.token or "").strip()
+    new_password = (payload.new_password or "").strip()
+
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    token_row = db.query(models.PasswordResetTokenModel).filter(
+        models.PasswordResetTokenModel.token_hash == _hash_reset_token(token),
+        models.PasswordResetTokenModel.used_at.is_(None),
+        models.PasswordResetTokenModel.expires_at > datetime.utcnow(),
+    ).first()
+    if not token_row:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    user = db.query(models.UserModel).filter(models.UserModel.id == token_row.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    user.password_hash = PWD_CONTEXT.hash(new_password)
+    token_row.used_at = datetime.utcnow()
+    db.commit()
+
+    return {"success": True, "message": "Password reset successful."}
 
 def get_current_user(
     authorization: Optional[str] = Header(default=None),
@@ -675,6 +753,21 @@ def admin_rename_user(
         "email": target.email,
     }
 
+def _send_email(to_email: str, subject: str, body: str):
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = "admin@elume.ie"
+    msg["To"] = to_email
+
+    with smtplib.SMTP("smtp.zoho.eu", 587) as server:
+        server.starttls()
+        server.login("admin@elume.ie", os.getenv("EMAIL_PASSWORD"))
+        server.send_message(msg)
+
+
+def _hash_reset_token(raw_token: str) -> str:
+    return hashlib.sha256((raw_token or "").encode("utf-8")).hexdigest()
+
 
 # =========================================================
 # ADMIN (Students + Assessments/Results)
@@ -758,7 +851,6 @@ class TeacherPlannerStateModel(Base):
     teacher_id = Column(Integer, unique=True, index=True)
     state_json = Column(Text, default='{"notes":[],"tasks":[]}')
     updated_at = Column(Text, nullable=True)
-
 
 @app.post("/collab/{code}/config")
 def collab_update_config(

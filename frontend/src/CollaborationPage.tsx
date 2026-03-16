@@ -377,8 +377,8 @@ export default function CollaborationPage() {
 
     async function fetchParticipants(code: string) {
         try {
-        const data = await apiFetch(`${API_BASE}/collab/${code}/participants`);
-        const list = (data?.participants || []) as CollabParticipantApi[];
+            const data = await apiFetch(`${API_BASE}/collab/${code}/participants`);
+            const list = (data?.participants || []) as CollabParticipantApi[];
             setParticipants(
                 list.map((p) => ({
                     id: String(p.id),
@@ -655,7 +655,6 @@ export default function CollaborationPage() {
                                     >
                                         Student join
                                     </button>
-
                                     <button
                                         onClick={() => setShowBreakoutModal(true)}
                                         disabled={!hasSession}
@@ -678,22 +677,11 @@ export default function CollaborationPage() {
                                     </button>
 
                                     <button
-                                        onClick={async () => {
-                                            try {
-                                                await apiFetch(`${API_BASE}/collab/${joinCodeRef.current}/end`, { method: "POST" });
-                                                await Promise.all([
-                                                    fetchStatus(joinCodeRef.current),
-                                                    fetchParticipants(joinCodeRef.current),
-                                                ]);
-                                                setSessionState("ended");
-                                            } catch (e: any) {
-                                                window.alert(e?.message || "Failed to end session.");
-                                            }
-                                        }}
+                                        onClick={() => window.location.reload()}
                                         disabled={!hasSession}
-                                        className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-black text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:text-rose-300"
+                                        className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
-                                        End session
+                                        Start new session
                                     </button>
 
                                     <button
