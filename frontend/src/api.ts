@@ -61,3 +61,25 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
 
   return data;
 }
+
+export async function apiFetchBlob(path: string, init: RequestInit = {}) {
+  const token = getToken();
+
+  const headers = new Headers(init.headers || {});
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const url =
+    path.startsWith("/api")
+      ? path
+      : `/api${path.startsWith("/") ? "" : "/"}${path}`;
+
+  const res = await fetch(url, { ...init, headers });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed (${res.status})`);
+  }
+
+  return res.blob();
+}

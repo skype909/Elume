@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { apiFetch } from "./api";
 
 const API_BASE = "/api";
 const META_KEY = "elume_class_layout_v1";
@@ -123,11 +124,7 @@ export default function NotesPage() {
     const controller = new AbortController();
     setLoadingClass(true);
 
-    fetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`Class fetch failed (${r.status})`);
-        return (await r.json()) as ClassItem;
-      })
+    apiFetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal })
       .then((data) => setClassInfo(data ?? null))
       .catch((e: any) => {
         if (e?.name === "AbortError") return;
@@ -143,9 +140,7 @@ export default function NotesPage() {
     if (!validClassId) return;
     setLoadingTopics(true);
     try {
-      const r = await fetch(`${API_BASE}/topics/${classId}?kind=notes`);
-      if (!r.ok) throw new Error(`Topics fetch failed (${r.status})`);
-      const data = await r.json();
+      const data = await apiFetch(`${API_BASE}/topics/${classId}?kind=notes`);
       setTopics(Array.isArray(data) ? data : []);
     } catch (e: any) {
       setError(e?.message || "Failed to load categories");
@@ -159,9 +154,7 @@ export default function NotesPage() {
     if (!validClassId) return;
     setLoadingNotes(true);
     try {
-      const r = await fetch(`${API_BASE}/notes/${classId}?kind=notes`);
-      if (!r.ok) throw new Error(`Notes fetch failed (${r.status})`);
-      const data = await r.json();
+      const data = await apiFetch(`${API_BASE}/notes/${classId}?kind=notes`);
       setNotes(Array.isArray(data) ? data : []);
     } catch (e: any) {
       setError(e?.message || "Failed to load files");
@@ -238,21 +231,13 @@ export default function NotesPage() {
     const title = newTopicName.trim();
     if (!title) throw new Error("Enter a category name");
 
-    const r = await fetch(`${API_BASE}/topics?kind=notes`, {
+    const created = (await apiFetch(`${API_BASE}/topics?kind=notes`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         class_id: classId,
         name: title,
       }),
-    });
-
-    if (!r.ok) {
-      const msg = await r.text().catch(() => "");
-      throw new Error(msg || `Category create failed (${r.status})`);
-    }
-
-    const created = (await r.json()) as TopicItem;
+    })) as TopicItem;
     setTopics((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
     return created.id;
   }
@@ -276,15 +261,10 @@ export default function NotesPage() {
         fd.append("topic_id", String(topicId));
         fd.append("file", file);
 
-        const r = await fetch(`${API_BASE}/notes/upload`, {
+        await apiFetch(`${API_BASE}/notes/upload`, {
           method: "POST",
           body: fd,
         });
-
-        if (!r.ok) {
-          const msg = await r.text().catch(() => "");
-          throw new Error(msg || `Upload failed (${r.status})`);
-        }
       }
 
       await Promise.all([loadTopics(), loadNotes()]);
@@ -310,11 +290,9 @@ export default function NotesPage() {
       setBusy(true);
       setError(null);
 
-      const r = await fetch(`${API_BASE}/notes/${noteId}`, {
+      await apiFetch(`${API_BASE}/notes/${noteId}`, {
         method: "DELETE",
       });
-
-      if (!r.ok) throw new Error(`Delete failed (${r.status})`);
 
       setNotes((prev) => prev.filter((n) => n.id !== noteId));
     } catch (e: any) {
@@ -332,11 +310,9 @@ export default function NotesPage() {
       setBusy(true);
       setError(null);
 
-      const r = await fetch(`${API_BASE}/topics/${topicId}`, {
+      await apiFetch(`${API_BASE}/topics/${topicId}`, {
         method: "DELETE",
       });
-
-      if (!r.ok) throw new Error(`Delete failed (${r.status})`);
 
       setTopics((prev) => prev.filter((t) => t.id !== topicId));
       setNotes((prev) => prev.filter((n) => n.topic_id !== topicId));

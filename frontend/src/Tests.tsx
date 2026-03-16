@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { apiFetch } from "./api";
 
 const API_BASE = "/api";
 
@@ -149,30 +150,20 @@ export default function TestsPage() {
 
     try {
       const [classRes, catRes, testRes] = await Promise.all([
-        fetch(`${API_BASE}/classes/${classId}`),
-        fetch(`${API_BASE}/classes/${classId}/test-categories`),
-        fetch(`${API_BASE}/classes/${classId}/tests`),
+        apiFetch(`${API_BASE}/classes/${classId}`),
+        apiFetch(`${API_BASE}/classes/${classId}/test-categories`),
+        apiFetch(`${API_BASE}/classes/${classId}/tests`),
       ]);
 
-      if (classRes.ok) {
-        const cls = (await classRes.json()) as ClassItem;
+      if (classRes) {
+        const cls = classRes as ClassItem;
         setClassInfo(cls ?? null);
       } else {
         setClassInfo(null);
       }
 
-      if (!catRes.ok) {
-        const j = await safeJson(catRes);
-        throw new Error(j?.detail || "Failed to load categories");
-      }
-
-      if (!testRes.ok) {
-        const j = await safeJson(testRes);
-        throw new Error(j?.detail || "Failed to load tests");
-      }
-
-      const catData = (await catRes.json()) as TestCategory[];
-      const testData = (await testRes.json()) as TestItem[];
+      const catData = catRes as TestCategory[];
+      const testData = testRes as TestItem[];
 
       setCategories(Array.isArray(catData) ? catData : []);
       setTests(Array.isArray(testData) ? testData : []);
@@ -329,21 +320,13 @@ export default function TestsPage() {
     try {
       setErr(null);
 
-      const res = await fetch(`${API_BASE}/classes/${classId}/test-categories`, {
+      const created = (await apiFetch(`${API_BASE}/classes/${classId}/test-categories`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title,
           description: newCatDesc.trim() || null,
         }),
-      });
-
-      if (!res.ok) {
-        const j = await safeJson(res);
-        throw new Error(j?.detail || "Failed to create category");
-      }
-
-      const created = (await res.json()) as TestCategory;
+      })) as TestCategory;
       setCategories((prev) => [created, ...prev]);
       setNewCatTitle("");
       setNewCatDesc("");
@@ -357,21 +340,13 @@ export default function TestsPage() {
     const title = newUploadCategoryTitle.trim();
     if (!title) throw new Error("Please enter a category title.");
 
-    const res = await fetch(`${API_BASE}/classes/${classId}/test-categories`, {
+    const created = (await apiFetch(`${API_BASE}/classes/${classId}/test-categories`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title,
         description: newUploadCategoryDesc.trim() || null,
       }),
-    });
-
-    if (!res.ok) {
-      const j = await safeJson(res);
-      throw new Error(j?.detail || "Failed to create category");
-    }
-
-    const created = (await res.json()) as TestCategory;
+    })) as TestCategory;
     setCategories((prev) => [created, ...prev]);
     return created.id;
   };
@@ -410,17 +385,10 @@ export default function TestsPage() {
 
       fd.append("file", file);
 
-      const res = await fetch(`${API_BASE}/tests`, {
+      const created = (await apiFetch(`${API_BASE}/tests`, {
         method: "POST",
         body: fd,
-      });
-
-      if (!res.ok) {
-        const j = await safeJson(res);
-        throw new Error(j?.detail || "Failed to upload test");
-      }
-
-      const created = (await res.json()) as TestItem;
+      })) as TestItem;
       setTests((prev) => [created, ...prev]);
       setUploadOpen(false);
 
@@ -438,18 +406,10 @@ export default function TestsPage() {
     try {
       setErr(null);
 
-      const res = await fetch(`${API_BASE}/tests/${testId}`, {
+      const updated = (await apiFetch(`${API_BASE}/tests/${testId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
-      });
-
-      if (!res.ok) {
-        const j = await safeJson(res);
-        throw new Error(j?.detail || "Failed to update test");
-      }
-
-      const updated = (await res.json()) as TestItem;
+      })) as TestItem;
       setTests((prev) => prev.map((t) => (t.id === testId ? updated : t)));
     } catch (e: any) {
       setErr(e?.message || "Failed to update test");
@@ -462,12 +422,7 @@ export default function TestsPage() {
     try {
       setErr(null);
 
-      const res = await fetch(`${API_BASE}/tests/${testId}`, { method: "DELETE" });
-
-      if (!res.ok) {
-        const j = await safeJson(res);
-        throw new Error(j?.detail || "Failed to delete test");
-      }
+      await apiFetch(`${API_BASE}/tests/${testId}`, { method: "DELETE" });
 
       setTests((prev) => prev.filter((t) => t.id !== testId));
     } catch (e: any) {
@@ -481,14 +436,9 @@ export default function TestsPage() {
     try {
       setErr(null);
 
-      const res = await fetch(`${API_BASE}/test-categories/${catId}`, {
+      await apiFetch(`${API_BASE}/test-categories/${catId}`, {
         method: "DELETE",
       });
-
-      if (!res.ok) {
-        const j = await safeJson(res);
-        throw new Error(j?.detail || "Failed to delete category");
-      }
 
       setCategories((prev) => prev.filter((c) => c.id !== catId));
       setTests((prev) =>

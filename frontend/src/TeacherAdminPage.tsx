@@ -17,10 +17,10 @@ type Slot = {
 
 type TimetableEntry = {
   classId: number | null;
-  classLabel: string; // cached display label
+  classLabel: string;
   room: string;
-  supervisionRank: number | null; // only for free/unused slots
-  dutyNote: string; // for break/lunch notes (and can be used for period notes if you want later)
+  supervisionRank: number | null;
+  dutyNote: string;
 };
 
 type DaySchedule = {
@@ -37,9 +37,34 @@ type TeacherProfile = {
   rollNumber: string;
 };
 
+type TimetableDayConfig = {
+  startTime: string;
+  periods: number;
+  classLengthMinutes: number;
+  smallBreakEnabled: boolean;
+  smallBreakAfterPeriod: number;
+  smallBreakStart: string;
+  smallBreakEnd: string;
+  lunchEnabled: boolean;
+  lunchAfterPeriod: number;
+  lunchStart: string;
+  lunchEnd: string;
+  includeMorningSupervision: boolean;
+  morningSupervisionMinutes: number;
+  includeAfternoonSupervision: boolean;
+  afternoonSupervisionMinutes: number;
+};
+
+type TimetableConfig = {
+  setupComplete: boolean;
+  sameForAllDays: boolean;
+  days: Record<DayKey, TimetableDayConfig>;
+};
+
 type StoredAdminState = {
   profile: TeacherProfile;
   schedule: Record<DayKey, DaySchedule>;
+  timetableConfig: TimetableConfig;
   updatedAt: string | null;
 };
 
@@ -54,7 +79,6 @@ type MetaStore = Record<string, ClassMeta>;
 
 const DAYS: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
-// --- Match Dashboard colour palette (App.tsx) so timetable colours stay consistent ---
 const COLOURS = [
   { name: "Emerald", bg: "bg-emerald-600", ring: "ring-emerald-200" },
   { name: "Amber", bg: "bg-amber-500", ring: "ring-amber-200" },
@@ -69,7 +93,6 @@ const COLOURS = [
 ];
 
 function defaultBgForClassId(classId: number) {
-  // Same approach as Dashboard: stable, deterministic per id
   return COLOURS[classId % COLOURS.length]?.bg ?? "bg-emerald-600";
 }
 
@@ -78,13 +101,23 @@ function toMinutes(hhmm: string) {
   return h * 60 + m;
 }
 
+function minutesToHHMM(totalMinutes: number) {
+  const mins = Math.max(0, totalMinutes);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function addMinutes(hhmm: string, mins: number) {
+  return minutesToHHMM(toMinutes(hhmm) + mins);
+}
+
 function nowLocalMinutes() {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
 }
 
 function dayKeyToday(): DayKey | null {
-  // JS: 0 Sun, 1 Mon, ... 6 Sat
   const d = new Date().getDay();
   if (d === 1) return "Mon";
   if (d === 2) return "Tue";
@@ -107,6 +140,11 @@ function getEmailFromToken(): string | null {
 
 function storageKey() {
   const email = getEmailFromToken() ?? "anon";
+  return `elume_teacher_admin_v3__${email}`;
+}
+
+function legacyStorageKey() {
+  const email = getEmailFromToken() ?? "anon";
   return `elume_teacher_admin_v2__${email}`;
 }
 
@@ -124,9 +162,7 @@ function loadMeta(): MetaStore {
   }
 }
 
-// A simple readable text-color heuristic based on your tile palette.
 function tileTextClass(bgClass: string) {
-  // Yellow/amber/light backgrounds need dark text; most others are fine with white.
   if (
     bgClass.includes("bg-yellow") ||
     bgClass.includes("bg-amber") ||
@@ -140,44 +176,6 @@ function tileTextClass(bgClass: string) {
   return "text-white";
 }
 
-function defaultSlotsForDay(day: DayKey): Slot[] {
-  // Adds:
-  // - AM Supervision (15 mins before P1)
-  // - PM Supervision (15 mins after last period)
-  if (day === "Fri") {
-    return [
-      { id: "PRE", kind: "break", label: "AM Supervision", start: "08:35", end: "08:50" },
-
-      { id: "P1", kind: "period", label: "Period 1", start: "08:50", end: "09:48" },
-      { id: "P2", kind: "period", label: "Period 2", start: "09:48", end: "10:46" },
-      { id: "SB", kind: "break", label: "Small Break", start: "10:46", end: "11:01" },
-      { id: "P3", kind: "period", label: "Period 3", start: "11:01", end: "11:59" },
-      { id: "P4", kind: "period", label: "Period 4", start: "11:59", end: "12:59" },
-      { id: "L", kind: "lunch", label: "Lunch", start: "12:59", end: "13:14" },
-      { id: "P5", kind: "period", label: "Period 5", start: "13:14", end: "14:12" },
-
-      { id: "POST", kind: "break", label: "PM Supervision", start: "14:12", end: "14:27" },
-    ];
-  }
-
-  const lunchEnd = day === "Mon" ? "13:44" : "13:54";
-
-  return [
-    { id: "PRE", kind: "break", label: "AM Supervision", start: "08:35", end: "08:50" },
-
-    { id: "P1", kind: "period", label: "Period 1", start: "08:50", end: "09:48" },
-    { id: "P2", kind: "period", label: "Period 2", start: "09:48", end: "10:46" },
-    { id: "SB", kind: "break", label: "Small Break", start: "10:46", end: "11:01" },
-    { id: "P3", kind: "period", label: "Period 3", start: "11:01", end: "11:59" },
-    { id: "P4", kind: "period", label: "Period 4", start: "11:59", end: "12:57" },
-    { id: "L", kind: "lunch", label: "Lunch", start: "12:57", end: lunchEnd },
-    { id: "P5", kind: "period", label: "Period 5", start: lunchEnd, end: "14:52" },
-    { id: "P6", kind: "period", label: "Period 6", start: "14:52", end: "15:50" },
-
-    { id: "POST", kind: "break", label: "PM Supervision", start: "15:50", end: "16:05" },
-  ];
-}
-
 function defaultEntry(): TimetableEntry {
   return {
     classId: null,
@@ -186,6 +184,153 @@ function defaultEntry(): TimetableEntry {
     supervisionRank: null,
     dutyNote: "",
   };
+}
+
+function defaultDayConfig(day: DayKey): TimetableDayConfig {
+  if (day === "Fri") {
+    return {
+      startTime: "08:50",
+      periods: 5,
+      classLengthMinutes: 58,
+      smallBreakEnabled: true,
+      smallBreakAfterPeriod: 2,
+      smallBreakStart: "10:46",
+      smallBreakEnd: "11:01",
+      lunchEnabled: true,
+      lunchAfterPeriod: 4,
+      lunchStart: "12:59",
+      lunchEnd: "13:14",
+      includeMorningSupervision: true,
+      morningSupervisionMinutes: 15,
+      includeAfternoonSupervision: true,
+      afternoonSupervisionMinutes: 15,
+    };
+  }
+
+  return {
+    startTime: "08:50",
+    periods: 6,
+    classLengthMinutes: 58,
+    smallBreakEnabled: true,
+    smallBreakAfterPeriod: 2,
+    smallBreakStart: "10:46",
+    smallBreakEnd: "11:01",
+    lunchEnabled: true,
+    lunchAfterPeriod: 4,
+    lunchStart: "12:57",
+    lunchEnd: day === "Mon" ? "13:44" : "13:54",
+    includeMorningSupervision: true,
+    morningSupervisionMinutes: 15,
+    includeAfternoonSupervision: true,
+    afternoonSupervisionMinutes: 15,
+  };
+}
+
+function defaultTimetableConfig(): TimetableConfig {
+  return {
+    setupComplete: false,
+    sameForAllDays: false,
+    days: {
+      Mon: defaultDayConfig("Mon"),
+      Tue: defaultDayConfig("Tue"),
+      Wed: defaultDayConfig("Wed"),
+      Thu: defaultDayConfig("Thu"),
+      Fri: defaultDayConfig("Fri"),
+    },
+  };
+}
+
+function buildSlotsFromDayConfig(cfg: TimetableDayConfig): Slot[] {
+  const slots: Slot[] = [];
+  const startMinutes = toMinutes(cfg.startTime);
+
+  if (cfg.includeMorningSupervision && cfg.morningSupervisionMinutes > 0) {
+    slots.push({
+      id: "PRE",
+      kind: "break",
+      label: "AM Supervision",
+      start: minutesToHHMM(startMinutes - cfg.morningSupervisionMinutes),
+      end: cfg.startTime,
+    });
+  }
+
+  let cursor = cfg.startTime;
+
+  for (let i = 1; i <= cfg.periods; i++) {
+    let end = addMinutes(cursor, cfg.classLengthMinutes);
+
+    if (cfg.smallBreakEnabled && i === cfg.smallBreakAfterPeriod) {
+      end = cfg.smallBreakStart;
+    }
+    if (cfg.lunchEnabled && i === cfg.lunchAfterPeriod) {
+      end = cfg.lunchStart;
+    }
+
+    slots.push({
+      id: `P${i}`,
+      kind: "period",
+      label: `Period ${i}`,
+      start: cursor,
+      end,
+    });
+
+    cursor = end;
+
+    if (cfg.smallBreakEnabled && i === cfg.smallBreakAfterPeriod) {
+      slots.push({
+        id: "SB",
+        kind: "break",
+        label: "Small Break",
+        start: cfg.smallBreakStart,
+        end: cfg.smallBreakEnd,
+      });
+      cursor = cfg.smallBreakEnd;
+    }
+
+    if (cfg.lunchEnabled && i === cfg.lunchAfterPeriod) {
+      slots.push({
+        id: "L",
+        kind: "lunch",
+        label: "Lunch",
+        start: cfg.lunchStart,
+        end: cfg.lunchEnd,
+      });
+      cursor = cfg.lunchEnd;
+    }
+  }
+
+  if (cfg.includeAfternoonSupervision && cfg.afternoonSupervisionMinutes > 0) {
+    slots.push({
+      id: "POST",
+      kind: "break",
+      label: "PM Supervision",
+      start: cursor,
+      end: addMinutes(cursor, cfg.afternoonSupervisionMinutes),
+    });
+  }
+
+  return slots;
+}
+
+function buildScheduleFromConfig(
+  config: TimetableConfig,
+  existingSchedule?: Record<DayKey, DaySchedule>
+): Record<DayKey, DaySchedule> {
+  const schedule = {} as Record<DayKey, DaySchedule>;
+
+  for (const day of DAYS) {
+    const slots = buildSlotsFromDayConfig(config.days[day]);
+    const oldEntries = existingSchedule?.[day]?.entries ?? {};
+    const entries: Record<string, TimetableEntry> = {};
+
+    for (const slot of slots) {
+      entries[slot.id] = oldEntries[slot.id] ? { ...oldEntries[slot.id] } : defaultEntry();
+    }
+
+    schedule[day] = { slots, entries };
+  }
+
+  return schedule;
 }
 
 function makeDefaultState(): StoredAdminState {
@@ -198,15 +343,51 @@ function makeDefaultState(): StoredAdminState {
     rollNumber: "",
   };
 
-  const schedule = {} as Record<DayKey, DaySchedule>;
-  for (const day of DAYS) {
-    const slots = defaultSlotsForDay(day);
-    const entries: Record<string, TimetableEntry> = {};
-    for (const s of slots) entries[s.id] = defaultEntry();
-    schedule[day] = { slots, entries };
-  }
+  const timetableConfig = defaultTimetableConfig();
+  const schedule = buildScheduleFromConfig(timetableConfig);
 
-  return { profile, schedule, updatedAt: null };
+  return { profile, schedule, timetableConfig, updatedAt: null };
+}
+
+function normalizeState(raw: any): StoredAdminState {
+  const base = makeDefaultState();
+
+  const profile: TeacherProfile = {
+    ...base.profile,
+    ...(raw?.profile ?? {}),
+  };
+
+  const timetableConfig: TimetableConfig = {
+    ...base.timetableConfig,
+    ...(raw?.timetableConfig ?? {}),
+    days: {
+      Mon: { ...base.timetableConfig.days.Mon, ...(raw?.timetableConfig?.days?.Mon ?? {}) },
+      Tue: { ...base.timetableConfig.days.Tue, ...(raw?.timetableConfig?.days?.Tue ?? {}) },
+      Wed: { ...base.timetableConfig.days.Wed, ...(raw?.timetableConfig?.days?.Wed ?? {}) },
+      Thu: { ...base.timetableConfig.days.Thu, ...(raw?.timetableConfig?.days?.Thu ?? {}) },
+      Fri: { ...base.timetableConfig.days.Fri, ...(raw?.timetableConfig?.days?.Fri ?? {}) },
+    },
+  };
+
+  const hasRawSchedule = !!raw?.schedule;
+  const freshSchedule = buildScheduleFromConfig(timetableConfig);
+
+  const schedule = hasRawSchedule
+    ? ({
+        Mon: raw.schedule.Mon ?? freshSchedule.Mon,
+        Tue: raw.schedule.Tue ?? freshSchedule.Tue,
+        Wed: raw.schedule.Wed ?? freshSchedule.Wed,
+        Thu: raw.schedule.Thu ?? freshSchedule.Thu,
+        Fri: raw.schedule.Fri ?? freshSchedule.Fri,
+      } as Record<DayKey, DaySchedule>)
+    : freshSchedule;
+
+  return {
+    profile,
+    schedule,
+    timetableConfig,
+    updatedAt: raw?.updatedAt ?? null,
+  };
 }
 
 function fmtDay(d: DayKey) {
@@ -217,102 +398,75 @@ function fmtDay(d: DayKey) {
   return "Friday";
 }
 
+function updateSetupDay(
+  config: TimetableConfig,
+  day: DayKey,
+  patch: Partial<TimetableDayConfig>
+): TimetableConfig {
+  if (config.sameForAllDays) {
+    const next = { ...config.days.Mon, ...patch };
+    return {
+      ...config,
+      days: {
+        Mon: { ...next },
+        Tue: { ...next },
+        Wed: { ...next },
+        Thu: { ...next },
+        Fri: { ...next },
+      },
+    };
+  }
+
+  return {
+    ...config,
+    days: {
+      ...config.days,
+      [day]: { ...config.days[day], ...patch },
+    },
+  };
+}
+
 export default function TeacherAdminPage() {
   const navigate = useNavigate();
   const email = getEmailFromToken();
   const isSuperAdmin = email === "admin@elume.ie";
 
   const [state, setState] = useState<StoredAdminState>(() => {
-    const raw = localStorage.getItem(storageKey());
+    const raw = localStorage.getItem(storageKey()) ?? localStorage.getItem(legacyStorageKey());
     if (!raw) return makeDefaultState();
     try {
-      const parsed = JSON.parse(raw) as StoredAdminState;
-      if (!parsed?.profile || !parsed?.schedule) return makeDefaultState();
-      return parsed;
+      return normalizeState(JSON.parse(raw));
     } catch {
       return makeDefaultState();
     }
   });
 
   const [loadedFromServer, setLoadedFromServer] = useState(false);
-
-
-  // Load synced state from server once (profile + timetable follow you across devices)
-  useEffect(() => {
-    let cancelled = false;
-
-    // grab local snapshot (what user may have just typed)
-    const localRaw = localStorage.getItem(storageKey());
-    let localState: StoredAdminState | null = null;
-    try {
-      localState = localRaw ? (JSON.parse(localRaw) as StoredAdminState) : null;
-    } catch {
-      localState = null;
-    }
-
-    apiFetch("/teacher-admin/state")
-      .then((data: any) => {
-        if (cancelled) return;
-
-        const serverState = (data?.state ?? null) as StoredAdminState | null;
-        const serverUpdatedAt = data?.updated_at ? String(data.updated_at) : null;
-
-        // If server returned a complete state, write it to local.
-        // BUT if local is newer (user typed quickly), keep local and push it up.
-        const localTs = localState?.updatedAt ? Date.parse(localState.updatedAt) : 0;
-        const serverTs =
-          serverState?.updatedAt ? Date.parse(serverState.updatedAt) : (serverUpdatedAt ? Date.parse(serverUpdatedAt) : 0);
-
-        const serverValid = !!(serverState?.profile && serverState?.schedule);
-
-        if (serverValid && serverTs >= localTs) {
-          setState(serverState as StoredAdminState);
-          try {
-            localStorage.setItem(storageKey(), JSON.stringify(serverState));
-          } catch { }
-        } else if (localState?.profile && localState?.schedule) {
-          // keep local (newer or server empty), and push to server once we're "loaded"
-          setState(localState);
-        }
-
-        setLoadedFromServer(true);
-
-        // If we kept local because it's newer / server empty, sync it now
-        if ((!serverValid || localTs > serverTs) && localState?.profile && localState?.schedule) {
-          apiFetch("/teacher-admin/state", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ state: localState }),
-          }).catch(() => { });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setLoadedFromServer(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-
   const [savedToast, setSavedToast] = useState<string | null>(null);
-
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [meta, setMeta] = useState<MetaStore>(() => loadMeta());
 
   const today = dayKeyToday();
   const nowMins = nowLocalMinutes();
 
-  // Mobile: show one day at a time
   const [dayView, setDayView] = useState<DayKey>(() => today ?? "Mon");
+  const [editing, setEditing] = useState<{ day: DayKey; slotId: string } | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [setupPromptDismissed, setSetupPromptDismissed] = useState(false);
 
-  // Editor modal state
-  const [editing, setEditing] = useState<{
-    day: DayKey;
-    slotId: string;
-  } | null>(null);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+
+  const [setupDraft, setSetupDraft] = useState<TimetableConfig>(() =>
+    structuredClone(defaultTimetableConfig())
+  );
 
   const editingSlot = useMemo(() => {
     if (!editing) return null;
@@ -325,28 +479,90 @@ export default function TeacherAdminPage() {
     return daySch.entries[editing.slotId] ?? defaultEntry();
   }, [editing, state.schedule]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const localRaw = localStorage.getItem(storageKey()) ?? localStorage.getItem(legacyStorageKey());
+    let localState: StoredAdminState | null = null;
+    try {
+      localState = localRaw ? normalizeState(JSON.parse(localRaw)) : null;
+    } catch {
+      localState = null;
+    }
+
+    apiFetch("/teacher-admin/state")
+      .then((data: any) => {
+        if (cancelled) return;
+
+        const serverRaw = data?.state ?? null;
+        const serverState = serverRaw ? normalizeState(serverRaw) : null;
+        const serverUpdatedAt = data?.updated_at ? String(data.updated_at) : null;
+
+        const localTs = localState?.updatedAt ? Date.parse(localState.updatedAt) : 0;
+        const serverTs =
+          serverState?.updatedAt
+            ? Date.parse(serverState.updatedAt)
+            : serverUpdatedAt
+              ? Date.parse(serverUpdatedAt)
+              : 0;
+
+        const serverValid = !!(serverState?.profile && serverState?.schedule && serverState?.timetableConfig);
+
+        if (serverValid && serverTs >= localTs) {
+          setState(serverState as StoredAdminState);
+          try {
+            localStorage.setItem(storageKey(), JSON.stringify(serverState));
+          } catch {
+            // ignore
+          }
+        } else if (localState?.profile && localState?.schedule) {
+          setState(localState);
+        }
+
+        setLoadedFromServer(true);
+
+        if ((!serverValid || localTs > serverTs) && localState?.profile && localState?.schedule) {
+          apiFetch("/teacher-admin/state", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ state: localState }),
+          }).catch(() => {});
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoadedFromServer(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loadedFromServer && !state.timetableConfig.setupComplete && !setupPromptDismissed) {
+      setSetupDraft(structuredClone(state.timetableConfig));
+      setSetupOpen(true);
+    }
+  }, [loadedFromServer, state.timetableConfig.setupComplete, setupPromptDismissed]);
+
   function saveState(next: StoredAdminState) {
-    // 1) local instant cache (works offline)
     try {
       localStorage.setItem(storageKey(), JSON.stringify(next));
-    } catch { }
+    } catch {
+      // ignore
+    }
 
-    // 2) update UI immediately
     setState(next);
 
-    // 3) toast
     setSavedToast("Saved ✓");
     window.setTimeout(() => setSavedToast(null), 1200);
 
-    // 4) sync to server (only after we've tried loading once to avoid overwriting newer server data on first paint)
     if (loadedFromServer) {
       apiFetch("/teacher-admin/state", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state: next }),
-      }).catch(() => {
-        // silent fail (offline etc). localStorage still holds it.
-      });
+      }).catch(() => {});
     }
   }
 
@@ -395,7 +611,6 @@ export default function TeacherAdminPage() {
     const node = document.getElementById("timetablePrint");
     if (!node) return;
 
-    // Build teacher display name
     const title = (state.profile.title || "").trim();
     const surname = (state.profile.surname || "").trim();
     const firstName = (state.profile.firstName || "").trim();
@@ -406,28 +621,20 @@ export default function TeacherAdminPage() {
       "Teacher";
 
     const heading = `${teacherName}'s Timetable`;
-
-    // Temporarily hide UI-only bits inside the timetable container (optional)
-    // You already use print-hide for some areas; this keeps the snapshot clean.
     const prevScrollTop = node.scrollTop;
     node.scrollTop = 0;
 
     try {
-      // High-res render
       const dataUrl = await toPng(node as HTMLElement, {
         cacheBust: true,
         pixelRatio: 3,
-        // Ensures white background (prevents transparent PDF page)
         backgroundColor: "#ffffff",
       });
 
-      // A4 landscape in mm
       const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
 
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
-
-      // Header space
       const margin = 8;
       const headerH = 14;
 
@@ -435,7 +642,6 @@ export default function TeacherAdminPage() {
       pdf.setFontSize(16);
       pdf.text(heading, margin, margin + 6);
 
-      // Compute image placement (fit within remaining area)
       const imgProps = pdf.getImageProperties(dataUrl);
       const maxW = pageW - margin * 2;
       const maxH = pageH - margin * 2 - headerH;
@@ -468,7 +674,6 @@ export default function TeacherAdminPage() {
     let r = 1;
     const nextEntries = { ...daySch.entries };
 
-    // candidates: periods with no class assigned
     const candidates = daySch.slots.filter((s) => s.kind === "period");
 
     for (const slot of candidates) {
@@ -485,19 +690,108 @@ export default function TeacherAdminPage() {
     });
   }
 
-  // Pull real classes + refresh colour meta (dashboard tile colours)
+  function tileBgForClassId(classId: number | null) {
+    if (!classId) return "bg-white";
+    const m = meta[String(classId)];
+    return m?.color ?? defaultBgForClassId(classId);
+  }
+
+  function openSetupWizard() {
+    setSetupDraft(structuredClone(state.timetableConfig));
+    setSetupOpen(true);
+  }
+
+  function applySetupDraft() {
+    const cleaned = structuredClone(setupDraft);
+
+    if (cleaned.sameForAllDays) {
+      const mon = cleaned.days.Mon;
+      cleaned.days = {
+        Mon: { ...mon },
+        Tue: { ...mon },
+        Wed: { ...mon },
+        Thu: { ...mon },
+        Fri: { ...mon },
+      };
+    }
+
+    cleaned.setupComplete = true;
+
+    touch({
+      ...state,
+      timetableConfig: cleaned,
+      schedule: buildScheduleFromConfig(cleaned, state.schedule),
+    });
+
+    setSetupOpen(false);
+  }
+
+  function resetTimetableFromSettings() {
+    if (
+      !window.confirm(
+        "Rebuild the timetable from your saved settings? Existing slot assignments will only stay where the slot ids still match."
+      )
+    ) {
+      return;
+    }
+
+    touch({
+      ...state,
+      schedule: buildScheduleFromConfig(state.timetableConfig, state.schedule),
+    });
+  }
+
+  async function submitPasswordChange(e: React.FormEvent) {
+    e.preventDefault();
+    setPasswordMessage(null);
+    setPasswordError(null);
+
+    if (!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+      setPasswordError("Please complete all password fields.");
+      return;
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError("New passwords do not match.");
+      return;
+    }
+
+    if (passwordForm.newPassword.length < 8) {
+      setPasswordError("Please use at least 8 characters for your new password.");
+      return;
+    }
+
+    try {
+      setPasswordBusy(true);
+
+      await apiFetch("/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          current_password: passwordForm.currentPassword,
+          new_password: passwordForm.newPassword,
+        }),
+      });
+
+      setPasswordForm({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+      setPasswordMessage("Password updated successfully.");
+      setPasswordModalOpen(false);
+    } catch (err: any) {
+      setPasswordError(err?.message || "Could not update password.");
+    } finally {
+      setPasswordBusy(false);
+    }
+  }
+
   useEffect(() => {
-    // Refresh meta now
     setMeta(loadMeta());
 
-    // Refresh meta again when returning to this tab (common: teacher edits colours on dashboard then comes back)
     const onFocus = () => setMeta(loadMeta());
-
-    // Refresh meta if another tab updates it (or if dashboard updates and triggers storage event)
-    const onStorage = (e: StorageEvent) => {
-      // If you want to be extra strict, you can check e.key === metaKeyForUser()
-      setMeta(loadMeta());
-    };
+    const onStorage = () => setMeta(loadMeta());
 
     window.addEventListener("focus", onFocus);
     window.addEventListener("storage", onStorage);
@@ -518,7 +812,6 @@ export default function TeacherAdminPage() {
 
         setClasses(cleaned);
 
-        // ✅ Backfill missing colour meta for any class ids not yet stored (old classes)
         const currentMeta = loadMeta();
         let changed = false;
 
@@ -534,7 +827,6 @@ export default function TeacherAdminPage() {
         }
 
         if (changed) {
-          // Save + refresh state
           localStorage.setItem(metaKeyForUser(), JSON.stringify(currentMeta));
           setMeta(currentMeta);
         }
@@ -563,7 +855,6 @@ export default function TeacherAdminPage() {
   useEffect(() => {
     if (classes.length === 0) return;
 
-    // Build a fast lookup from label -> id
     const labelToId = new Map<string, number>();
     for (const c of classes) {
       const label = `${c.name}${c.subject ? ` — ${c.subject}` : ""}`.trim();
@@ -572,7 +863,6 @@ export default function TeacherAdminPage() {
 
     let changed = false;
 
-    // Create a deep-ish copy only if we actually change something
     const next: StoredAdminState = {
       ...state,
       schedule: { ...state.schedule },
@@ -581,14 +871,12 @@ export default function TeacherAdminPage() {
     for (const day of DAYS) {
       const daySch = state.schedule[day];
       let dayChanged = false;
-
       const nextEntries = { ...daySch.entries };
 
       for (const slot of daySch.slots) {
         const e = nextEntries[slot.id];
         if (!e) continue;
 
-        // If old saved entry has label but no id, recover id from label
         if ((e.classId == null || e.classId === 0) && e.classLabel?.trim()) {
           const recovered = labelToId.get(e.classLabel.trim());
           if (recovered) {
@@ -605,31 +893,25 @@ export default function TeacherAdminPage() {
     }
 
     if (changed) {
-      // Save once — this will permanently fix "old" timetable data
       saveState({ ...next, updatedAt: new Date().toISOString() });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classes]);
 
-  function tileBgForClassId(classId: number | null) {
-    if (!classId) return "bg-white";
-    const m = meta[String(classId)];
-    // If meta missing, fall back to Dashboard-style deterministic colour (not grey)
-    return m?.color ?? defaultBgForClassId(classId);
-  }
-
   const card =
     "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)] print:shadow-none";
   const btn =
     "rounded-full border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50";
+  const btnPrimary =
+    "rounded-full border-2 border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700";
   const input =
     "w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm";
 
-  // When dayView changes and today exists, keep it aligned unless user chose otherwise
   useEffect(() => {
     if (today) setDayView(today);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [today]);
+
+  const setupIncomplete = !state.timetableConfig.setupComplete;
 
   return (
     <div className="min-h-screen bg-emerald-100 p-6 print:bg-white print:p-0">
@@ -637,16 +919,9 @@ export default function TeacherAdminPage() {
         {`
           @media print {
             @page { size: A4 landscape; margin: 10mm; }
-
-            /* Hide everything by default */
             body * { visibility: hidden; }
-
-            /* Show timetable only */
             #timetablePrint, #timetablePrint * { visibility: visible; }
-
-            /* Place timetable at top-left */
             #timetablePrint { position: absolute; left: 0; top: 0; width: 100%; }
-
             .print-hide { display: none !important; }
             .print-tight { padding: 0 !important; }
           }
@@ -654,7 +929,24 @@ export default function TeacherAdminPage() {
       </style>
 
       <div className="mx-auto max-w-7xl px-4 py-6 print:px-0 print:py-0">
-        {/* Header + Profile strip (hidden in print via visibility rule above anyway) */}
+        {setupIncomplete && (
+          <div className="mb-4 rounded-[28px] border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 via-teal-50 to-cyan-50 p-5 shadow-sm print-hide">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="text-xl font-extrabold tracking-tight text-slate-900">
+                  Finish your timetable setup
+                </div>
+                <div className="mt-1 text-sm text-slate-700">
+                  Before you use Teacher Admin properly, set your school day, period lengths, breaks, lunch and supervision slots.
+                </div>
+              </div>
+              <button type="button" className={btnPrimary} onClick={openSetupWizard}>
+                Set up timetable now
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className={`${card} p-4 print:border-0 print:shadow-none print-tight`}>
           <div className="flex flex-wrap items-start justify-between gap-3 print-hide">
             <div>
@@ -662,15 +954,13 @@ export default function TeacherAdminPage() {
                 Teacher Admin
               </div>
               <div className="text-sm text-slate-600">
-                Quick reference timetable • editable profile • print-ready
+                Quick reference timetable • editable profile • secure teacher settings
               </div>
             </div>
 
             {isSuperAdmin && (
               <div className="mt-6 rounded-3xl border-2 border-purple-300 bg-purple-50 p-4 shadow-sm">
-                <div className="text-lg font-bold text-purple-900">
-                  Super Admin Controls
-                </div>
+                <div className="text-lg font-bold text-purple-900">Super Admin Controls</div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
@@ -693,6 +983,7 @@ export default function TeacherAdminPage() {
                 </div>
               </div>
             )}
+
             <div className="flex flex-wrap items-center gap-2">
               <button className={btn} type="button" onClick={() => navigate("/")}>
                 Back to Dashboard
@@ -788,9 +1079,54 @@ export default function TeacherAdminPage() {
           </div>
         </div>
 
-        {/* Main layout */}
         <div className="mt-6 grid gap-4 md:grid-cols-12 print:mt-0">
-          {/* Timetable full width */}
+          <div className="md:col-span-12 print-hide">
+            <div className={`${card} p-4`}>
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-lg font-extrabold tracking-tight text-slate-900">
+                    Teacher settings
+                  </div>
+                  <div className="text-sm text-slate-600">
+                    Adjust your timetable structure or update your password without cluttering the page.
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={btn}
+                    onClick={() => {
+                      setSetupDraft(structuredClone(state.timetableConfig));
+                      setSetupOpen(true);
+                    }}
+                  >
+                    Timetable settings
+                  </button>
+
+                  <button
+                    type="button"
+                    className={btn}
+                    onClick={() => {
+                      setPasswordError(null);
+                      setPasswordMessage(null);
+                      setPasswordModalOpen(true);
+                    }}
+                  >
+                    Change password
+                  </button>
+                </div>
+              </div>
+
+              {!state.timetableConfig.setupComplete && (
+                <div className="mt-4 rounded-2xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                  Your timetable setup is not complete yet. You can finish it now or come back later from
+                  <span className="font-semibold"> Timetable settings</span>.
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="md:col-span-12">
             <div className={`${card} p-4 print-tight`}>
               <div className="flex items-center justify-between print-hide">
@@ -807,29 +1143,22 @@ export default function TeacherAdminPage() {
                   <button className={btn} type="button" onClick={autoRankUnusedToday}>
                     Auto-rank unused (today)
                   </button>
-                  <button
-                    className={btn}
-                    type="button"
-                    onClick={() => {
-                      touch(makeDefaultState());
-                      setMeta(loadMeta());
-                    }}
-                  >
-                    Reset template
+                  <button className={btn} type="button" onClick={resetTimetableFromSettings}>
+                    Reset timetable
                   </button>
                 </div>
               </div>
 
-              {/* Mobile day tabs */}
               <div className="mt-3 flex flex-wrap gap-2 md:hidden print-hide">
                 {DAYS.map((d) => (
                   <button
                     key={d}
                     type="button"
-                    className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${dayView === d
-                      ? "border-emerald-400 bg-emerald-50 text-emerald-900"
-                      : "border-slate-200 bg-white text-slate-800"
-                      }`}
+                    className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${
+                      dayView === d
+                        ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                        : "border-slate-200 bg-white text-slate-800"
+                    }`}
                     onClick={() => setDayView(d)}
                   >
                     {fmtDay(d)}
@@ -838,15 +1167,12 @@ export default function TeacherAdminPage() {
                 ))}
               </div>
 
-              {/* Timetable */}
               <div
                 id="timetablePrint"
                 className="mt-4 rounded-3xl border-2 border-slate-200 bg-white print:border-0 print:mt-0"
               >
-                {/* ✅ Desktop table */}
                 <div className="hidden md:block">
                   <div className="md:min-w-[980px]">
-                    {/* Header row */}
                     <div className="grid grid-cols-6 border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700">
                       <div className="p-3">Time</div>
                       {DAYS.map((d) => (
@@ -861,7 +1187,9 @@ export default function TeacherAdminPage() {
                       <div key={rowSlot.id} className="grid grid-cols-6 border-b border-slate-100 last:border-b-0">
                         <div className="p-3 text-xs text-slate-600">
                           <div className="font-semibold text-slate-700">{rowSlot.label}</div>
-                          <div>{rowSlot.start}–{rowSlot.end}</div>
+                          <div>
+                            {rowSlot.start}–{rowSlot.end}
+                          </div>
                         </div>
 
                         {DAYS.map((day) => (
@@ -870,11 +1198,9 @@ export default function TeacherAdminPage() {
                             day={day}
                             rowSlotId={rowSlot.id}
                             state={state}
-                            meta={meta}
                             tileBgForClassId={tileBgForClassId}
                             setEditing={setEditing}
                             slotIsActive={slotIsActive}
-                            today={today}
                           />
                         ))}
                       </div>
@@ -882,12 +1208,10 @@ export default function TeacherAdminPage() {
                   </div>
                 </div>
 
-                {/* ✅ Mobile: “Today / selected day” as a stacked list (super glanceable) */}
                 <div className="md:hidden">
                   <div className="divide-y divide-slate-100">
                     {state.schedule[dayView].slots.map((slot) => (
                       <div key={slot.id} className="px-3 py-3">
-                        {/* Small time/label strip */}
                         <div className="mb-2 flex items-center justify-between">
                           <div className="text-xs font-bold text-slate-700">
                             {slot.label}
@@ -903,17 +1227,14 @@ export default function TeacherAdminPage() {
                           )}
                         </div>
 
-                        {/* The actual tile (reuse your existing renderer) */}
                         <div className="-mx-1">
                           <DayCell
                             day={dayView}
                             rowSlotId={slot.id}
                             state={state}
-                            meta={meta}
                             tileBgForClassId={tileBgForClassId}
                             setEditing={setEditing}
                             slotIsActive={slotIsActive}
-                            today={today}
                           />
                         </div>
                       </div>
@@ -923,12 +1244,11 @@ export default function TeacherAdminPage() {
               </div>
 
               <div className="mt-3 text-xs text-slate-500 print-hide">
-                Export tip: Click <b>Export PDF</b> → choose <b>Save as PDF</b> in the printer dropdown.
+                Export tip: Click <b>Print Timetable</b> to download a clean PDF.
               </div>
             </div>
           </div>
 
-          {/* Class list moved to bottom (full width) */}
           <div className="md:col-span-12 print-hide">
             <div className={`${card} p-4`}>
               <div className="flex items-start justify-between gap-3">
@@ -971,11 +1291,8 @@ export default function TeacherAdminPage() {
             </div>
           </div>
         </div>
-
-        {/* Print footer (won’t show now because we print timetable only) */}
       </div>
 
-      {/* EDIT MODAL */}
       {editing && editingSlot && editingEntry && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-4 md:items-center print-hide">
           <div className="w-full max-w-xl rounded-3xl border-2 border-slate-200 bg-white shadow-xl">
@@ -984,9 +1301,7 @@ export default function TeacherAdminPage() {
                 <div className="text-sm font-extrabold text-slate-900">
                   {fmtDay(editing.day)} • {editingSlot.label} ({editingSlot.start}–{editingSlot.end})
                 </div>
-                <div className="text-xs text-slate-600">
-                  Edit this slot. Changes save instantly.
-                </div>
+                <div className="text-xs text-slate-600">Edit this slot. Changes save instantly.</div>
               </div>
 
               <button
@@ -999,7 +1314,6 @@ export default function TeacherAdminPage() {
             </div>
 
             <div className="p-4">
-              {/* PERIOD EDITOR */}
               {editingSlot.kind === "period" && (
                 <>
                   <div className="grid gap-3 md:grid-cols-2">
@@ -1038,9 +1352,7 @@ export default function TeacherAdminPage() {
                       <input
                         className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                         value={editingEntry.room}
-                        onChange={(e) =>
-                          updateEntry(editing.day, editing.slotId, { room: e.target.value })
-                        }
+                        onChange={(e) => updateEntry(editing.day, editing.slotId, { room: e.target.value })}
                         placeholder="e.g. Lab 1"
                       />
                     </label>
@@ -1075,7 +1387,6 @@ export default function TeacherAdminPage() {
                 </>
               )}
 
-              {/* BREAK / LUNCH EDITOR */}
               {(editingSlot.kind === "break" || editingSlot.kind === "lunch") && (
                 <>
                   <label className="text-xs font-bold text-slate-600">
@@ -1083,9 +1394,7 @@ export default function TeacherAdminPage() {
                     <input
                       className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                       value={editingEntry.dutyNote}
-                      onChange={(e) =>
-                        updateEntry(editing.day, editing.slotId, { dutyNote: e.target.value })
-                      }
+                      onChange={(e) => updateEntry(editing.day, editing.slotId, { dutyNote: e.target.value })}
                       placeholder="e.g. Lunch supervision / Corridor duty / Yard duty"
                     />
                   </label>
@@ -1097,9 +1406,7 @@ export default function TeacherAdminPage() {
                         type="time"
                         className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                         value={editingSlot.start}
-                        onChange={(e) =>
-                          updateSlotTime(editing.day, editing.slotId, "start", e.target.value)
-                        }
+                        onChange={(e) => updateSlotTime(editing.day, editing.slotId, "start", e.target.value)}
                       />
                     </label>
 
@@ -1109,9 +1416,7 @@ export default function TeacherAdminPage() {
                         type="time"
                         className="mt-1 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                         value={editingSlot.end}
-                        onChange={(e) =>
-                          updateSlotTime(editing.day, editing.slotId, "end", e.target.value)
-                        }
+                        onChange={(e) => updateSlotTime(editing.day, editing.slotId, "end", e.target.value)}
                       />
                     </label>
                   </div>
@@ -1131,29 +1436,418 @@ export default function TeacherAdminPage() {
           </div>
         </div>
       )}
+
+      {passwordModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 print-hide">
+          <div className="w-full max-w-lg rounded-[32px] border-2 border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-5">
+              <div>
+                <div className="text-2xl font-extrabold tracking-tight text-slate-900">
+                  Change password
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Update your password securely from Teacher Admin.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className={btn}
+                onClick={() => setPasswordModalOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <form className="space-y-3 p-5" onSubmit={submitPasswordChange}>
+              <label className="block text-xs font-bold text-slate-600">
+                Current password
+                <input
+                  type="password"
+                  className={`${input} mt-1`}
+                  value={passwordForm.currentPassword}
+                  onChange={(e) =>
+                    setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="block text-xs font-bold text-slate-600">
+                New password
+                <input
+                  type="password"
+                  className={`${input} mt-1`}
+                  value={passwordForm.newPassword}
+                  onChange={(e) =>
+                    setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="block text-xs font-bold text-slate-600">
+                Confirm new password
+                <input
+                  type="password"
+                  className={`${input} mt-1`}
+                  value={passwordForm.confirmPassword}
+                  onChange={(e) =>
+                    setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))
+                  }
+                />
+              </label>
+
+              {passwordError && (
+                <div className="rounded-2xl border-2 border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                  {passwordError}
+                </div>
+              )}
+
+              {passwordMessage && (
+                <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+                  {passwordMessage}
+                </div>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  className={btn}
+                  onClick={() => setPasswordModalOpen(false)}
+                >
+                  Cancel
+                </button>
+
+                <button type="submit" className={btnPrimary} disabled={passwordBusy}>
+                  {passwordBusy ? "Updating..." : "Update password"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {setupOpen && (
+        <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/40 p-4 print-hide md:items-center">
+          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border-2 border-slate-200 bg-white shadow-2xl">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 p-5">
+              <div>
+                <div className="text-2xl font-extrabold tracking-tight text-slate-900">
+                  Timetable settings
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Tell Elume how your school day works. You can save this now or come back later.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className={btn}
+                onClick={() => {
+                  setSetupOpen(false);
+                  setSetupPromptDismissed(true);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              <div className="mb-4 rounded-3xl border-2 border-emerald-200 bg-emerald-50 p-4">
+                <label className="flex items-center gap-3 text-sm font-semibold text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={setupDraft.sameForAllDays}
+                    onChange={(e) =>
+                      setSetupDraft((prev) => ({ ...prev, sameForAllDays: e.target.checked }))
+                    }
+                  />
+                  Use the same timetable structure for all 5 days
+                </label>
+              </div>
+
+              <div className="space-y-4">
+                {(setupDraft.sameForAllDays ? (["Mon"] as DayKey[]) : DAYS).map((day) => {
+                  const cfg = setupDraft.days[day];
+                  return (
+                    <div key={day} className="rounded-[28px] border-2 border-slate-200 bg-slate-50 p-4">
+                      <div className="mb-4 text-lg font-extrabold text-slate-900">
+                        {setupDraft.sameForAllDays ? "School day settings" : fmtDay(day)}
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-12">
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            What time does your day start?
+                            <input
+                              type="time"
+                              className={`${input} mt-1`}
+                              value={cfg.startTime}
+                              onChange={(e) =>
+                                setSetupDraft((prev) => updateSetupDay(prev, day, { startTime: e.target.value }))
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            How many classes?
+                            <input
+                              type="number"
+                              min={1}
+                              max={12}
+                              className={`${input} mt-1`}
+                              value={cfg.periods}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    periods: Math.max(1, Math.trunc(Number(e.target.value || 1))),
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            Class length (mins)
+                            <input
+                              type="number"
+                              min={20}
+                              max={120}
+                              className={`${input} mt-1`}
+                              value={cfg.classLengthMinutes}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    classLengthMinutes: Math.max(20, Math.trunc(Number(e.target.value || 20))),
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            Small break after class
+                            <input
+                              type="number"
+                              min={1}
+                              max={cfg.periods}
+                              className={`${input} mt-1`}
+                              value={cfg.smallBreakAfterPeriod}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    smallBreakAfterPeriod: Math.min(
+                                      Math.max(1, Math.trunc(Number(e.target.value || 1))),
+                                      cfg.periods
+                                    ),
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            Small break start
+                            <input
+                              type="time"
+                              className={`${input} mt-1`}
+                              value={cfg.smallBreakStart}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    smallBreakStart: e.target.value,
+                                    smallBreakEnabled: true,
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            Small break end
+                            <input
+                              type="time"
+                              className={`${input} mt-1`}
+                              value={cfg.smallBreakEnd}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    smallBreakEnd: e.target.value,
+                                    smallBreakEnabled: true,
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            Lunch after class
+                            <input
+                              type="number"
+                              min={1}
+                              max={cfg.periods}
+                              className={`${input} mt-1`}
+                              value={cfg.lunchAfterPeriod}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    lunchAfterPeriod: Math.min(
+                                      Math.max(1, Math.trunc(Number(e.target.value || 1))),
+                                      cfg.periods
+                                    ),
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            Lunch start
+                            <input
+                              type="time"
+                              className={`${input} mt-1`}
+                              value={cfg.lunchStart}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    lunchStart: e.target.value,
+                                    lunchEnabled: true,
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            Lunch end
+                            <input
+                              type="time"
+                              className={`${input} mt-1`}
+                              value={cfg.lunchEnd}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    lunchEnd: e.target.value,
+                                    lunchEnabled: true,
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            Before school supervision (mins)
+                            <input
+                              type="number"
+                              min={0}
+                              max={60}
+                              className={`${input} mt-1`}
+                              value={cfg.morningSupervisionMinutes}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    morningSupervisionMinutes: Math.max(
+                                      0,
+                                      Math.trunc(Number(e.target.value || 0))
+                                    ),
+                                    includeMorningSupervision: Number(e.target.value || 0) > 0,
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="text-xs font-bold text-slate-600">
+                            After school supervision (mins)
+                            <input
+                              type="number"
+                              min={0}
+                              max={60}
+                              className={`${input} mt-1`}
+                              value={cfg.afternoonSupervisionMinutes}
+                              onChange={(e) =>
+                                setSetupDraft((prev) =>
+                                  updateSetupDay(prev, day, {
+                                    afternoonSupervisionMinutes: Math.max(
+                                      0,
+                                      Math.trunc(Number(e.target.value || 0))
+                                    ),
+                                    includeAfternoonSupervision: Number(e.target.value || 0) > 0,
+                                  })
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="sticky bottom-0 mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white pt-4">
+                <div className="text-sm text-slate-600">
+                  You can come back and edit these settings later from Teacher Admin.
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={btn}
+                    onClick={() => {
+                      setSetupOpen(false);
+                      setSetupPromptDismissed(true);
+                    }}
+                  >
+                    Skip for now
+                  </button>
+
+                  <button type="button" className={btnPrimary} onClick={applySetupDraft}>
+                    Save timetable settings
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/** Desktop cell component */
 function DayCell({
   day,
   rowSlotId,
   state,
-  meta,
   tileBgForClassId,
   setEditing,
   slotIsActive,
-  today,
 }: {
   day: DayKey;
   rowSlotId: string;
   state: StoredAdminState;
-  meta: MetaStore;
   tileBgForClassId: (id: number | null) => string;
   setEditing: React.Dispatch<React.SetStateAction<{ day: DayKey; slotId: string } | null>>;
   slotIsActive: (d: DayKey, s: Slot) => boolean;
-  today: DayKey | null;
 }) {
   const daySch = state.schedule[day];
   const slot = daySch.slots.find((s) => s.id === rowSlotId);
@@ -1164,20 +1858,16 @@ function DayCell({
   const entry = daySch.entries[slot.id] ?? defaultEntry();
   const isActive = slotIsActive(day, slot);
 
-  // Period tiles look like dashboard; break/lunch are slim and calm.
   if (slot.kind === "period") {
     const hasClass = !!entry.classId || !!entry.classLabel;
     const bg = hasClass ? tileBgForClassId(entry.classId) : "bg-white";
     const tc = hasClass ? tileTextClass(bg) : "text-slate-900";
 
-    const tile =
-      hasClass
-        ? `border-[4px] border-black ${bg} ${tc} shadow-[0_4px_0_rgba(15,23,42,0.16)]`
-        : "border-2 border-slate-200 bg-white text-slate-900";
+    const tile = hasClass
+      ? `border-[4px] border-black ${bg} ${tc} shadow-[0_4px_0_rgba(15,23,42,0.16)]`
+      : "border-2 border-slate-200 bg-white text-slate-900";
 
     const showRank = !hasClass && (entry.supervisionRank ?? 0) > 0;
-
-    // Split label into two lines: "Class name" and "Subject"
     const parts = (entry.classLabel || "").split(" — ");
     const clsName = parts[0] || "";
     const subj = parts[1] || "";
@@ -1187,8 +1877,7 @@ function DayCell({
         <button
           type="button"
           onClick={() => setEditing({ day, slotId: slot.id })}
-          className={`w-full text-left rounded-3xl p-3 ${tile} ${isActive ? "ring-2 ring-emerald-300" : ""
-            }`}
+          className={`w-full rounded-3xl p-3 text-left ${tile} ${isActive ? "ring-2 ring-emerald-300" : ""}`}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -1198,12 +1887,16 @@ function DayCell({
                 </div>
               )}
 
-              <div className="text-lg font-extrabold leading-tight truncate">
+              <div className="truncate text-lg font-extrabold leading-tight">
                 {hasClass ? clsName : "Free"}
               </div>
 
               {hasClass && subj && (
-                <div className={`text-sm font-semibold leading-tight truncate ${tc === "text-white" ? "text-white/90" : "text-slate-700"}`}>
+                <div
+                  className={`truncate text-sm font-semibold leading-tight ${
+                    tc === "text-white" ? "text-white/90" : "text-slate-700"
+                  }`}
+                >
                   {subj}
                 </div>
               )}
@@ -1225,19 +1918,19 @@ function DayCell({
     );
   }
 
-  // Break/Lunch: small, not “tile-y”
   const note = entry.dutyNote?.trim();
   return (
     <div className="p-3">
       <button
         type="button"
         onClick={() => setEditing({ day, slotId: slot.id })}
-        className={`w-full text-left rounded-2xl border-2 p-2 ${note
-          ? "border-red-400 bg-red-50"
-          : slot.kind === "lunch"
-            ? "border-amber-200 bg-amber-50"
-            : "border-slate-200 bg-slate-50"
-          } ${isActive ? "ring-2 ring-emerald-300" : ""}`}
+        className={`w-full rounded-2xl border-2 p-2 text-left ${
+          note
+            ? "border-red-400 bg-red-50"
+            : slot.kind === "lunch"
+              ? "border-amber-200 bg-amber-50"
+              : "border-slate-200 bg-slate-50"
+        } ${isActive ? "ring-2 ring-emerald-300" : ""}`}
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -1250,7 +1943,7 @@ function DayCell({
             <div className="text-[11px] text-slate-600">
               {slot.start}–{slot.end}
             </div>
-            <div className="mt-1 text-[11px] font-semibold text-slate-800 truncate">
+            <div className="mt-1 truncate text-[11px] font-semibold text-slate-800">
               {note ? note : "No duty"}
             </div>
           </div>
@@ -1258,9 +1951,4 @@ function DayCell({
       </button>
     </div>
   );
-}
-
-/** Mobile cell wrapper (same rendering but already inside correct column span) */
-function MobileDayCell(props: React.ComponentProps<typeof DayCell>) {
-  return <DayCell {...props} />;
 }

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { apiFetch } from "./api";
 
 const API_BASE = "/api";
 
@@ -166,8 +167,7 @@ export default function ClassAdminPage() {
     useEffect(() => {
         if (!validClassId) return;
 
-        fetch(`${API_BASE}/student-access/${classId}`)
-            .then((r) => r.json())
+        apiFetch(`${API_BASE}/student-access/${classId}`)
             .then((data) => setStudentToken(data.token))
             .catch(() => { });
     }, [classId, validClassId]);
@@ -212,16 +212,9 @@ export default function ClassAdminPage() {
         setHistoryLoading((p) => ({ ...p, [studentId]: true }));
 
         try {
-            const token = localStorage.getItem("elume_token") || "";
-
-            const res = await fetch(`${API_BASE}/classes/${classId}/students/${studentId}/history`, {
-                headers: {
-                    Authorization: token ? `Bearer ${token}` : "",
-                },
-            });
-
-            if (!res.ok) throw new Error(await res.text());
-            const data: StudentHistoryResp = await res.json();
+            const data = (await apiFetch(
+                `${API_BASE}/classes/${classId}/students/${studentId}/history`
+            )) as StudentHistoryResp;
 
             setHistoryCache((p) => ({ ...p, [studentId]: data }));
         } catch {
@@ -242,16 +235,10 @@ export default function ClassAdminPage() {
         setError(null);
 
         try {
-            const [sr, tr] = await Promise.all([
-                fetch(`${API_BASE}/classes/${classId}/students`),
-                fetch(`${API_BASE}/classes/${classId}/assessments`),
+            const [sdata, tdata] = await Promise.all([
+                apiFetch(`${API_BASE}/classes/${classId}/students`),
+                apiFetch(`${API_BASE}/classes/${classId}/assessments`),
             ]);
-
-            if (!sr.ok) throw new Error(`Students fetch failed (${sr.status})`);
-            if (!tr.ok) throw new Error(`Tests fetch failed (${tr.status})`);
-
-            const sdata = await sr.json();
-            const tdata = await tr.json();
 
             setStudents(Array.isArray(sdata) ? sdata : []);
             setTests(Array.isArray(tdata) ? tdata : []);
@@ -265,11 +252,9 @@ export default function ClassAdminPage() {
     }
 
     async function generateStudentLink() {
-        const r = await fetch(`${API_BASE}/student-access/${classId}`, {
+        const data = await apiFetch(`${API_BASE}/student-access/${classId}`, {
             method: "POST",
         });
-
-        const data = await r.json();
         setStudentToken(data.token);
     }
 
@@ -279,13 +264,10 @@ export default function ClassAdminPage() {
 
         try {
             setError(null);
-            const r = await fetch(`${API_BASE}/classes/${classId}/students`, {
+            const created = await apiFetch(`${API_BASE}/classes/${classId}/students`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ first_name: fn, notes: notes.trim() }),
             });
-            if (!r.ok) throw new Error(`Create student failed (${r.status})`);
-            const created = await r.json();
             setStudents((prev) => [created, ...prev]);
             setFirstName("");
             setNotes("");
@@ -306,13 +288,10 @@ export default function ClassAdminPage() {
 
         try {
             setError(null);
-            const r = await fetch(`${API_BASE}/classes/${classId}/students/bulk`, {
+            const created = await apiFetch(`${API_BASE}/classes/${classId}/students/bulk`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ names }),
             });
-            if (!r.ok) throw new Error(`Bulk add failed (${r.status})`);
-            const created = await r.json();
             if (Array.isArray(created) && created.length) {
                 setStudents((prev) => [...created, ...prev]);
             }
@@ -325,13 +304,10 @@ export default function ClassAdminPage() {
     async function toggleActive(studentId: number, active: boolean) {
         try {
             setError(null);
-            const r = await fetch(`${API_BASE}/students/${studentId}`, {
+            const updated = await apiFetch(`${API_BASE}/students/${studentId}`, {
                 method: "PUT",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ active }),
             });
-            if (!r.ok) throw new Error(`Update student failed (${r.status})`);
-            const updated = await r.json();
             setStudents((prev) => prev.map((s) => (s.id === studentId ? updated : s)));
         } catch (e: any) {
             setError(e?.message || "Failed to update student");
@@ -345,17 +321,13 @@ export default function ClassAdminPage() {
 
         try {
             setError(null);
-            const r = await fetch(`${API_BASE}/classes/${classId}/assessments`, {
+            const created = await apiFetch(`${API_BASE}/classes/${classId}/assessments`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     title,
                     assessment_date: newTestDate.trim() || null,
                 }),
             });
-
-            if (!r.ok) throw new Error(`Create test failed (${r.status})`);
-            const created = await r.json();
 
             setTests((prev) => [created, ...prev]);
 
@@ -384,18 +356,13 @@ export default function ClassAdminPage() {
             setSavingEditTest(true);
             setError(null);
 
-            const r = await fetch(`${API_BASE}/assessments/${editingTest.id}`, {
+            const updated = (await apiFetch(`${API_BASE}/assessments/${editingTest.id}`, {
                 method: "PUT",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     title,
                     assessment_date: editTestDate.trim() || null,
                 }),
-            });
-
-            if (!r.ok) throw new Error(`Update test failed (${r.status})`);
-
-            const updated: Assessment = await r.json();
+            })) as Assessment;
 
             setTests((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
 
@@ -426,11 +393,9 @@ export default function ClassAdminPage() {
         try {
             setError(null);
 
-            const r = await fetch(`${API_BASE}/assessments/${assessment.id}`, {
+            await apiFetch(`${API_BASE}/assessments/${assessment.id}`, {
                 method: "DELETE",
             });
-
-            if (!r.ok) throw new Error(`Delete test failed (${r.status})`);
 
             setTests((prev) => prev.filter((t) => t.id !== assessment.id));
 
@@ -454,9 +419,7 @@ export default function ClassAdminPage() {
     async function openResults(assessmentId: number) {
         try {
             setError(null);
-            const r = await fetch(`${API_BASE}/assessments/${assessmentId}/results`);
-            if (!r.ok) throw new Error(`Load results failed (${r.status})`);
-            const data = await r.json();
+            const data = await apiFetch(`${API_BASE}/assessments/${assessmentId}/results`);
 
             setSelectedAssessment(data.assessment);
             setResultRows(Array.isArray(data.results) ? data.results : []);
@@ -473,10 +436,9 @@ export default function ClassAdminPage() {
         setInsightsError(null);
 
         try {
-            const r = await fetch(`${API_BASE}/classes/${classId}/insights`);
-            if (!r.ok) throw new Error(`Insights fetch failed (${r.status})`);
-
-            const data = (await r.json()) as InsightsPayload;
+            const data = (await apiFetch(
+                `${API_BASE}/classes/${classId}/insights`
+            )) as InsightsPayload;
             setInsights(data);
         } catch (e: any) {
             setInsightsError(e?.message || "Failed to load insights");
@@ -555,13 +517,10 @@ export default function ClassAdminPage() {
                 })),
             };
 
-            const res = await fetch(`${API_BASE}/assessments/${selectedAssessment.id}/results`, {
+            await apiFetch(`${API_BASE}/assessments/${selectedAssessment.id}/results`, {
                 method: "PUT",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
-
-            if (!res.ok) throw new Error(`Save failed (${res.status})`);
 
             setShowResults(false);
             setSelectedAssessment(null);
@@ -634,16 +593,10 @@ export default function ClassAdminPage() {
             setGeneratingReportFor(studentId);
             setReportError(null);
 
-            const token = localStorage.getItem("elume_token") || "";
-
-            const res = await fetch(
+            const data = await apiFetch(
                 `${API_BASE}/classes/${classId}/students/${studentId}/generate-report-comment`,
                 {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                    },
                     body: JSON.stringify({
                         length: draft.length,
                         indicators: draft.indicators,
@@ -651,13 +604,6 @@ export default function ClassAdminPage() {
                     }),
                 }
             );
-
-            if (!res.ok) {
-                const txt = await res.text().catch(() => "");
-                throw new Error(txt || `Generate failed (${res.status})`);
-            }
-
-            const data = await res.json();
 
             updateReportDraft(studentId, {
                 comment: data.comment || "",

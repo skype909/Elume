@@ -1,6 +1,7 @@
 // frontend/src/ExamPapersPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { apiFetch } from "./api";
 
 const API_BASE = "/api";
 
@@ -160,31 +161,22 @@ export default function ExamPapersPage() {
 
     try {
       const [cRes, tRes, nRes] = await Promise.all([
-        fetch(`${API_BASE}/classes/${classId}`),
-        fetch(`${API_BASE}/topics/${classId}?kind=exam`),
-        fetch(`${API_BASE}/notes/${classId}?kind=exam`),
+        apiFetch(`${API_BASE}/classes/${classId}`).catch(() => null),
+        apiFetch(`${API_BASE}/topics/${classId}?kind=exam`),
+        apiFetch(`${API_BASE}/notes/${classId}?kind=exam`),
       ]);
 
       // Best-effort: don't break the page if class fetch fails
-      if (cRes.ok) {
-        const cData = await safeJson(cRes);
+      if (cRes) {
+        const cData = cRes;
         const name =
           (cData?.name ?? cData?.class_name ?? cData?.title ?? "").toString().trim();
         setClassName(name);
       } else {
         setClassName("");
       }
-      if (!tRes.ok) {
-        const j = await safeJson(tRes);
-        throw new Error(j?.detail || "Failed to load exam topics");
-      }
-      if (!nRes.ok) {
-        const j = await safeJson(nRes);
-        throw new Error(j?.detail || "Failed to load exam papers");
-      }
-
-      const tData = (await tRes.json()) as Topic[];
-      const nData = (await nRes.json()) as Paper[];
+      const tData = tRes as Topic[];
+      const nData = nRes as Paper[];
 
       setTopics(Array.isArray(tData) ? tData : []);
       setPapers(Array.isArray(nData) ? nData : []);
@@ -262,18 +254,10 @@ export default function ExamPapersPage() {
     const name = newTopicName.trim();
     if (!name) throw new Error("Please enter a topic name");
 
-    const res = await fetch(`${API_BASE}/topics?kind=exam`, {
+    const created = (await apiFetch(`${API_BASE}/topics?kind=exam`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ class_id: classId, name }),
-    });
-
-    if (!res.ok) {
-      const j = await safeJson(res);
-      throw new Error(j?.detail || "Failed to create topic");
-    }
-
-    const created: Topic = await res.json();
+    })) as Topic;
     return created.id;
   }
 
@@ -301,15 +285,10 @@ export default function ExamPapersPage() {
         form.append("topic_id", String(topicId));
         form.append("file", f);
 
-        const res = await fetch(`${API_BASE}/notes/upload`, {
+        await apiFetch(`${API_BASE}/notes/upload`, {
           method: "POST",
           body: form,
         });
-
-        if (!res.ok) {
-          const j = await safeJson(res);
-          throw new Error(j?.detail || `Upload failed for ${f.name}`);
-        }
       }
 
       setShowUpload(false);
@@ -330,11 +309,7 @@ export default function ExamPapersPage() {
 
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/notes/${noteId}`, { method: "DELETE" });
-      if (!res.ok) {
-        const j = await safeJson(res);
-        throw new Error(j?.detail || "Failed to delete file");
-      }
+      await apiFetch(`${API_BASE}/notes/${noteId}`, { method: "DELETE" });
       await loadAll();
     } catch (e: any) {
       setError(e?.message ?? "Delete failed");

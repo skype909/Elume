@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { apiFetch } from "./api";
 
 const API_BASE = "/api";
 
@@ -877,11 +878,7 @@ export default function WhiteBoardPage() {
   useEffect(() => {
     if (!classId) return;
 
-    fetch(`${API_BASE}/classes/${classId}`)
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to load class");
-        return r.json();
-      })
+    apiFetch(`${API_BASE}/classes/${classId}`)
       .then((data) => {
         const name = String(data?.name || "").trim();
         const subject = String(data?.subject || "").trim();
@@ -2225,15 +2222,10 @@ export default function WhiteBoardPage() {
       form.append("image", blob, "whiteboard.png");
       form.append("file", blob, "whiteboard.png");
 
-      const r = await fetch(`${API_BASE}/whiteboard/save`, {
+      await apiFetch(`${API_BASE}/whiteboard/save`, {
         method: "POST",
         body: form,
       });
-
-      if (!r.ok) {
-        const txt = await r.text().catch(() => "");
-        throw new Error(txt || `Save failed (${r.status})`);
-      }
 
       markClean();
       navigate(`/class/${classId}`);
@@ -2249,16 +2241,10 @@ export default function WhiteBoardPage() {
     setImportError(null);
 
     try {
-      const [notesRes, examRes] = await Promise.all([
-        fetch(`${API_BASE}/notes/${classId}?kind=notes`),
-        fetch(`${API_BASE}/notes/${classId}?kind=exam`),
-      ]);
-
-      if (!notesRes.ok) throw new Error(`Notes fetch failed (${notesRes.status})`);
-      if (!examRes.ok) throw new Error(`Exam fetch failed (${examRes.status})`);
-
-      const notes = (await notesRes.json()) as NoteItem[];
-      const exams = (await examRes.json()) as NoteItem[];
+      const [notes, exams] = (await Promise.all([
+        apiFetch(`${API_BASE}/notes/${classId}?kind=notes`),
+        apiFetch(`${API_BASE}/notes/${classId}?kind=exam`),
+      ])) as [NoteItem[], NoteItem[]];
 
       const combined: Array<{ kind: "notes" | "exam"; item: NoteItem }> = [
         ...notes.map((n) => ({ kind: "notes" as const, item: n })),

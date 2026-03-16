@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import elumeLogo from "./assets/ELogo2.png";
+import { apiFetch } from "./api";
 
 const API_BASE = "/api";
 
@@ -324,11 +325,7 @@ export default function LiveQuizPage() {
     setLoading(true);
     setLoadError(null);
 
-    fetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal })
-      .then(async (r) => {
-        if (!r.ok) throw new Error("Failed to load class.");
-        return (await r.json()) as ClassItem;
-      })
+    apiFetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal })
       .then((cls) => setClassInfo(cls))
       .catch((e: any) => setLoadError(e?.message || "Failed to load class."))
       .finally(() => setLoading(false));
@@ -451,18 +448,10 @@ export default function LiveQuizPage() {
     };
 
     try {
-      const res = await fetch(`${API_BASE}/livequiz/create`, {
+      const data = (await apiFetch(`${API_BASE}/livequiz/create`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Failed to create live session.");
-      }
-
-      const data = (await res.json()) as CreateSessionResponse;
+      })) as CreateSessionResponse;
       const code = data.session_code;
       const defaultJoin = `${window.location.origin}/#/join/${code}`;
       const url = data.join_url || defaultJoin;
@@ -516,13 +505,7 @@ export default function LiveQuizPage() {
   }, []);
 
   async function fetchResultsAndSave(code: string) {
-    const res = await fetch(`${API_BASE}/livequiz/${code}/results`);
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(txt || "Failed to fetch results.");
-    }
-
-    const results = (await res.json()) as LiveQuizResults;
+    const results = (await apiFetch(`${API_BASE}/livequiz/${code}/results`)) as LiveQuizResults;
 
     const item: LiveQuizHistoryItem = {
       saved_at: new Date().toISOString(),
@@ -562,11 +545,7 @@ export default function LiveQuizPage() {
     setStatusError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/livequiz/${session.code}/${action}`, { method: "POST" });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Control action failed.");
-      }
+      await apiFetch(`${API_BASE}/livequiz/${session.code}/${action}`, { method: "POST" });
 
       fetchStatus(session.code);
 

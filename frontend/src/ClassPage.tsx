@@ -11,6 +11,7 @@ import QRCode from "react-qr-code";
 import ELogo from "./assets/ELogo.png";
 import ELogo2 from "./assets/ELogo2.png";
 import { Settings, Timer, Bell, Play, Pause, RotateCcw } from "lucide-react";
+import { apiFetch } from "./api";
 
 
 
@@ -413,11 +414,7 @@ export default function ClassPage() {
     const controller = new AbortController();
     setLoadingStudents(true);
 
-    fetch(`${API_BASE}/classes/${classId}/students`, { signal: controller.signal })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`Students fetch failed (${r.status})`);
-        return (await r.json()) as StudentRow[];
-      })
+    apiFetch(`${API_BASE}/classes/${classId}/students`, { signal: controller.signal })
       .then((studs) => setStudents(Array.isArray(studs) ? studs : []))
       .catch((e) => {
         if (e?.name === "AbortError") return;
@@ -442,17 +439,12 @@ export default function ClassPage() {
     setLoadingClass(true);
     setError(null);
 
-    fetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal })
-      .then(async (r) => {
-        if (r.ok) return (await r.json()) as ClassItem;
-
-        // fallback: fetch list and find class
-        const fallback = await fetch(`${API_BASE}/classes`, { signal: controller.signal });
-        if (!fallback.ok) throw new Error(`Classes fetch failed (${fallback.status})`);
-
-        const list = (await fallback.json()) as ClassItem[];
+    apiFetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal })
+      .catch(async () => {
+        const list = (await apiFetch(`${API_BASE}/classes`, {
+          signal: controller.signal,
+        })) as ClassItem[];
         const found = list.find((c) => c.id === classId);
-
         if (!found) throw new Error(`Class fetch failed (404)`);
         return found;
       })
@@ -482,24 +474,18 @@ export default function ClassPage() {
     (async () => {
       try {
         // Try GET first (if your backend supports it)
-        let r = await fetch(`${API_BASE}/student-access/${classId}`, {
-          method: "GET",
-          headers: { Authorization: `Bearer ${getJwt()}` },
-          signal: controller.signal,
-        });
-
-        // If GET not available / fails, create via POST
-        if (!r.ok) {
-          r = await fetch(`${API_BASE}/student-access/${classId}`, {
+        let data: any;
+        try {
+          data = await apiFetch(`${API_BASE}/student-access/${classId}`, {
+            method: "GET",
+            signal: controller.signal,
+          });
+        } catch {
+          data = await apiFetch(`${API_BASE}/student-access/${classId}`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${getJwt()}` },
             signal: controller.signal,
           });
         }
-
-        if (!r.ok) throw new Error(`Student token request failed (${r.status})`);
-
-        const data = await r.json();
         const tok = data?.token ?? null;
 
         if (!tok) throw new Error("No token in response");
@@ -595,18 +581,15 @@ export default function ClassPage() {
     try {
       setError(null);
 
-      const r = await fetch(`${API_BASE}/posts/${postId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const updated = normalizePost(
+        await apiFetch(`${API_BASE}/posts/${postId}`, {
+          method: "PUT",
+          body: JSON.stringify({
           content: editContentDraft,
           links: editLinksDraft,
         }),
-      });
-
-      if (!r.ok) throw new Error(`Update failed (${r.status})`);
-
-      const updated = normalizePost(await r.json());
+        })
+      );
 
       setPosts((prev) => prev.map((p) => (p.id === postId ? updated : p)));
       cancelEditPost();
@@ -673,13 +656,9 @@ export default function ClassPage() {
           return;
         }
 
-        const r = await fetch(`${API_BASE}/calendar-events?class_id=${classId}`, {
+        const data = await apiFetch(`${API_BASE}/calendar-events?class_id=${classId}`, {
           signal: controller.signal,
         });
-
-        if (!r.ok) throw new Error(`Calendar events failed (${r.status})`);
-
-        const data = await r.json();
         const arr = Array.isArray(data) ? data : [];
         setCalendarEvents(arr);
       } catch (e: any) {
@@ -698,9 +677,7 @@ export default function ClassPage() {
   // --- fetch posts ---
   async function fetchPosts() {
     try {
-      const r = await fetch(`${API_BASE}/classes/${classId}/posts`);
-      if (!r.ok) throw new Error(`Posts fetch failed (${r.status})`);
-      const data = await r.json();
+      const data = await apiFetch(`${API_BASE}/classes/${classId}/posts`);
       const arr = Array.isArray(data) ? data : [];
       setPosts(arr.map(normalizePost));
     } catch (e: any) {
@@ -722,11 +699,7 @@ export default function ClassPage() {
     setLoadingPosts(true);
     setError(null);
 
-    fetch(`${API_BASE}/classes/${classId}/posts`, { signal: controller.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error(`Posts fetch failed (${r.status})`);
-        return r.json();
-      })
+    apiFetch(`${API_BASE}/classes/${classId}/posts`, { signal: controller.signal })
       .then((data: any) => {
         const arr = Array.isArray(data) ? data : [];
         setPosts(arr.map(normalizePost));
@@ -763,17 +736,10 @@ export default function ClassPage() {
       fd.append("files", f);
     }
 
-    fetch(`${API_BASE}/classes/${classId}/posts`, {
+    apiFetch(`${API_BASE}/classes/${classId}/posts`, {
       method: "POST",
       body: fd,
     })
-      .then(async (r) => {
-        if (!r.ok) {
-          const msg = await r.text().catch(() => "");
-          throw new Error(msg || `Post failed (${r.status})`);
-        }
-        return r.json();
-      })
       .then((created: any) => {
         setPosts((prev) => [normalizePost(created), ...prev]);
         setContent("");
@@ -789,11 +755,9 @@ export default function ClassPage() {
     try {
       setError(null);
 
-      const r = await fetch(`${API_BASE}/posts/${postId}`, {
+      await apiFetch(`${API_BASE}/posts/${postId}`, {
         method: "DELETE",
       });
-
-      if (!r.ok) throw new Error(`Delete failed (${r.status})`);
 
       // remove from UI immediately
       setPosts((prev) => prev.filter((p) => p.id !== postId));
@@ -1972,18 +1936,10 @@ export default function ClassPage() {
                         if (!classInfo) return;
                         const payload = { name: editName, subject: editSubject };
 
-                        const r = await fetch(`${API_BASE}/classes/${classInfo.id}`, {
+                        const updated = await apiFetch(`${API_BASE}/classes/${classInfo.id}`, {
                           method: "PUT",
-                          headers: { "Content-Type": "application/json" },
                           body: JSON.stringify(payload),
                         });
-
-                        if (!r.ok) {
-                          alert("Could not save class changes.");
-                          return;
-                        }
-
-                        const updated = await r.json();
                         setClassInfo(updated);
 
                         // Persist UI-only fields (teacher/group/room) per class

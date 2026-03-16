@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
+import { apiFetch } from "./api";
 
 const API_BASE = "/api";
 
@@ -205,14 +206,8 @@ export default function SeatingPlanPage() {
         setError(null);
 
         Promise.all([
-            fetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal }).then(async (r) => {
-                if (!r.ok) throw new Error("Failed to load class.");
-                return (await r.json()) as ClassItem;
-            }),
-            fetch(`${API_BASE}/classes/${classId}/students`, { signal: controller.signal }).then(async (r) => {
-                if (!r.ok) throw new Error("Failed to load students.");
-                return (await r.json()) as StudentRow[];
-            }),
+            apiFetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal }) as Promise<ClassItem>,
+            apiFetch(`${API_BASE}/classes/${classId}/students`, { signal: controller.signal }) as Promise<StudentRow[]>,
         ])
             .then(([cls, studs]) => {
                 setClassInfo(cls);

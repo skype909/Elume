@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import ELogo2 from "./assets/ELogo2.png";
+import { apiFetch } from "./api";
 
 const API_BASE = "/api";
 
@@ -40,10 +41,7 @@ export default function StudentReportPage() {
                 setLoading(true);
                 setError(null);
 
-                const res = await fetch(`${API_BASE}/classes/${id}/students/${studentId}/report-data`);
-                if (!res.ok) throw new Error(`Failed to load student report (${res.status})`);
-
-                const json = await res.json();
+                const json = await apiFetch(`${API_BASE}/classes/${id}/students/${studentId}/report-data`);
                 if (!cancelled) setData(json);
             } catch (e: any) {
                 if (!cancelled) setError(e?.message || "Failed to load student report");

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import elumeLogo from "./assets/ELogo2.png";
 import CollabBoard from "./CollabBoard";
+import { apiFetch } from "./api";
 
 const API_BASE = "/api";
 
@@ -376,16 +377,8 @@ export default function CollaborationPage() {
 
     async function fetchParticipants(code: string) {
         try {
-            const res = await fetch(`${API_BASE}/collab/${code}/participants`);
-            if (!res.ok) {
-                if (res.status === 404) {
-                    throw new Error("No session yet.");
-                }
-                throw new Error("Participants unavailable.");
-            }
-
-            const data = await res.json();
-            const list = (data?.participants || []) as CollabParticipantApi[];
+        const data = await apiFetch(`${API_BASE}/collab/${code}/participants`);
+        const list = (data?.participants || []) as CollabParticipantApi[];
             setParticipants(
                 list.map((p) => ({
                     id: String(p.id),
@@ -407,32 +400,20 @@ export default function CollaborationPage() {
             room_number: p.roomNumber,
         }));
 
-        const res = await fetch(`${API_BASE}/collab/${code}/assignments`, {
+        await apiFetch(`${API_BASE}/collab/${code}/assignments`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ assignments }),
         });
-
-        if (!res.ok) {
-            const txt = await res.text().catch(() => "");
-            throw new Error(txt || "Failed to save assignments.");
-        }
     }
 
     async function syncBreakoutConfig(code: string) {
-        const res = await fetch(`${API_BASE}/collab/${code}/config`, {
+        await apiFetch(`${API_BASE}/collab/${code}/config`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 room_count: roomCount,
                 timer_minutes: timerMinutes,
             }),
         });
-
-        if (!res.ok) {
-            const txt = await res.text().catch(() => "");
-            throw new Error(txt || "Failed to sync breakout settings.");
-        }
     }
 
 
@@ -441,23 +422,15 @@ export default function CollaborationPage() {
         setIsCreating(true);
 
         try {
-            const res = await fetch(`${API_BASE}/collab/create`, {
+            const data = (await apiFetch(`${API_BASE}/collab/create`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     class_id: classId,
                     title: sessionTitle,
                     room_count: roomCount,
                     timer_minutes: timerMinutes,
                 }),
-            });
-
-            if (!res.ok) {
-                const txt = await res.text().catch(() => "");
-                throw new Error(txt || "Failed to create collaboration session.");
-            }
-
-            const data = (await res.json()) as CollabCreateResponse;
+            })) as CollabCreateResponse;
             if (!data.session_code) {
                 throw new Error("Backend returned no session code.");
             }
@@ -549,16 +522,10 @@ export default function CollaborationPage() {
             await syncBreakoutConfig(code);
             await persistAssignments(code, nextParticipants);
 
-            const startRes = await fetch(`${API_BASE}/collab/${code}/start`, {
+            await apiFetch(`${API_BASE}/collab/${code}/start`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({}),
             });
-
-            if (!startRes.ok) {
-                const txt = await startRes.text().catch(() => "");
-                throw new Error(txt || "Failed to start breakout.");
-            }
 
             await Promise.all([fetchStatus(code), fetchParticipants(code)]);
             setSessionState("live");
@@ -578,14 +545,9 @@ export default function CollaborationPage() {
         }
 
         try {
-            const res = await fetch(`${API_BASE}/collab/${code}/end`, {
+            await apiFetch(`${API_BASE}/collab/${code}/end`, {
                 method: "POST",
             });
-
-            if (!res.ok) {
-                const txt = await res.text().catch(() => "");
-                throw new Error(txt || "Failed to end breakout.");
-            }
 
             await Promise.all([fetchStatus(code), fetchParticipants(code)]);
             setSessionState("review");
@@ -718,7 +680,7 @@ export default function CollaborationPage() {
                                     <button
                                         onClick={async () => {
                                             try {
-                                                await fetch(`${API_BASE}/collab/${joinCodeRef.current}/end`, { method: "POST" });
+                                                await apiFetch(`${API_BASE}/collab/${joinCodeRef.current}/end`, { method: "POST" });
                                                 await Promise.all([
                                                     fetchStatus(joinCodeRef.current),
                                                     fetchParticipants(joinCodeRef.current),

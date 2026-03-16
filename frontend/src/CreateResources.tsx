@@ -1,7 +1,7 @@
 // src/frontend/CreateResources.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiFetch } from "./api";
+import { apiFetch, apiFetchBlob } from "./api";
 
 type ClassItem = { id: number; name: string; subject: string };
 
@@ -473,20 +473,10 @@ export default function CreateResources() {
         fd.append("file", file);
 
         // IMPORTANT: do NOT set Content-Type manually for FormData
-        const token = localStorage.getItem("elume_token") || "";
-
-        const resp = await fetch(`/api/notes/upload`, {
+        const data = await apiFetch(`/notes/upload`, {
             method: "POST",
-            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             body: fd,
         });
-
-        if (!resp.ok) {
-            const txt = await resp.text().catch(() => "");
-            throw new Error(txt || `Upload failed (${resp.status})`);
-        }
-
-        const data = await resp.json();
         return { file_url: data.file_url, filename: data.filename };
     }
 
@@ -815,7 +805,6 @@ export default function CreateResources() {
     async function exportPreviewDocx() {
         if (!aiPreview) return;
 
-        const token = localStorage.getItem("elume_token") || "";
         const body = {
             title: aiPreview.title,
             content: aiPreview.content,
@@ -829,22 +818,10 @@ export default function CreateResources() {
             },
         };
 
-        const resp = await fetch("/api/exports/docx", {
+        const blob = await apiFetchBlob("/exports/docx", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
             body: JSON.stringify(body),
         });
-
-        if (!resp.ok) {
-            const txt = await resp.text().catch(() => "");
-            alert(txt || "Export failed");
-            return;
-        }
-
-        const blob = await resp.blob();
         const url = window.URL.createObjectURL(blob);
 
         const a = document.createElement("a");

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { apiFetch } from "./api";
 
 /** ---------------- Types ---------------- */
 type MCQQuestion = {
@@ -43,14 +44,6 @@ type GenerateQuizResponse = {
 
 /** ---------------- Helpers ---------------- */
 const API_BASE = "/api";
-
-function authHeaders(includeContentType = true): Record<string, string> {
-  const token = localStorage.getItem("elume_token");
-  return {
-    ...(includeContentType ? { "Content-Type": "application/json" } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
 
 function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
@@ -182,14 +175,7 @@ export default function QuizzesPage() {
     try {
       setError(null);
 
-      const res = await fetch(`${API_BASE}/classes/${classId}/quizzes`, {
-        headers: authHeaders(),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error((data as any)?.detail || `Failed to load quizzes (${res.status})`);
-      }
+      const data = await apiFetch(`${API_BASE}/classes/${classId}/quizzes`);
 
       const mapped: QuizItem[] = (Array.isArray(data) ? data : []).map((q: any) => ({
         id: String(q.id),
@@ -311,30 +297,18 @@ export default function QuizzesPage() {
 
     try {
       if (editingQuizId) {
-        const res = await fetch(`${API_BASE}/quizzes/${editingQuizId}`, {
+        await apiFetch(`${API_BASE}/quizzes/${editingQuizId}`, {
           method: "PUT",
-          headers: authHeaders(),
           body: JSON.stringify(payload),
         });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error((data as any)?.detail || `Save failed (${res.status})`);
-        }
       } else {
-        const res = await fetch(`${API_BASE}/classes/${classId}/quizzes`, {
+        const data = await apiFetch(`${API_BASE}/classes/${classId}/quizzes`, {
           method: "POST",
-          headers: authHeaders(),
           body: JSON.stringify({
             ...payload,
             questions: [],
           }),
         });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error((data as any)?.detail || `Create failed (${res.status})`);
-        }
 
         setEditingQuizId(String(data.id));
       }
@@ -349,21 +323,9 @@ export default function QuizzesPage() {
 
   async function deleteQuiz(quizId: string) {
     try {
-      const res = await fetch(`${API_BASE}/quizzes/${quizId}`, {
+      await apiFetch(`${API_BASE}/quizzes/${quizId}`, {
         method: "DELETE",
-        headers: authHeaders(),
       });
-
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
-
-      if (!res.ok) {
-        throw new Error(data?.detail || `Delete failed (${res.status})`);
-      }
 
       await fetchQuizzes();
 
@@ -440,16 +402,10 @@ export default function QuizzesPage() {
 
       const method = editingQuestionId ? "PUT" : "POST";
 
-      const res = await fetch(url, {
+      await apiFetch(url, {
         method,
-        headers: authHeaders(),
         body: JSON.stringify(payload),
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error((data as any)?.detail || `Save failed (${res.status})`);
-      }
 
       await fetchQuizzes();
       setShowQuestionModal(false);
@@ -463,21 +419,9 @@ export default function QuizzesPage() {
     if (!editingQuizId) return;
 
     try {
-      const res = await fetch(`${API_BASE}/quizzes/${editingQuizId}/questions/${questionId}`, {
+      await apiFetch(`${API_BASE}/quizzes/${editingQuizId}/questions/${questionId}`, {
         method: "DELETE",
-        headers: authHeaders(),
       });
-
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
-
-      if (!res.ok) {
-        throw new Error(data?.detail || `Delete failed (${res.status})`);
-      }
 
       await fetchQuizzes();
     } catch (e: any) {
@@ -565,12 +509,7 @@ export default function QuizzesPage() {
     setGenLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/notes/${classId}?kind=${kind}`, {
-        headers: authHeaders(false),
-      });
-
-      if (!res.ok) throw new Error(`Failed to load PDFs (${res.status})`);
-      const data = (await res.json()) as NoteItem[];
+      const data = (await apiFetch(`${API_BASE}/notes/${classId}?kind=${kind}`)) as NoteItem[];
       setGenNotes(Array.isArray(data) ? data : []);
       setGenNoteId(Array.isArray(data) && data.length ? data[0].id : null);
     } catch (e: any) {
@@ -602,24 +541,14 @@ export default function QuizzesPage() {
     setError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/ai/generate-quiz-from-note`, {
+      const data = (await apiFetch(`${API_BASE}/ai/generate-quiz-from-note`, {
         method: "POST",
-        headers: authHeaders(),
         body: JSON.stringify({
           class_id: Number(classId),
           note_id: Number(genNoteId),
           num_questions: Number(genNum),
         }),
-
-      });
-
-      const data = (await res.json()) as GenerateQuizResponse;
-
-
-      if (!res.ok) {
-        const detail = (data as any)?.detail ?? JSON.stringify(data);
-        throw new Error(detail || `Generate failed (${res.status})`);
-      }
+      })) as GenerateQuizResponse;
 
 
       const safeQuestions: MCQQuestion[] = ((data as any).questions || []).map((q: any) => {
@@ -654,16 +583,10 @@ export default function QuizzesPage() {
         })),
       };
 
-      const saveRes = await fetch(`${API_BASE}/classes/${classId}/quizzes`, {
+      const saved = await apiFetch(`${API_BASE}/classes/${classId}/quizzes`, {
         method: "POST",
-        headers: authHeaders(),
         body: JSON.stringify(createPayload),
       });
-
-      const saved = await saveRes.json();
-      if (!saveRes.ok) {
-        throw new Error((saved as any)?.detail || `Quiz save failed (${saveRes.status})`);
-      }
 
       await fetchQuizzes();
       setEditingQuizId(String(saved.id));
