@@ -666,7 +666,7 @@ export default function CollaborationPage() {
                                                 : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
                                         )}
                                     >
-                                        Assign rooms
+                                        Start Breakout
                                     </button>
 
                                     <button

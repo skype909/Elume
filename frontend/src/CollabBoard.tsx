@@ -596,6 +596,14 @@ export default function CollabBoard({
     }, [syncCanvasSize]);
 
     useEffect(() => {
+        strokesRef.current = [];
+        liveStrokeRef.current = null;
+        historyRef.current = [];
+        setObjects([]);
+        setSelectedObjectId(null);
+        clearPreview();
+        redrawCommitted();
+
         if (!sessionCode || !roomKey) {
             setIsConnected(false);
             return;
@@ -623,7 +631,7 @@ export default function CollabBoard({
 
                 if (data.type === "stroke" && data.stroke) {
                     const incoming = data.stroke;
-                    if (incoming.createdBy === participantId) return;
+                    if (!readOnly && incoming.createdBy === participantId) return;
                     strokesRef.current.push(incoming);
                     redrawCommitted();
                     return;
@@ -631,7 +639,7 @@ export default function CollabBoard({
 
                 if (data.type === "object-create" && data.object) {
                     const incoming = data.object;
-                    if (incoming.createdBy === participantId) return;
+                    if (!readOnly && incoming.createdBy === participantId) return;
 
                     setObjects((prev) => {
                         const exists = prev.some((obj) => obj.id === incoming.id);
@@ -643,7 +651,7 @@ export default function CollabBoard({
 
                 if (data.type === "object-update" && data.object) {
                     const incoming = data.object;
-                    if (incoming.createdBy === participantId) return;
+                    if (!readOnly && incoming.createdBy === participantId) return;
 
                     setObjects((prev) =>
                         prev.map((obj) => {
@@ -684,7 +692,7 @@ export default function CollabBoard({
         return () => {
             ws.close();
         };
-    }, [sessionCode, roomKey, participantId, redrawCommitted, clearPreview]);
+    }, [sessionCode, roomKey, participantId, readOnly, redrawCommitted, clearPreview]);
 
     useEffect(() => {
         if (!onUndoReady) return;
