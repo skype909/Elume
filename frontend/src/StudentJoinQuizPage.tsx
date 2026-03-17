@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import elumeLogo from "./assets/ELogo2.png";
 
 const API_BASE = "/api";
+const STUDENT_NAME_KEY = "elume_student_name_v1";
 
 type ChoiceKey = "A" | "B" | "C" | "D";
 
@@ -193,6 +194,9 @@ export default function StudentJoinQuizPage() {
 
     const data = (await res.json()) as JoinResponse;
     const nameToStore = (providedName || "").trim();
+    if (nameToStore) {
+      localStorage.setItem(STUDENT_NAME_KEY, nameToStore);
+    }
 
     setHasJoined(true);
     setAnonId(data.anon_id);
@@ -321,8 +325,12 @@ export default function StudentJoinQuizPage() {
     const storedAnon = (stored.anon_id || "").trim();
     const storedName = (stored.name || "").trim();
     const storedNick = (stored.nickname || "").trim();
+    const sharedName = (localStorage.getItem(STUDENT_NAME_KEY) || "").trim();
 
-    if (storedName && !nameInput) setNameInput(storedName);
+    if (!nameInput) {
+      if (storedName) setNameInput(storedName);
+      else if (sharedName) setNameInput(sharedName);
+    }
 
     if (storedAnon) {
       setLoading(true);
@@ -373,6 +381,7 @@ export default function StudentJoinQuizPage() {
       setPollError("Please enter your name.");
       return;
     }
+    localStorage.setItem(STUDENT_NAME_KEY, clean);
     setLoading(true);
     setFatalError(null);
     setPollError(null);

@@ -84,6 +84,12 @@ type StudentRow = {
   active: boolean;
 };
 
+type ClassAccessDetails = {
+  class_id: number;
+  class_code: string;
+  class_pin: string;
+};
+
 
 const API_BASE = "/api";
 
@@ -353,6 +359,9 @@ export default function ClassPage() {
   const [classColour, setClassColour] = useState<string>("bg-blue-500");
   const [studentToken, setStudentToken] = useState<string | null>(null);
   const [studentUrl, setStudentUrl] = useState<string | null>(null);
+  const [classCode, setClassCode] = useState<string | null>(null);
+  const [classPin, setClassPin] = useState<string | null>(null);
+  const [loadingClassAccess, setLoadingClassAccess] = useState(false);
 
   const [classInfo, setClassInfo] = useState<ClassItem | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -425,6 +434,53 @@ export default function ClassPage() {
 
     return () => controller.abort();
   }, [classId, validClassId]);
+
+  useEffect(() => {
+    if (!validClassId) {
+      setClassCode(null);
+      setClassPin(null);
+      setLoadingClassAccess(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingClassAccess(true);
+
+    apiFetch(`${API_BASE}/classes/${classId}/student-access-code`, {
+      signal: controller.signal,
+    })
+      .then((data) => {
+        const access = data as Partial<ClassAccessDetails> | null;
+        setClassCode(typeof access?.class_code === "string" ? access.class_code : null);
+        setClassPin(typeof access?.class_pin === "string" ? access.class_pin : null);
+      })
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+        console.error("Class access details error:", e);
+        setClassCode(null);
+        setClassPin(null);
+      })
+      .finally(() => setLoadingClassAccess(false));
+
+    return () => controller.abort();
+  }, [classId, validClassId]);
+
+  async function copyText(value: string, successLabel: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      alert(successLabel);
+    }
+  }
+
+  async function regenerateClassPin() {
+    if (!validClassId) return;
+    const data = (await apiFetch(`${API_BASE}/classes/${classId}/regenerate-student-access-pin`, {
+      method: "POST",
+    })) as ClassAccessDetails;
+    setClassCode(data.class_code);
+    setClassPin(data.class_pin);
+  }
 
   // --- fetch class ---
   useEffect(() => {
@@ -1092,12 +1148,38 @@ export default function ClassPage() {
             {studentUrl && (
               <button
                 type="button"
-                onClick={() => navigator.clipboard.writeText(studentUrl)}
+                onClick={() => copyText(studentUrl, "Student link copied")}
                 className="mt-2 rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
               >
                 Copy link
               </button>
             )}
+          </div>
+
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-white/90 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                  Class code
+                </div>
+                <div className="mt-1 text-lg font-black tracking-[0.18em] text-slate-900">
+                  {loadingClassAccess ? "Loading..." : classCode || "—"}
+                </div>
+              </div>
+
+              {classCode ? (
+                <button
+                  type="button"
+                  onClick={() => copyText(classCode, "Class code copied")}
+                  className="rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
+                >
+                  Copy
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-1 text-[11px] leading-5 text-slate-500">
+              Students use this with the class PIN in Student Hub.
+            </div>
           </div>
         </div>
 
@@ -1915,6 +1997,60 @@ export default function ClassPage() {
                       placeholder="e.g. Lab"
                     />
                   </label>
+
+                  <div className="rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
+                    <div className="text-sm font-extrabold text-slate-900">Student access details</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-600">
+                      Use this with the class code on Student Hub.
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                          Class code
+                        </div>
+                        <div className="mt-2 text-xl font-black tracking-[0.14em] text-slate-900">
+                          {loadingClassAccess ? "Loading..." : classCode || "—"}
+                        </div>
+                        {classCode ? (
+                          <button
+                            type="button"
+                            onClick={() => copyText(classCode, "Class code copied")}
+                            className="mt-3 rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
+                          >
+                            Copy code
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                          Class PIN
+                        </div>
+                        <div className="mt-2 text-xl font-black tracking-[0.18em] text-slate-900">
+                          {loadingClassAccess ? "Loading..." : classPin || "—"}
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {classPin ? (
+                            <button
+                              type="button"
+                              onClick={() => copyText(classPin, "Class PIN copied")}
+                              className="rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
+                            >
+                              Copy PIN
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={regenerateClassPin}
+                            className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                          >
+                            Regenerate PIN
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
                   <div className="mt-2 flex items-center justify-end gap-2">
                     <button

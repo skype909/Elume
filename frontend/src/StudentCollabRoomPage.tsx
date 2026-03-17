@@ -4,6 +4,7 @@ import CollabBoard from "./CollabBoard";
 import elumeLogo from "./assets/ELogo2.png";
 
 const API_BASE = "/api";
+const STUDENT_NAME_KEY = "elume_student_name_v1";
 
 type JoinResponse = {
   anon_id: string;
@@ -93,6 +94,7 @@ export default function StudentCollabRoomPage() {
       }
 
       const data = (await res.json()) as JoinResponse;
+      localStorage.setItem(STUDENT_NAME_KEY, clean);
       localStorage.setItem(storageKey, JSON.stringify(data));
 
       setAnonId(data.anon_id);
@@ -113,6 +115,11 @@ export default function StudentCollabRoomPage() {
       setError("Missing session code.");
       setLoading(false);
       return;
+    }
+
+    const sharedName = (localStorage.getItem(STUDENT_NAME_KEY) || "").trim();
+    if (sharedName) {
+      setNameInput((prev) => prev || sharedName);
     }
 
     const raw = localStorage.getItem(storageKey);
