@@ -112,10 +112,15 @@ function isLandscapeNow() {
 
 function loadTeacherTimetableLocal(): StoredAdminState | null {
   try {
-    const raw = localStorage.getItem(teacherAdminKeyForUser());
+    const raw =
+      localStorage.getItem(teacherAdminStorageKeyForUser()) ??
+      localStorage.getItem(teacherAdminLegacyKeyForUser());
+
     if (!raw) return null;
+
     const parsed = JSON.parse(raw) as StoredAdminState;
     if (!parsed?.profile || !parsed?.schedule) return null;
+
     return parsed;
   } catch {
     return null;
@@ -150,15 +155,28 @@ function getEmailFromToken(): string | null {
   }
 }
 
-function teacherAdminKeyForUser() {
+function teacherAdminStorageKeyForUser() {
+  const email = getEmailFromToken() ?? "anon";
+  return `elume_teacher_admin_v3__${email}`;
+}
+
+function teacherAdminLegacyKeyForUser() {
   const email = getEmailFromToken() ?? "anon";
   return `elume_teacher_admin_v2__${email}`;
 }
 
+function teacherAdminKeyForUser() {
+  return teacherAdminStorageKeyForUser();
+}
+
 function loadTeacherWelcome(): string {
   try {
-    const raw = localStorage.getItem(teacherAdminKeyForUser());
+    const raw =
+      localStorage.getItem(teacherAdminStorageKeyForUser()) ??
+      localStorage.getItem(teacherAdminLegacyKeyForUser());
+
     if (!raw) return "";
+
     const parsed = JSON.parse(raw);
     const p = parsed?.profile;
     if (!p) return "";
@@ -196,8 +214,17 @@ function saveMeta(meta: MetaStore) {
 }
 
 
-function textClassForBg(bg: string) {
-  if (bg.includes("yellow") || bg.includes("amber")) return "text-slate-900";
+function textClassForBg(bgClass: string) {
+  if (
+    bgClass.includes("bg-yellow") ||
+    bgClass.includes("bg-amber") ||
+    bgClass.includes("bg-lime") ||
+    bgClass.includes("bg-slate-100") ||
+    bgClass.includes("bg-slate-200") ||
+    bgClass.includes("bg-white")
+  ) {
+    return "text-slate-900";
+  }
   return "text-white";
 }
 
@@ -319,6 +346,7 @@ function Dashboard() {
   const [ttState, setTtState] = useState<StoredAdminState | null>(() => loadTeacherTimetableLocal());
   const [ttLoading, setTtLoading] = useState(false);
   const [ttError, setTtError] = useState<string | null>(null);
+  const [ttDesktopOpen, setTtDesktopOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -393,10 +421,9 @@ function Dashboard() {
     minute: "2-digit",
   });
 
-  async function openTimetableQuickView() {
-    setTtOpen(true);
+  async function loadTimetableReference(preferredMode: "day" | "week") {
     setTtDay(currentSchoolDay());
-    setTtMode(isLandscapeNow() ? "week" : "day");
+    setTtMode(preferredMode);
     setTtError(null);
 
     const local = loadTeacherTimetableLocal();
@@ -409,7 +436,7 @@ function Dashboard() {
       if (serverState?.profile && serverState?.schedule) {
         setTtState(serverState);
         try {
-          localStorage.setItem(teacherAdminKeyForUser(), JSON.stringify(serverState));
+          localStorage.setItem(teacherAdminStorageKeyForUser(), JSON.stringify(serverState));
         } catch { }
       } else if (!local) {
         setTtError("No timetable saved yet.");
@@ -419,6 +446,16 @@ function Dashboard() {
     } finally {
       setTtLoading(false);
     }
+  }
+
+  async function openTimetableQuickView() {
+    setTtOpen(true);
+    await loadTimetableReference(isLandscapeNow() ? "week" : "day");
+  }
+
+  async function openDesktopTimetableQuickView() {
+    setTtDesktopOpen(true);
+    await loadTimetableReference("week");
   }
 
   function timetableCardClass(slot: Slot, hasEntry: boolean) {
@@ -532,6 +569,212 @@ function Dashboard() {
       </div>
     );
   }
+
+  function timetableTileVisual(slot: Slot, entry?: TimetableEntry) {
+    const hasClass = !!entry?.classLabel?.trim();
+    const hasDuty = !!entry?.dutyNote?.trim();
+
+    if (hasClass) {
+      const bg = entry?.classId != null
+        ? meta[String(entry.classId)]?.color ?? COLOURS[entry.classId % COLOURS.length]?.bg ?? DEFAULT_BG
+        : DEFAULT_BG;
+      return {
+        tile: `border-black/70 ${bg} ${textClassForBg(bg)} shadow-[0_4px_0_rgba(15,23,42,0.18)]`,
+        caption: textClassForBg(bg) === "text-white" ? "text-white/85" : "text-slate-700",
+      };
+    }
+
+    if (slot.kind === "break") {
+      return {
+        tile: "border-amber-200 bg-amber-50 text-amber-900",
+        caption: "text-amber-700",
+      };
+    }
+    if (slot.kind === "lunch") {
+      return {
+        tile: "border-orange-200 bg-orange-50 text-orange-900",
+        caption: "text-orange-700",
+      };
+    }
+    if (hasDuty) {
+      return {
+        tile: "border-cyan-200 bg-cyan-50 text-cyan-900",
+        caption: "text-cyan-700",
+      };
+    }
+    return {
+      tile: "border-slate-200 bg-slate-50 text-slate-700",
+      caption: "text-slate-500",
+    };
+  }
+
+  function renderDesktopDayStackBranded(day: DayKey) {
+    if (!ttState?.schedule?.[day]) return null;
+
+    const daySchedule = ttState.schedule[day];
+    const isToday = currentSchoolDay() === day;
+
+    return (
+      <div className="space-y-3">
+        {daySchedule.slots.map((slot) => {
+          const entry = daySchedule.entries?.[slot.id];
+          const visual = timetableTileVisual(slot, entry);
+          const hasClass = !!entry?.classLabel?.trim();
+          const hasDuty = !!entry?.dutyNote?.trim();
+
+          return (
+            <div
+              key={`${day}_${slot.id}`}
+              className={`rounded-[24px] border p-4 ${visual.tile} ${isToday ? "ring-2 ring-emerald-200/80" : ""}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-black uppercase tracking-[0.16em] opacity-80">{slot.label}</div>
+                  <div className={`mt-1 text-xs font-semibold ${visual.caption}`}>
+                    {slot.start}–{slot.end}
+                  </div>
+                </div>
+                {isToday && (
+                  <div className="rounded-full border border-white/40 bg-white/20 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]">
+                    Today
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-3">
+                {hasClass ? (
+                  <>
+                    <div className="text-lg font-black leading-tight">{entry?.classLabel}</div>
+                    {entry?.room && <div className={`mt-1 text-sm font-semibold ${visual.caption}`}>Room: {entry.room}</div>}
+                  </>
+                ) : hasDuty ? (
+                  <div className="text-sm font-semibold leading-tight">{entry?.dutyNote}</div>
+                ) : (
+                  <div className="text-sm font-semibold opacity-70">Free</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function isCompactReferenceSlot(slot: Slot) {
+    if (slot.kind === "break" || slot.kind === "lunch") return true;
+
+    const label = String(slot.label ?? "").toLowerCase();
+    return label.includes("supervision");
+  }
+
+  function desktopTimetableRowClasses(slot: Slot) {
+    if (isCompactReferenceSlot(slot)) {
+      return {
+        cellPad: "p-1.5",
+        tile: "min-h-[42px] rounded-[14px] px-3 py-2",
+        title: "text-[11px] font-semibold leading-tight",
+        room: "hidden",
+        free: "text-[11px] font-semibold opacity-70",
+        duty: "text-[11px] font-semibold leading-tight",
+        timePad: "p-2",
+        timeTitle: "font-black uppercase tracking-[0.1em] text-slate-700",
+        timeText: "mt-0.5 font-semibold",
+      };
+    }
+
+    return {
+      cellPad: "p-2",
+      tile: "min-h-[74px] rounded-[18px] p-2.5",
+      title: "text-[13px] font-black leading-tight",
+      room: "mt-1 text-[11px] font-semibold",
+      free: "text-[11px] font-semibold opacity-70",
+      duty: "text-[11px] font-semibold leading-tight",
+      timePad: "p-3",
+      timeTitle: "font-black uppercase tracking-[0.12em] text-slate-700",
+      timeText: "mt-0.5 font-semibold",
+    };
+  }
+
+ function renderDesktopWeekGridBranded() {
+  if (!ttState?.schedule?.Mon) return null;
+
+  const mondaySlots = ttState.schedule["Mon"].slots;
+  const today = currentSchoolDay();
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[980px] rounded-[24px] border border-white/70 bg-white/80 shadow-inner backdrop-blur">
+        <div className="grid grid-cols-6 border-b border-slate-200/80 bg-gradient-to-r from-slate-50 via-white to-emerald-50 text-[11px] font-black uppercase tracking-[0.14em] text-slate-600">
+          <div className="p-3">Time</div>
+          {TT_DAYS.map((d) => (
+            <div
+              key={d}
+              className={`p-3 ${today === d ? "bg-emerald-50/80 text-emerald-800" : ""}`}
+            >
+              <div>{fmtDayLong(d)}</div>
+              {today === d && (
+                <div className="mt-1 inline-flex rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[9px] font-black text-emerald-700">
+                  Today
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {mondaySlots.map((rowSlot) => {
+          const rowUi = desktopTimetableRowClasses(rowSlot);
+
+          return (
+            <div
+              key={rowSlot.id}
+              className="grid grid-cols-6 border-b border-slate-100/90 last:border-b-0"
+            >
+              <div className={`${rowUi.timePad} text-[11px] text-slate-600`}>
+                <div className={rowUi.timeTitle}>{rowSlot.label}</div>
+                <div className={rowUi.timeText}>
+                  {rowSlot.start}–{rowSlot.end}
+                </div>
+              </div>
+
+              {TT_DAYS.map((day) => {
+                const slot =
+                  ttState.schedule[day].slots.find((s) => s.id === rowSlot.id) ?? rowSlot;
+                const entry = ttState.schedule[day].entries?.[rowSlot.id];
+                const visual = timetableTileVisual(slot, entry);
+                const hasClass = !!entry?.classLabel?.trim();
+                const hasDuty = !!entry?.dutyNote?.trim();
+
+                return (
+                  <div
+                    key={`${day}_${rowSlot.id}`}
+                    className={`${rowUi.cellPad} ${today === day ? "bg-emerald-50/30" : ""}`}
+                  >
+                    <div className={`border ${rowUi.tile} ${visual.tile}`}>
+                      {hasClass ? (
+                        <>
+                          <div className={rowUi.title}>{entry?.classLabel}</div>
+                          {!isCompactReferenceSlot(slot) && entry?.room && (
+                            <div className={`${rowUi.room} ${visual.caption}`}>
+                              Room: {entry.room}
+                            </div>
+                          )}
+                        </>
+                      ) : hasDuty ? (
+                        <div className={rowUi.duty}>{entry?.dutyNote}</div>
+                      ) : (
+                        <div className={rowUi.free}>Free</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
   // Design tokens
   const card =
@@ -879,6 +1122,14 @@ function Dashboard() {
             <div className="flex items-center gap-3">
               <button
                 type="button"
+                onClick={openDesktopTimetableQuickView}
+                className="rounded-3xl border border-emerald-200 bg-gradient-to-r from-white via-emerald-50 to-cyan-50 px-5 py-3 text-sm font-semibold text-slate-800 shadow-[0_4px_14px_rgba(16,185,129,0.10)] transition-all hover:border-emerald-300 hover:shadow-md hover:-translate-y-[1px]"
+              >
+                View Timetable
+              </button>
+
+              <button
+                type="button"
                 onClick={() => navigate("/planner")}
                 title="Open ELume Planner"
                 className="group min-w-0 flex-1 flex items-center gap-3 rounded-3xl border-2 border-emerald-200 bg-gradient-to-r from-white via-emerald-50 to-sky-50 px-4 py-2.5 shadow-[0_4px_14px_rgba(16,185,129,0.10)] hover:border-emerald-300 hover:from-emerald-50 hover:to-sky-100 active:translate-y-[1px] transition-all"
@@ -1102,6 +1353,100 @@ function Dashboard() {
                 <>
                   {ttMode === "day" ? renderDayStack(ttDay) : renderWeekGrid()}
                 </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {ttDesktopOpen && (
+        <div className="fixed inset-0 z-50 hidden bg-slate-950/45 p-6 backdrop-blur-sm md:block">
+          <div className="mx-auto mt-3 max-w-[1240px] overflow-hidden rounded-[30px] border border-white/70 bg-white/88 shadow-[0_24px_70px_rgba(15,23,42,0.18)] backdrop-blur-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200/80 bg-gradient-to-r from-white via-emerald-50/70 to-cyan-50/70 px-6 py-4">
+              <div>
+                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">Quick Reference</div>
+                <div className="mt-1 text-2xl font-black tracking-tight text-slate-900">Timetable</div>
+                <div className="mt-1 text-xs text-slate-600">
+                  Weekly snapshot with your live Teacher Admin colours and layout.
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="hidden lg:flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTtMode("day")}
+                    className={`rounded-full border px-4 py-2 text-sm font-semibold ${ttMode === "day"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                      : "border-slate-200 bg-white text-slate-700"
+                      }`}
+                  >
+                    Day
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTtMode("week")}
+                    className={`rounded-full border px-4 py-2 text-sm font-semibold ${ttMode === "week"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                      : "border-slate-200 bg-white text-slate-700"
+                      }`}
+                  >
+                    Week
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setTtDesktopOpen(false)}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="max-h-[82vh] overflow-auto px-5 py-4">
+              {ttLoading && (
+                <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                  Loading timetable…
+                </div>
+              )}
+
+              {!ttLoading && ttError && (
+                <div className="rounded-[26px] border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">
+                  {ttError}
+                </div>
+              )}
+
+              {!ttLoading && !ttError && !ttState && (
+                <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                  No timetable found yet. Set it up in Admin first.
+                </div>
+              )}
+
+              {!ttLoading && !ttError && ttState && (
+                <div className="space-y-5">
+                  {ttMode === "day" && (
+                    <div className="flex flex-wrap gap-2">
+                      {TT_DAYS.map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setTtDay(d)}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${ttDay === d
+                            ? "border-sky-300 bg-sky-50 text-sky-900"
+                            : "border-slate-200 bg-white text-slate-700"
+                            }`}
+                        >
+                          {fmtDayLong(d)}
+                          {currentSchoolDay() === d ? " • Today" : ""}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {ttMode === "day" ? renderDesktopDayStackBranded(ttDay) : renderDesktopWeekGridBranded()}
+                </div>
               )}
             </div>
           </div>

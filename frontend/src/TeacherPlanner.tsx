@@ -2,29 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
 
-/**
- * TeacherPlanner.tsx
- *
- * - Mon–Fri weekly planner (6 class slots + 1 extra slot per day)
- * - Click slot => modal editor (full note + relates-to dropdown)
- * - Shows calendar events on each day via a bell + popover
- * - Tasks checklist sticky bottom-right (due date optional) with archive/revive/delete
- *
- * Persistence:
- * - Notes + tasks loaded from and saved to backend
- * - Classes + calendar events fetched from backend
- *
- * Backend references:
- * - GET /classes
- * - GET /calendar-events
- * - GET /teacher-planner
- * - PUT /teacher-planner
- */
-
-// -----------------------------
-// Types
-// -----------------------------
-
 type ClassItem = { id: number; name: string; subject: string };
 
 type CalendarEvent = {
@@ -64,9 +41,39 @@ type TaskItem = {
     archivedAt?: number;
 };
 
-// -----------------------------
-// Helpers
-// -----------------------------
+type PlannerSettings = {
+    slotsPerDay: number;
+};
+
+type DayKey = "Mon" | "Tue" | "Wed" | "Thu" | "Fri";
+type SlotKind = "period" | "break" | "lunch";
+
+type AdminSlot = {
+    id: string;
+    kind: SlotKind;
+    label: string;
+    start: string;
+    end: string;
+};
+
+type AdminEntry = {
+    classId: number | null;
+    classLabel: string;
+    room: string;
+    supervisionRank: number | null;
+    dutyNote: string;
+};
+
+type AdminDaySchedule = {
+    slots: AdminSlot[];
+    entries: Record<string, AdminEntry>;
+};
+
+type TeacherAdminState = {
+    schedule?: Record<DayKey, AdminDaySchedule>;
+};
+
+const DAYS: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 function pad2(n: number) {
     return String(n).padStart(2, "0");
@@ -149,11 +156,94 @@ function eventTypeLabel(t: string) {
     }
 }
 
-// -----------------------------
-// Planner API helpers
-// -----------------------------
+function clampSlotsPerDay(v: number) {
+    return Math.min(10, Math.max(6, Math.trunc(v || 6)));
+}
 
-async function loadPlanner(): Promise<{ notes: PlannerNote[]; tasks: TaskItem[] }> {
+function getEmailFromToken(): string | null {
+    const t = localStorage.getItem("elume_token");
+    if (!t) return null;
+    try {
+        const payload = JSON.parse(atob(t.split(".")[1]));
+        return payload?.email ?? payload?.sub ?? payload?.username ?? null;
+    } catch {
+        return null;
+    }
+}
+
+function teacherAdminStorageKey() {
+    const email = getEmailFromToken() ?? "anon";
+    return `elume_teacher_admin_v3__${email}`;
+}
+
+function teacherAdminLegacyStorageKey() {
+    const email = getEmailFromToken() ?? "anon";
+    return `elume_teacher_admin_v2__${email}`;
+}
+
+function loadTeacherAdminStateFromLocal(): TeacherAdminState | null {
+    try {
+        const raw =
+            localStorage.getItem(teacherAdminStorageKey()) ??
+            localStorage.getItem(teacherAdminLegacyStorageKey());
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return null;
+        return parsed as TeacherAdminState;
+    } catch {
+        return null;
+    }
+}
+
+function dayKeyFromIndex(dayIndex: number): DayKey {
+    return DAYS[dayIndex] ?? "Mon";
+}
+
+function periodSlotsForDay(state: TeacherAdminState | null, day: DayKey): AdminSlot[] {
+    const daySchedule = state?.schedule?.[day];
+    if (!daySchedule?.slots) return [];
+    return daySchedule.slots.filter((slot) => slot.kind === "period");
+}
+
+function classShortLabelFromParts(name: string, subject: string) {
+    const left = (name || "").trim();
+    const right = (subject || "").trim();
+    if (left && right) return `${left} ${right}`;
+    return left || right || "FREE";
+}
+
+function parseStoredClassLabel(label: string): string {
+    const t = (label || "").trim();
+    if (!t) return "FREE";
+    const parts = t.split(" — ").map((x) => x.trim()).filter(Boolean);
+    if (parts.length >= 2) return `${parts[0]} ${parts[1]}`.trim();
+    return t;
+}
+
+function getPlannerSlotHeadingForDay(
+    teacherAdminState: TeacherAdminState | null,
+    classes: ClassItem[],
+    day: DayKey,
+    slotIndex: number
+) {
+    const periodSlot = periodSlotsForDay(teacherAdminState, day)[slotIndex];
+    if (!periodSlot) return "FREE";
+
+    const entry = teacherAdminState?.schedule?.[day]?.entries?.[periodSlot.id];
+    const classId = entry?.classId ?? null;
+    const liveClass =
+        typeof classId === "number" && classId > 0 ? classes.find((c) => c.id === classId) : undefined;
+
+    const descriptor = liveClass
+        ? classShortLabelFromParts(liveClass.name, liveClass.subject)
+        : entry?.classLabel?.trim()
+            ? parseStoredClassLabel(entry.classLabel)
+            : "FREE";
+
+    return truncateOneLine(descriptor, 24) || "FREE";
+}
+
+async function loadPlanner(): Promise<{ notes: PlannerNote[]; tasks: TaskItem[]; settings: PlannerSettings }> {
     const data = await apiFetch("/teacher-planner");
 
     const notes = Array.isArray(data?.notes)
@@ -181,19 +271,27 @@ async function loadPlanner(): Promise<{ notes: PlannerNote[]; tasks: TaskItem[] 
         }))
         : [];
 
-    return { notes, tasks };
+    return {
+        notes,
+        tasks,
+        settings: {
+            slotsPerDay: clampSlotsPerDay(Number(data?.settings?.slotsPerDay ?? 6)),
+        },
+    };
 }
 
-async function savePlanner(notes: PlannerNote[], tasks: TaskItem[]) {
+async function savePlanner(notes: PlannerNote[], tasks: TaskItem[], settings: PlannerSettings) {
     await apiFetch("/teacher-planner", {
         method: "PUT",
-        body: JSON.stringify({ notes, tasks }),
+        body: JSON.stringify({
+            notes,
+            tasks,
+            settings: {
+                slotsPerDay: clampSlotsPerDay(settings.slotsPerDay),
+            },
+        }),
     });
 }
-
-// -----------------------------
-// Component
-// -----------------------------
 
 export default function TeacherPlanner() {
     const navigate = useNavigate();
@@ -201,9 +299,13 @@ export default function TeacherPlanner() {
     const [classes, setClasses] = useState<ClassItem[]>([]);
     const [events, setEvents] = useState<CalendarEvent[]>([]);
     const [loadingEvents, setLoadingEvents] = useState(false);
+    const [teacherAdminState, setTeacherAdminState] = useState<TeacherAdminState | null>(() =>
+        loadTeacherAdminStateFromLocal()
+    );
 
     const [notes, setNotes] = useState<PlannerNote[]>([]);
     const [tasks, setTasks] = useState<TaskItem[]>([]);
+    const [settings, setSettings] = useState<PlannerSettings>({ slotsPerDay: 6 });
     const [plannerLoadState, setPlannerLoadState] = useState<"idle" | "success" | "error">("idle");
     const plannerHydratedRef = useRef(false);
 
@@ -222,6 +324,9 @@ export default function TeacherPlanner() {
     const [draftRelatesKind, setDraftRelatesKind] = useState<"general" | "personal" | "class">("general");
     const [draftRelatesClassId, setDraftRelatesClassId] = useState<number>(() => 0);
 
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [settingsDraftSlots, setSettingsDraftSlots] = useState(6);
+
     const [eventsPopover, setEventsPopover] = useState<{ open: boolean; dayISO: string | null }>({
         open: false,
         dayISO: null,
@@ -229,13 +334,40 @@ export default function TeacherPlanner() {
 
     const popoverRef = useRef<HTMLDivElement | null>(null);
 
-    // -----------------------------
-    // Load classes
-    // -----------------------------
     useEffect(() => {
         apiFetch("/classes")
             .then((data) => setClasses(Array.isArray(data) ? data : []))
             .catch(() => setClasses([]));
+    }, []);
+
+    useEffect(() => {
+        let alive = true;
+
+        setTeacherAdminState(loadTeacherAdminStateFromLocal());
+
+        apiFetch("/teacher-admin/state")
+            .then((data: any) => {
+                if (!alive) return;
+                const serverState = data?.state ?? null;
+                if (serverState && typeof serverState === "object") {
+                    setTeacherAdminState(serverState as TeacherAdminState);
+                }
+            })
+            .catch(() => {
+                // local fallback already loaded
+            });
+
+        const onFocus = () => setTeacherAdminState(loadTeacherAdminStateFromLocal());
+        const onStorage = () => setTeacherAdminState(loadTeacherAdminStateFromLocal());
+
+        window.addEventListener("focus", onFocus);
+        window.addEventListener("storage", onStorage);
+
+        return () => {
+            alive = false;
+            window.removeEventListener("focus", onFocus);
+            window.removeEventListener("storage", onStorage);
+        };
     }, []);
 
     useEffect(() => {
@@ -261,9 +393,6 @@ export default function TeacherPlanner() {
         };
     }, []);
 
-    // -----------------------------
-    // Load planner data
-    // -----------------------------
     useEffect(() => {
         let alive = true;
 
@@ -275,6 +404,7 @@ export default function TeacherPlanner() {
                 plannerHydratedRef.current = false;
                 setNotes(Array.isArray(data.notes) ? data.notes : []);
                 setTasks(Array.isArray(data.tasks) ? data.tasks : []);
+                setSettings(data.settings ?? { slotsPerDay: 6 });
                 setPlannerLoadState("success");
 
                 setTimeout(() => {
@@ -298,22 +428,18 @@ export default function TeacherPlanner() {
         if (!plannerHydratedRef.current) return;
 
         const timer = window.setTimeout(() => {
-            savePlanner(notes, tasks).catch((err) => {
+            savePlanner(notes, tasks, settings).catch((err) => {
                 console.error("Failed to save planner", err);
             });
         }, 300);
 
         return () => window.clearTimeout(timer);
-    }, [notes, tasks, plannerLoadState]);
+    }, [notes, tasks, settings, plannerLoadState]);
 
-    // -----------------------------
-    // Derived
-    // -----------------------------
     const weekKey = useMemo(() => toYMD(weekMonday), [weekMonday]);
     const prevWeekMonday = useMemo(() => addWeeks(weekMonday, -1), [weekMonday]);
     const nextWeekMonday = useMemo(() => addWeeks(weekMonday, 1), [weekMonday]);
     const todayISO = useMemo(() => toYMD(new Date()), []);
-
     const weekDays = useMemo(() => Array.from({ length: 5 }).map((_, i) => addDays(weekMonday, i)), [weekMonday]);
 
     const notesByCell = useMemo(() => {
@@ -327,10 +453,8 @@ export default function TeacherPlanner() {
 
     const eventsByDay = useMemo(() => {
         const map = new Map<string, CalendarEvent[]>();
-
         const rangeStart = prevWeekMonday;
         const rangeEnd = addDays(nextWeekMonday, 7);
-
         const startMs = rangeStart.getTime();
         const endMs = rangeEnd.getTime();
 
@@ -339,7 +463,6 @@ export default function TeacherPlanner() {
             if (Number.isNaN(d.getTime())) continue;
             const ms = d.getTime();
             if (ms < startMs || ms >= endMs) continue;
-
             const iso = toYMD(d);
             if (!map.has(iso)) map.set(iso, []);
             map.get(iso)!.push(ev);
@@ -354,10 +477,7 @@ export default function TeacherPlanner() {
     }, [events, prevWeekMonday, nextWeekMonday]);
 
     const relatesOptions = useMemo(() => {
-        return classes.map((c) => ({
-            value: String(c.id),
-            label: `${c.name}`,
-        }));
+        return classes.map((c) => ({ value: String(c.id), label: `${c.name}` }));
     }, [classes]);
 
     const activeTasks = useMemo(() => {
@@ -379,9 +499,6 @@ export default function TeacherPlanner() {
 
     const [showArchived, setShowArchived] = useState(false);
 
-    // -----------------------------
-    // Actions
-    // -----------------------------
     function openSlot(dayIndex: number, slotIndex: number) {
         const existing = notesByCell.get(`${dayIndex}:${slotIndex}`);
         setEditing({
@@ -427,9 +544,7 @@ export default function TeacherPlanner() {
         const existing = notesByCell.get(key);
 
         if (shouldDelete) {
-            if (existing) {
-                setNotes((prev) => prev.filter((n) => n.id !== existing.id));
-            }
+            if (existing) setNotes((prev) => prev.filter((n) => n.id !== existing.id));
             closeEditor();
             return;
         }
@@ -462,6 +577,11 @@ export default function TeacherPlanner() {
         });
 
         closeEditor();
+    }
+
+    function applySettings() {
+        setSettings({ slotsPerDay: clampSlotsPerDay(settingsDraftSlots) });
+        setSettingsOpen(false);
     }
 
     const [taskDraft, setTaskDraft] = useState("");
@@ -503,16 +623,7 @@ export default function TeacherPlanner() {
         setTasks((prev) => prev.filter((t) => t.id !== id));
     }
 
-    // -----------------------------
-    // UI Pieces
-    // -----------------------------
-    function WeekPreviewCard({
-        monday,
-        onClick,
-    }: {
-        monday: Date;
-        onClick: () => void;
-    }) {
+    function WeekPreviewCard({ monday, onClick }: { monday: Date; onClick: () => void }) {
         return (
             <button
                 type="button"
@@ -561,15 +672,12 @@ export default function TeacherPlanner() {
                                 setEventsPopover({ open: true, dayISO: iso });
                             }}
                             className={[
-                                "h-6 w-6 mt-8 grid place-items-center rounded-full border shadow-sm",
-                                hasEvents
-                                    ? "border-emerald-400 bg-white hover:bg-emerald-50"
-                                    : "border-slate-200 bg-slate-50",
+                                "mt-8 grid h-6 w-6 place-items-center rounded-full border shadow-sm",
+                                hasEvents ? "border-emerald-400 bg-white hover:bg-emerald-50" : "border-slate-200 bg-slate-50",
                             ].join(" ")}
                         >
                             <span className="text-[12px] leading-none">🔔</span>
                         </button>
-
                     )}
                 </div>
             </div>
@@ -587,7 +695,7 @@ export default function TeacherPlanner() {
         if (r.kind === "class") {
             return (
                 <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
-                    {r.label}
+                    {truncateOneLine(r.label, 12)}
                 </span>
             );
         }
@@ -598,9 +706,6 @@ export default function TeacherPlanner() {
         );
     }
 
-    // -----------------------------
-    // Render
-    // -----------------------------
     return (
         <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
             <div className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -613,27 +718,33 @@ export default function TeacherPlanner() {
             <div className="pointer-events-none absolute inset-0 opacity-[0.08] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:36px_36px]" />
 
             <div className="relative z-10 mx-auto max-w-7xl px-4 pb-16 pt-8">
-                {/* Header */}
                 <div className="mb-4 rounded-[28px] border border-white/70 bg-white/80 px-5 py-4 shadow-sm backdrop-blur-xl">
-
-                    <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200/70 bg-emerald-50/80 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-800 shadow-sm">
                                 <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
                                 Weekly planning workspace
                             </div>
 
-                            <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900">
-                                Teacher Planner
-                            </h1>
+                            <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900">Teacher Planner</h1>
 
                             <p className="mt-1 text-sm text-slate-600">
-                                Weekly diary + tasks for your teaching week. Keep lesson notes, reminders and upcoming
-                                events in one clean workspace.
+                                Weekly diary + tasks for your teaching week. Plan by timetable slot so you can see each class at a glance.
                             </p>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex w-full flex-col gap-3 lg:w-auto lg:min-w-[220px] lg:items-stretch">
+                            <button
+                                onClick={() => {
+                                    setSettingsDraftSlots(settings.slotsPerDay);
+                                    setSettingsOpen(true);
+                                }}
+                                className="rounded-2xl border border-slate-200 bg-white/90 px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-white hover:shadow-md"
+                                type="button"
+                            >
+                                Change Settings
+                            </button>
+
                             <button
                                 onClick={() => navigate(`/`)}
                                 className="rounded-2xl border border-slate-200 bg-white/90 px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-white hover:shadow-md"
@@ -641,36 +752,37 @@ export default function TeacherPlanner() {
                             >
                                 ← Back to Dashboard
                             </button>
-
-                            <button
-                                onClick={() => setWeekMonday(startOfWeekMonday(new Date()))}
-                                className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-sm font-bold text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl"
-                                type="button"
-                            >
-                                This week
-                            </button>
                         </div>
                     </div>
                 </div>
 
-                {/* Main layout */}
                 <div className="grid gap-5 lg:grid-cols-[0.72fr_3.2fr_0.72fr]">
-                    {/* Left preview */}
                     <div className="hidden lg:block">
                         <WeekPreviewCard monday={prevWeekMonday} onClick={() => setWeekMonday(prevWeekMonday)} />
                     </div>
 
-                    {/* Main planner */}
                     <div className="rounded-[34px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-                        <div className="mt-2 grid gap-3 md:grid-cols-5">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <div className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Planner layout</div>
+                                <div className="mt-1 text-base font-black tracking-tight text-slate-900">{settings.slotsPerDay} slots per day</div>
+                            </div>
+
+                            <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
+                                Timetable headings live from Teacher Admin
+                            </div>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-1 xl:grid-cols-5">
                             {weekDays.map((d, dayIndex) => {
                                 const isToday = toYMD(d) === todayISO;
+                                const dayKey = dayKeyFromIndex(dayIndex);
 
                                 return (
                                     <div
                                         key={toYMD(d)}
                                         className={[
-                                            "rounded-[28px] border p-3 shadow-sm backdrop-blur transition-all duration-200",
+                                            "min-w-0 rounded-[28px] border p-3 shadow-sm backdrop-blur transition-all duration-200",
                                             isToday
                                                 ? "border-emerald-200 bg-gradient-to-b from-white to-emerald-50/80 shadow-[0_18px_45px_rgba(16,185,129,0.14)] ring-2 ring-emerald-200"
                                                 : "border-white/70 bg-white/70 hover:bg-white",
@@ -679,8 +791,9 @@ export default function TeacherPlanner() {
                                         <DayHeader d={d} isToday={isToday} />
 
                                         <div className="mt-4 grid gap-2.5">
-                                            {Array.from({ length: 7 }).map((_, slotIndex) => {
+                                            {Array.from({ length: settings.slotsPerDay }).map((_, slotIndex) => {
                                                 const note = notesByCell.get(`${dayIndex}:${slotIndex}`);
+                                                const heading = getPlannerSlotHeadingForDay(teacherAdminState, classes, dayKey, slotIndex);
 
                                                 return (
                                                     <button
@@ -688,32 +801,30 @@ export default function TeacherPlanner() {
                                                         type="button"
                                                         onClick={() => openSlot(dayIndex, slotIndex)}
                                                         className={[
-                                                            "w-full rounded-2xl border px-3 py-3 text-left shadow-sm transition-all duration-150",
+                                                            "min-w-0 flex h-24 w-full flex-col justify-between overflow-hidden rounded-2xl border px-3 py-3 text-left shadow-sm transition-all duration-150",
                                                             note
                                                                 ? "border-emerald-200 bg-white hover:-translate-y-[1px] hover:bg-emerald-50/70 hover:shadow-md"
                                                                 : "border-slate-200 bg-white/90 hover:-translate-y-[1px] hover:bg-slate-50 hover:shadow-md",
                                                         ].join(" ")}
                                                     >
-                                                        <div className="flex items-center justify-between gap-2">
-                                                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                                                {slotIndex < 6 ? `Class ${slotIndex + 1}` : "Extra"}
+                                                        <div className="flex min-w-0 items-start justify-between gap-2">
+                                                            <div className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                                                <span className="block w-full overflow-hidden text-ellipsis whitespace-nowrap">{heading}</span>
                                                             </div>
-                                                            {note ? (
-                                                                relatesPill(note.relatesTo)
-                                                            ) : (
-                                                                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                                                                    Empty
-                                                                </span>
-                                                            )}
+                                                            <div className="shrink-0">
+                                                                {note ? (
+                                                                    relatesPill(note.relatesTo)
+                                                                ) : (
+                                                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Empty</span>
+                                                                )}
+                                                            </div>
                                                         </div>
 
-                                                        <div className="mt-2 text-base font-bold tracking-tight text-slate-800">
+                                                        <div className="text-base font-bold tracking-tight text-slate-800">
                                                             {note ? (
                                                                 truncateOneLine(note.title || note.body, 28)
                                                             ) : (
-                                                                <span className="font-medium text-slate-400">
-                                                                    Click to add…
-                                                                </span>
+                                                                <span className="font-medium text-slate-400">Click to add…</span>
                                                             )}
                                                         </div>
                                                     </button>
@@ -726,13 +837,11 @@ export default function TeacherPlanner() {
                         </div>
                     </div>
 
-                    {/* Right preview */}
                     <div className="hidden lg:block">
                         <WeekPreviewCard monday={nextWeekMonday} onClick={() => setWeekMonday(nextWeekMonday)} />
                     </div>
                 </div>
 
-                {/* Events popover */}
                 {eventsPopover.open && eventsPopover.dayISO && (
                     <div className="fixed inset-0 z-40">
                         <div
@@ -746,12 +855,8 @@ export default function TeacherPlanner() {
                             >
                                 <div className="flex items-center justify-between gap-3">
                                     <div>
-                                        <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-                                            Events
-                                        </div>
-                                        <div className="mt-1 text-xl font-black tracking-tight text-slate-900">
-                                            {eventsPopover.dayISO}
-                                        </div>
+                                        <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">Events</div>
+                                        <div className="mt-1 text-xl font-black tracking-tight text-slate-900">{eventsPopover.dayISO}</div>
                                     </div>
 
                                     <button
@@ -765,10 +870,7 @@ export default function TeacherPlanner() {
 
                                 <div className="mt-4 grid gap-3">
                                     {(eventsByDay.get(eventsPopover.dayISO) || []).map((e) => (
-                                        <div
-                                            key={e.id}
-                                            className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm"
-                                        >
+                                        <div key={e.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
                                             <div className="flex items-start justify-between gap-3">
                                                 <div className="min-w-0">
                                                     <div className="flex items-center gap-2">
@@ -788,23 +890,9 @@ export default function TeacherPlanner() {
                                                                 {e.end_date ? ` – ${fmtTime12h(e.end_date)}` : ""}
                                                             </span>
                                                         )}
-
-                                                        {typeof e.class_id === "number" ? (
-                                                            <span className="ml-2 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px]">
-                                                                Class #{e.class_id}
-                                                            </span>
-                                                        ) : (
-                                                            <span className="ml-2 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px]">
-                                                                Global
-                                                            </span>
-                                                        )}
                                                     </div>
 
-                                                    {e.description ? (
-                                                        <div className="mt-3 whitespace-pre-wrap text-sm text-slate-700">
-                                                            {e.description}
-                                                        </div>
-                                                    ) : null}
+                                                    {e.description ? <div className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{e.description}</div> : null}
                                                 </div>
 
                                                 <button
@@ -828,7 +916,71 @@ export default function TeacherPlanner() {
                     </div>
                 )}
 
-                {/* Slot editor modal */}
+                {settingsOpen && (
+                    <div className="fixed inset-0 z-50">
+                        <div className="absolute inset-0 bg-slate-900/25 backdrop-blur-[3px]" />
+                        <div className="absolute left-1/2 top-16 w-[min(560px,92vw)] -translate-x-1/2">
+                            <div className="rounded-[32px] border border-white/70 bg-white/90 p-5 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur-xl">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">Planner settings</div>
+                                        <div className="mt-1 text-2xl font-black tracking-tight text-slate-900">Change visible slots</div>
+                                        <div className="mt-1 text-sm text-slate-600">
+                                            Choose how many lesson slots you want to see each day. This saves to your account and follows you across devices.
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setSettingsOpen(false)}
+                                        className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+
+                                <div className="mt-5 rounded-[28px] border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-5 shadow-sm">
+                                    <label className="block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Slots per day</label>
+
+                                    <select
+                                        value={settingsDraftSlots}
+                                        onChange={(e) => setSettingsDraftSlots(clampSlotsPerDay(Number(e.target.value)))}
+                                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                    >
+                                        {[6, 7, 8, 9, 10].map((n) => (
+                                            <option key={n} value={n}>
+                                                {n} slots per day
+                                            </option>
+                                        ))}
+                                    </select>
+
+                                    <div className="mt-3 text-sm text-slate-600">
+                                        Timetable headings come from Teacher Admin. Unassigned slots show <span className="font-bold text-slate-900">FREE</span>.
+                                    </div>
+                                </div>
+
+                                <div className="mt-5 flex justify-end gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setSettingsOpen(false)}
+                                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                                    >
+                                        Cancel
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={applySettings}
+                                        className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-sm font-bold text-white shadow-lg transition hover:shadow-xl"
+                                    >
+                                        Save settings
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {editing.open && (
                     <div className="fixed inset-0 z-50">
                         <div className="absolute inset-0 bg-slate-900/25 backdrop-blur-[3px]" />
@@ -836,17 +988,16 @@ export default function TeacherPlanner() {
                             <div className="rounded-[32px] border border-white/70 bg-white/85 p-4 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur-xl">
                                 <div className="flex items-center justify-between gap-3">
                                     <div className="min-w-0">
-                                        <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-                                            Edit note
-                                        </div>
+                                        <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">Edit note</div>
                                         <div className="mt-1 text-xl font-black tracking-tight text-slate-900">
-                                            Day {editing.dayIndex + 1} • Line {editing.slotIndex + 1}
+                                            {(() => {
+                                                const dayKey = dayKeyFromIndex(editing.dayIndex);
+                                                const heading = getPlannerSlotHeadingForDay(teacherAdminState, classes, dayKey, editing.slotIndex);
+                                                return `${weekDays[editing.dayIndex]?.toLocaleDateString("en-IE", { weekday: "long" }) || `Day ${editing.dayIndex + 1}`} • ${heading}`;
+                                            })()}
                                         </div>
                                         <div className="mt-1 text-xs text-slate-500">
-                                            Week:{" "}
-                                            <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-slate-700">
-                                                {editing.weekKey}
-                                            </span>
+                                            Week: <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-slate-700">{editing.weekKey}</span>
                                         </div>
                                     </div>
 
@@ -861,9 +1012,7 @@ export default function TeacherPlanner() {
 
                                 <div className="mt-5 grid gap-5 md:grid-cols-[1.25fr_0.82fr]">
                                     <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                                        <label className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                                            Short title
-                                        </label>
+                                        <label className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Short title</label>
                                         <input
                                             value={draftTitle}
                                             onChange={(e) => setDraftTitle(e.target.value)}
@@ -871,9 +1020,7 @@ export default function TeacherPlanner() {
                                             placeholder="e.g. Print worksheets / Prep quiz / Call home…"
                                         />
 
-                                        <label className="mt-5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                                            Full note
-                                        </label>
+                                        <label className="mt-5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Full note</label>
                                         <textarea
                                             value={draftBody}
                                             onChange={(e) => setDraftBody(e.target.value)}
@@ -882,41 +1029,25 @@ export default function TeacherPlanner() {
                                             placeholder="Write the full detail here…"
                                         />
 
-                                        <div className="mt-3 text-xs text-slate-500">
-                                            Tip: Leave both fields blank and press <b>Save</b> to clear this line.
-                                        </div>
+                                        <div className="mt-3 text-xs text-slate-500">Tip: Leave both fields blank and press <b>Save</b> to clear this line.</div>
                                     </div>
 
                                     <div className="rounded-[28px] border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-5 shadow-sm">
-                                        <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                                            Relates to
-                                        </div>
+                                        <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Relates to</div>
 
                                         <div className="mt-4 grid gap-3">
                                             <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700">
-                                                <input
-                                                    type="radio"
-                                                    checked={draftRelatesKind === "general"}
-                                                    onChange={() => setDraftRelatesKind("general")}
-                                                />
+                                                <input type="radio" checked={draftRelatesKind === "general"} onChange={() => setDraftRelatesKind("general")} />
                                                 General
                                             </label>
 
                                             <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700">
-                                                <input
-                                                    type="radio"
-                                                    checked={draftRelatesKind === "personal"}
-                                                    onChange={() => setDraftRelatesKind("personal")}
-                                                />
+                                                <input type="radio" checked={draftRelatesKind === "personal"} onChange={() => setDraftRelatesKind("personal")} />
                                                 Personal
                                             </label>
 
                                             <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700">
-                                                <input
-                                                    type="radio"
-                                                    checked={draftRelatesKind === "class"}
-                                                    onChange={() => setDraftRelatesKind("class")}
-                                                />
+                                                <input type="radio" checked={draftRelatesKind === "class"} onChange={() => setDraftRelatesKind("class")} />
                                                 Class / Club
                                             </label>
 
@@ -964,7 +1095,6 @@ export default function TeacherPlanner() {
                     </div>
                 )}
 
-                {/* Tasks */}
                 <div className="fixed bottom-16 right-4 z-40 w-[min(320px,92vw)]">
                     <div className="rounded-[28px] border border-white/70 bg-white/88 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.14)] backdrop-blur-xl">
                         <div className="flex items-center justify-between gap-2">
@@ -1018,24 +1148,16 @@ export default function TeacherPlanner() {
                                         <div className="text-sm text-slate-600">No tasks yet.</div>
                                     ) : (
                                         activeTasks.map((t) => (
-                                            <div
-                                                key={t.id}
-                                                className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm"
-                                            >
+                                            <div key={t.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm">
                                                 <div className="flex flex-col gap-3">
                                                     <label className="flex items-start gap-3">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={t.done}
-                                                            onChange={() => toggleTaskDone(t.id)}
-                                                            className="mt-1"
-                                                        />
+                                                        <input type="checkbox" checked={t.done} onChange={() => toggleTaskDone(t.id)} className="mt-1" />
 
                                                         <div className="min-w-0 flex-1">
                                                             <div
                                                                 title={t.text}
                                                                 className={[
-                                                                    "text-[14px] font-semibold leading-snug whitespace-pre-wrap break-words",
+                                                                    "break-words whitespace-pre-wrap text-[14px] font-semibold leading-snug",
                                                                     t.done ? "text-slate-400 line-through" : "text-slate-800",
                                                                 ].join(" ")}
                                                             >
@@ -1044,9 +1166,7 @@ export default function TeacherPlanner() {
 
                                                             <div className="mt-2 text-xs text-slate-600">
                                                                 {t.dueDateISO ? (
-                                                                    <span className="rounded-full border border-slate-200 bg-white px-2 py-1">
-                                                                        Due: {t.dueDateISO}
-                                                                    </span>
+                                                                    <span className="rounded-full border border-slate-200 bg-white px-2 py-1">Due: {t.dueDateISO}</span>
                                                                 ) : (
                                                                     <span className="text-slate-400">No due date</span>
                                                                 )}
@@ -1082,23 +1202,15 @@ export default function TeacherPlanner() {
                                     <div className="text-sm text-slate-600">No archived tasks.</div>
                                 ) : (
                                     archivedTasks.map((t) => (
-                                        <div
-                                            key={t.id}
-                                            className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm"
-                                        >
+                                        <div key={t.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm">
                                             <div className="flex items-start justify-between gap-3">
                                                 <div className="min-w-0">
-                                                    <div
-                                                        title={t.text}
-                                                        className="text-[13px] font-semibold leading-snug whitespace-pre-wrap break-words text-slate-800"
-                                                    >
+                                                    <div title={t.text} className="break-words whitespace-pre-wrap text-[13px] font-semibold leading-snug text-slate-800">
                                                         {t.text}
                                                     </div>
                                                     <div className="mt-1 text-xs text-slate-600">
                                                         {t.dueDateISO ? `Due: ${t.dueDateISO}` : "No due date"}{" "}
-                                                        {t.archivedAt
-                                                            ? `• Archived: ${new Date(t.archivedAt).toLocaleDateString("en-IE")}`
-                                                            : ""}
+                                                        {t.archivedAt ? `• Archived: ${new Date(t.archivedAt).toLocaleDateString("en-IE")}` : ""}
                                                     </div>
                                                 </div>
 
