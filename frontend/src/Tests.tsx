@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiFetch } from "./api";
+import { apiFetch, openProtectedFileInNewTab } from "./api";
 
 const API_BASE = "/api";
 
@@ -73,7 +73,9 @@ async function safeJson(res: Response) {
 function resolveFileUrl(fileUrl?: string | null) {
   if (!fileUrl) return "";
   if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
-  return `${API_BASE}${fileUrl}`;
+  if (fileUrl.startsWith("/api/")) return fileUrl;
+  if (fileUrl.startsWith("/")) return `${API_BASE}${fileUrl}`;
+  return `${API_BASE}/${fileUrl}`;
 }
 
 function formatStamp(ts?: string | null) {
@@ -492,14 +494,13 @@ export default function TestsPage() {
 
         <div className="flex shrink-0 items-center gap-3">
           {href ? (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              type="button"
+              onClick={() => void openProtectedFileInNewTab(href)}
               className="rounded-2xl border-2 border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100"
             >
               Open
-            </a>
+            </button>
           ) : (
             <span className="rounded-2xl border-2 border-slate-200 bg-white px-5 py-2 text-sm text-slate-500">
               No file

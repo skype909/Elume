@@ -11,7 +11,7 @@ import QRCode from "react-qr-code";
 import ELogo from "./assets/ELogo.png";
 import ELogo2 from "./assets/ELogo2.png";
 import { Settings, Timer, Bell, Play, Pause, RotateCcw } from "lucide-react";
-import { apiFetch } from "./api";
+import { apiFetch, openProtectedFileInNewTab } from "./api";
 
 
 
@@ -116,39 +116,15 @@ function normalizeLinks(v: any): string[] {
 }
 
 function resolveFileUrl(u: string) {
-  if (!u) return u;
+  if (!u) return "";
   if (u.startsWith("http://") || u.startsWith("https://")) return u;
+  if (u.startsWith("/api/")) return u;
   if (u.startsWith("/")) return `${API_BASE}${u}`;
   return `${API_BASE}/${u}`;
 }
 
 async function openProtectedAttachmentInNewTab(link: string) {
-  // External links should still open normally
-  if (link.startsWith("http://") || link.startsWith("https://")) {
-    window.open(link, "_blank", "noopener,noreferrer");
-    return;
-  }
-
-  const url = resolveFileUrl(link);
-
-  const res = await apiFetch(url, {
-    method: "GET",
-    // pass-through for fetch init if your helper supports it
-  });
-
-  // If apiFetch returns a Response
-  if (res instanceof Response) {
-    if (!res.ok) {
-      throw new Error(`Failed to open attachment (${res.status})`);
-    }
-    const blob = await res.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    window.open(objectUrl, "_blank", "noopener,noreferrer");
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-    return;
-  }
-
-  throw new Error("Unexpected attachment response");
+  await openProtectedFileInNewTab(resolveFileUrl(link));
 }
 
 /** ✅ Ensure a post always has correct shapes for rendering */
@@ -509,35 +485,6 @@ export default function ClassPage() {
     })) as ClassAccessDetails;
     setClassCode(data.class_code);
     setClassPin(data.class_pin);
-  }
-
-  async function openProtectedLinkInNewTab(link: string) {
-    const token =
-      localStorage.getItem("token") ||
-      localStorage.getItem("access_token");
-
-    if (!token) {
-      throw new Error("Missing login token");
-    }
-
-    const res = await fetch(resolveFileUrl(link), {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Failed to open file (${res.status})`);
-    }
-
-    const blob = await res.blob();
-    const objectUrl = URL.createObjectURL(blob);
-
-    window.open(objectUrl, "_blank", "noopener,noreferrer");
-
-    window.setTimeout(() => {
-      URL.revokeObjectURL(objectUrl);
-    }, 60000);
   }
 
   // --- fetch class ---
@@ -1419,9 +1366,9 @@ export default function ClassPage() {
                       type="button"
                       onClick={async () => {
                         try {
-                          await openProtectedLinkInNewTab(l);
+                          await openProtectedAttachmentInNewTab(l);
                         } catch (err) {
-                          console.error(err);
+                          console.error("Attachment open failed:", l, err);
                           alert("Could not open attachment.");
                         }
                       }}

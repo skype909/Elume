@@ -1,7 +1,7 @@
 // frontend/src/ExamPapersPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiFetch } from "./api";
+import { apiFetch, openProtectedFileInNewTab } from "./api";
 
 const API_BASE = "/api";
 
@@ -33,7 +33,9 @@ async function safeJson(res: Response) {
 function resolveFileUrl(fileUrl: string) {
   if (!fileUrl) return "";
   if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
-  return `${API_BASE}${fileUrl}`;
+  if (fileUrl.startsWith("/api/")) return fileUrl;
+  if (fileUrl.startsWith("/")) return `${API_BASE}${fileUrl}`;
+  return `${API_BASE}/${fileUrl}`;
 }
 
 type CategoryKey = "state" | "mock";
@@ -541,16 +543,15 @@ export default function ExamPapersPage() {
                           key={p.id}
                           className="flex items-center justify-between gap-3 rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-3"
                         >
-                          <a
-                            href={resolveFileUrl(p.file_url)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="min-w-0 flex-1 hover:underline"
+                          <button
+                            type="button"
+                            onClick={() => void openProtectedFileInNewTab(resolveFileUrl(p.file_url))}
+                            className="min-w-0 flex-1 text-left hover:underline"
                             title="Open PDF"
                           >
                             <div className="truncate font-semibold text-slate-900">{p.filename}</div>
                             <div className="text-xs text-slate-600">Uploaded: {fmtDate(p.uploaded_at)}</div>
-                          </a>
+                          </button>
 
                           <button
                             type="button"

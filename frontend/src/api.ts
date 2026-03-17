@@ -84,3 +84,24 @@ export async function apiFetchBlob(path: string, init: RequestInit = {}) {
 
   return res.blob();
 }
+
+export async function openProtectedFileInNewTab(path: string) {
+  if (!path) throw new Error("Missing file path");
+
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    window.open(path, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  const url =
+    path.startsWith("/api")
+      ? path
+      : "/api" + (path.startsWith("/") ? "" : "/") + path;
+
+  const blob = await apiFetchBlob(url, { method: "GET" });
+
+  const objectUrl = URL.createObjectURL(blob);
+  window.open(objectUrl, "_blank", "noopener,noreferrer");
+
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+}

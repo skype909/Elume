@@ -28,8 +28,9 @@ type NoteItem = {
 };
 
 function resolveFileUrl(u: string) {
-  if (!u) return u;
+  if (!u) return "";
   if (u.startsWith("http://") || u.startsWith("https://")) return u;
+  if (u.startsWith("/api/")) return u;
   if (u.startsWith("/")) return `${API_BASE}${u}`;
   return `${API_BASE}/${u}`;
 }
