@@ -354,6 +354,19 @@ export default function StudentJoinQuizPage() {
 
   }, []);
 
+  useEffect(() => {
+    if (state !== "ended") return;
+
+    stopPolling();
+
+    const t = window.setTimeout(() => {
+      navigate("/student?mode=quiz", { replace: true });
+    }, 1800);
+
+    return () => window.clearTimeout(t);
+  }, [state, navigate]);
+
+
   async function joinWithName() {
     const clean = nameInput.trim();
     if (clean.length < 2) {
@@ -719,17 +732,14 @@ export default function StudentJoinQuizPage() {
                 Session finished
               </div>
               <div className="mt-2 text-sm leading-6 text-slate-600">
-                The teacher has ended the quiz. You can close this page.
+                The teacher has ended the quiz. Returning you to Student Hub…
               </div>
 
               <button
                 className="mt-6 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50"
-                onClick={() => {
-                  stopPolling();
-                  fetchCurrent().then(() => startPolling());
-                }}
+                onClick={() => navigate("/student?mode=quiz", { replace: true })}
               >
-                Check again
+                Return now
               </button>
             </div>
           )}

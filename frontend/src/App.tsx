@@ -28,6 +28,7 @@ import StudentCollabRoomPage from "./StudentCollabRoomPage";
 import CollaborationPage from "./CollaborationPage";
 import LegalPage from "./LegalPage";
 import ResetPasswordPage from "./ResetPasswordPage";
+import StudentPage from "./StudentPage";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -1673,6 +1674,8 @@ export default function App() {
   // Public routes should NOT require login
   const isPublicRoute =
     location.pathname.startsWith("/s/") ||
+    location.pathname === "/student" ||
+    location.pathname.startsWith("/student/") ||
     location.pathname.startsWith("/join/") ||
     location.pathname.startsWith("/collab/join/") ||
     location.pathname.startsWith("/reset-password");
@@ -1726,6 +1729,8 @@ export default function App() {
         <Route path="/class/:id/calendar" element={<CalendarPage />} />
         <Route path="/class/:id/admin" element={<ClassAdminPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/student" element={<StudentPage />} />
+        <Route path="/student/:token" element={<StudentClassPage />} />
         <Route path="/s/:token" element={<StudentClassPage />} />
         <Route path="/" element={<Dashboard />} />
         <Route path="/admin" element={<TeacherAdminPage />} />
@@ -1741,6 +1746,8 @@ export default function App() {
       </Routes>
 
       {!location.pathname.startsWith("/join/") &&
+        location.pathname !== "/student" &&
+        !location.pathname.startsWith("/student/") &&
         !location.pathname.startsWith("/s/") &&
         !location.pathname.startsWith("/collab/join/") &&
         !location.pathname.startsWith("/reset-password") && (

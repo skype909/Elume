@@ -8,7 +8,7 @@ import random
 import string
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from copy import deepcopy
 
@@ -493,6 +493,36 @@ def get_active_student_access_link_or_404(
         raise HTTPException(status_code=404, detail="Invalid link")
     return link
 
+
+def _get_or_create_active_student_access_link(
+    class_id: int,
+    db: Session,
+) -> models.StudentAccessLink:
+    link = db.query(models.StudentAccessLink).filter(
+        models.StudentAccessLink.class_id == class_id,
+        models.StudentAccessLink.is_active == True,
+    ).order_by(models.StudentAccessLink.created_at.desc()).first()
+
+    if link:
+        return link
+
+    link = models.StudentAccessLink(
+        class_id=class_id,
+        token=secrets.token_urlsafe(24),
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return link
+
+
+def _class_access_out(cls: ClassModel) -> schemas.ClassAccessOut:
+    return schemas.ClassAccessOut(
+        class_id=cls.id,
+        class_code=(cls.class_code or "").strip(),
+        class_pin=(cls.class_pin or "").strip(),
+    )
+
 def _internal_post_upload_relpath_or_none(link: str) -> Optional[str]:
     value = (link or "").strip()
     for prefix in ("/uploads/posts/", "/uploads/whiteboards/"):
@@ -924,6 +954,7 @@ class CollabRoomManager:
             self.disconnect(session_code, room_key, ws)
 
 collab_room_manager = CollabRoomManager()
+CLASS_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
 def _collab_room_key(room_number: int | None) -> str:
     if room_number is None:
@@ -931,8 +962,25 @@ def _collab_room_key(room_number: int | None) -> str:
     return f"room-{int(room_number)}"
 
 def _rand_code(n: int = 6) -> str:
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    return "".join(random.choice(alphabet) for _ in range(n))
+    return "".join(random.choice(CLASS_CODE_ALPHABET) for _ in range(n))
+
+
+def _normalise_class_code(value: str) -> str:
+    cleaned = re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+    return cleaned[:6]
+
+
+def _rand_class_code(db: Session) -> str:
+    for _ in range(20):
+        code = "".join(random.choice(CLASS_CODE_ALPHABET) for _ in range(6))
+        exists = db.query(ClassModel).filter(ClassModel.class_code == code).first()
+        if not exists:
+            return code
+    raise HTTPException(status_code=500, detail="Could not generate class code")
+
+
+def _rand_class_pin() -> str:
+    return "".join(random.choice(string.digits) for _ in range(4))
 
 def _kid_name() -> str:
     adj = ["Sunny","Rocket","Brave","Clever","Happy","Chill","Mighty","Rapid","Cosmic","Bouncy","Quiet","Zippy"]
@@ -982,6 +1030,48 @@ def ensure_columns():
         if "owner_user_id" not in col_names:
             conn.execute(text("ALTER TABLE classes ADD COLUMN owner_user_id INTEGER"))
             conn.commit()
+        if "class_code" not in col_names:
+            conn.execute(text("ALTER TABLE classes ADD COLUMN class_code TEXT"))
+            conn.commit()
+        if "class_pin" not in col_names:
+            conn.execute(text("ALTER TABLE classes ADD COLUMN class_pin TEXT"))
+            conn.commit()
+
+        conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_classes_class_code ON classes (class_code)")
+        )
+        conn.commit()
+
+
+def _ensure_class_access_details(cls: ClassModel, db: Session) -> ClassModel:
+    changed = False
+
+    if not (cls.class_code or "").strip():
+        cls.class_code = _rand_class_code(db)
+        changed = True
+
+    if not (cls.class_pin or "").strip():
+        cls.class_pin = _rand_class_pin()
+        changed = True
+
+    if changed:
+        db.add(cls)
+
+    return cls
+
+
+def _backfill_class_access_details(db: Session) -> None:
+    classes = db.query(ClassModel).all()
+    changed = False
+    for cls in classes:
+        before_code = cls.class_code
+        before_pin = cls.class_pin
+        _ensure_class_access_details(cls, db)
+        if cls.class_code != before_code or cls.class_pin != before_pin:
+            changed = True
+
+    if changed:
+        db.commit()
 
 def _collab_time_left_seconds(s: CollabSessionModel) -> Optional[int]:
     if not s.timer_minutes or not s.breakout_started_at or s.state != "live":
@@ -1897,73 +1987,84 @@ def livequiz_results(
     s = get_owned_livequiz_session_or_404(code, db, user)
     return _build_livequiz_results(db, s)
 
-    
+def normalize_teacher_planner_payload(payload: Any) -> dict:
+    if not isinstance(payload, dict):
+        payload = {}
+
+    notes = payload.get("notes") if isinstance(payload.get("notes"), list) else []
+    tasks = payload.get("tasks") if isinstance(payload.get("tasks"), list) else []
+
+    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+    raw_slots = settings.get("slotsPerDay", 6)
+
+    try:
+        slots_per_day = int(raw_slots)
+    except Exception:
+        slots_per_day = 6
+
+    slots_per_day = max(6, min(10, slots_per_day))
+
+    return {
+        "notes": notes,
+        "tasks": tasks,
+        "settings": {
+            "slotsPerDay": slots_per_day,
+        },
+    }
+
+
 @app.get("/teacher-planner")
 def get_teacher_planner(
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
-    row = (
+    planner = (
         db.query(TeacherPlannerStateModel)
-        .filter(TeacherPlannerStateModel.teacher_id == user.id)
+        .filter(TeacherPlannerStateModel.teacher_id == current_user.id)
         .first()
     )
 
-    if not row:
-        return {"notes": [], "tasks": [], "updated_at": None}
+    if not planner or not planner.state_json:
+        return normalize_teacher_planner_payload({})
 
     try:
-        data = json.loads(row.state_json or '{"notes":[],"tasks":[]}')
+        raw_state = json.loads(planner.state_json)
     except Exception:
-        data = {"notes": [], "tasks": []}
+        raw_state = {}
 
-    return {
-        "notes": data.get("notes", []),
-        "tasks": data.get("tasks", []),
-        "updated_at": row.updated_at,
-    }
+    return normalize_teacher_planner_payload(raw_state)
+
 
 @app.put("/teacher-planner")
-def save_teacher_planner(
-    payload: dict,
+def update_teacher_planner(
+    body: dict,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
-    notes = payload.get("notes", [])
-    tasks = payload.get("tasks", [])
+    payload = normalize_teacher_planner_payload(body)
 
-    if not isinstance(notes, list) or not isinstance(tasks, list):
-        raise HTTPException(status_code=400, detail="notes and tasks must be arrays")
-
-    raw = json.dumps(
-        {"notes": notes, "tasks": tasks},
-        ensure_ascii=False,
-    )
-
-    row = (
+    planner = (
         db.query(TeacherPlannerStateModel)
-        .filter(TeacherPlannerStateModel.teacher_id == user.id)
+        .filter(TeacherPlannerStateModel.teacher_id == current_user.id)
         .first()
     )
 
-    now = datetime.utcnow().isoformat()
+    now_iso = datetime.utcnow().isoformat()
 
-    if row:
-        row.state_json = raw
-        row.updated_at = now
-    else:
-        row = TeacherPlannerStateModel(
-            teacher_id=user.id,
-            state_json=raw,
-            updated_at=now,
+    if not planner:
+        planner = TeacherPlannerStateModel(
+            teacher_id=current_user.id,
+            state_json=json.dumps(payload, ensure_ascii=False),
+            updated_at=now_iso,
         )
-        db.add(row)
+        db.add(planner)
+    else:
+        planner.state_json = json.dumps(payload, ensure_ascii=False)
+        planner.updated_at = now_iso
 
     db.commit()
-    db.refresh(row)
-
-    return {"status": "ok", "updated_at": row.updated_at}
-
+    db.refresh(planner)
+    return payload
 
 # =========================================================
 # DB
@@ -2280,6 +2381,7 @@ def on_startup():
     db = SessionLocal()
     try:
         seed_classes(db)
+        _backfill_class_access_details(db)
     finally:
         db.close()
 
@@ -2305,19 +2407,15 @@ def create_class(
         owner_user_id=user.id,
         name=new_class.name,
         subject=new_class.subject,
+        class_code=_rand_class_code(db),
+        class_pin=_rand_class_pin(),
     )
     db.add(c)
     db.commit()
     db.refresh(c)
 
     # auto-create student access token
-    token = secrets.token_urlsafe(24)
-    link = models.StudentAccessLink(
-        class_id=c.id,
-        token=token,
-    )
-    db.add(link)
-    db.commit()
+    _get_or_create_active_student_access_link(c.id, db)
 
     return c
 
@@ -3285,6 +3383,72 @@ def get_student_access(
     ).first()
 
     return {"token": link.token if link else None}
+
+
+@app.get("/classes/{class_id}/student-access-code", response_model=schemas.ClassAccessOut)
+def get_class_access_details(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    cls = get_owned_class_or_404(class_id, db, user)
+    _ensure_class_access_details(cls, db)
+    db.commit()
+    db.refresh(cls)
+    return _class_access_out(cls)
+
+
+@app.post("/classes/{class_id}/regenerate-student-access-pin", response_model=schemas.ClassAccessOut)
+def regenerate_class_access_pin(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    cls = get_owned_class_or_404(class_id, db, user)
+    cls.class_pin = _rand_class_pin()
+    db.add(cls)
+    db.commit()
+    db.refresh(cls)
+    return _class_access_out(cls)
+
+
+@app.post("/classes/{class_id}/regenerate-student-access-code", response_model=schemas.ClassAccessOut)
+def regenerate_class_access_code(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    cls = get_owned_class_or_404(class_id, db, user)
+    cls.class_code = _rand_class_code(db)
+    db.add(cls)
+    db.commit()
+    db.refresh(cls)
+    return _class_access_out(cls)
+
+
+@app.post("/student/join/class", response_model=schemas.StudentJoinRedirectOut)
+def join_class_by_code(
+    payload: schemas.ClassJoinPayload,
+    db: Session = Depends(get_db),
+):
+    code = _normalise_class_code(payload.code)
+    pin = re.sub(r"\D", "", payload.pin or "")[:4]
+
+    if len(code) != 6:
+        raise HTTPException(status_code=400, detail="Please enter a valid 6-character class code.")
+    if len(pin) != 4:
+        raise HTTPException(status_code=400, detail="Please enter a valid 4-digit class PIN.")
+
+    cls = db.query(ClassModel).filter(ClassModel.class_code == code).first()
+    if not cls or (cls.class_pin or "").strip() != pin:
+        raise HTTPException(status_code=400, detail="That class code or PIN is not valid.")
+
+    link = _get_or_create_active_student_access_link(cls.id, db)
+    return schemas.StudentJoinRedirectOut(
+        ok=True,
+        redirect_url=f"/student/{link.token}",
+        message="Joined successfully.",
+    )
 
 @app.get("/student/{token}")
 def student_view(token: str, db: Session = Depends(get_db)):

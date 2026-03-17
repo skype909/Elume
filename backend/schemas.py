@@ -43,6 +43,24 @@ class ClassOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class ClassAccessOut(BaseModel):
+    class_id: int
+    class_code: str
+    class_pin: str
+
+
+class ClassJoinPayload(BaseModel):
+    code: str
+    pin: str
+    name: Optional[str] = None
+
+
+class StudentJoinRedirectOut(BaseModel):
+    ok: bool
+    redirect_url: Optional[str] = None
+    message: Optional[str] = None
+
 # -------------------------
 # Tests
 # -------------------------

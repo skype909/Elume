@@ -148,6 +148,16 @@ export default function StudentCollabRoomPage() {
     return () => window.clearInterval(timer);
   }, [anonId, sessionCode]);
 
+    useEffect(() => {
+    if (sessionState !== "ended") return;
+
+    const t = window.setTimeout(() => {
+      navigate("/student?mode=collab", { replace: true });
+    }, 1800);
+
+    return () => window.clearTimeout(t);
+  }, [sessionState, navigate]);
+
   if (!anonId && !loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 p-4">
@@ -210,6 +220,31 @@ export default function StudentCollabRoomPage() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 p-4">
         <div className="mx-auto max-w-md rounded-[32px] border border-white/70 bg-white/85 p-6 text-center shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
           <div className="text-2xl font-black text-slate-900">Loading…</div>
+        </div>
+      </div>
+    );
+  }
+
+    if (sessionState === "ended") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 p-4">
+        <div className="mx-auto max-w-md rounded-[32px] border border-white/70 bg-white/85 p-6 text-center shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+          <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-slate-200 bg-slate-50 shadow-sm">
+            <img src={elumeLogo} alt="Elume" className="h-10 w-10 object-contain" />
+          </div>
+
+          <div className="mt-5 text-2xl font-black text-slate-900">Session ended</div>
+          <div className="mt-2 text-sm leading-6 text-slate-600">
+            Your teacher has ended the collaboration session. Returning you to Student Hub…
+          </div>
+
+          <button
+            type="button"
+            onClick={() => navigate("/student?mode=collab", { replace: true })}
+            className="mt-6 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 shadow-sm"
+          >
+            Return now
+          </button>
         </div>
       </div>
     );
