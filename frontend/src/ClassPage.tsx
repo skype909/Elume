@@ -122,6 +122,35 @@ function resolveFileUrl(u: string) {
   return `${API_BASE}/${u}`;
 }
 
+async function openProtectedAttachmentInNewTab(link: string) {
+  // External links should still open normally
+  if (link.startsWith("http://") || link.startsWith("https://")) {
+    window.open(link, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  const url = resolveFileUrl(link);
+
+  const res = await apiFetch(url, {
+    method: "GET",
+    // pass-through for fetch init if your helper supports it
+  });
+
+  // If apiFetch returns a Response
+  if (res instanceof Response) {
+    if (!res.ok) {
+      throw new Error(`Failed to open attachment (${res.status})`);
+    }
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    window.open(objectUrl, "_blank", "noopener,noreferrer");
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    return;
+  }
+
+  throw new Error("Unexpected attachment response");
+}
+
 /** ✅ Ensure a post always has correct shapes for rendering */
 function normalizePost(p: any): Post {
   return {
