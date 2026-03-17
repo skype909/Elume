@@ -14,6 +14,15 @@ class UserModel(Base):
     email = Column(String, nullable=False, unique=True, index=True)
     password_hash = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    subscription_status = Column(String, nullable=False, default="inactive")
+    billing_interval = Column(String, nullable=True)  # monthly | annual
+    stripe_customer_id = Column(String, nullable=True)
+    stripe_subscription_id = Column(String, nullable=True)
+    stripe_checkout_session_id = Column(String, nullable=True)
+    subscription_started_at = Column(DateTime, nullable=True)
+    current_period_end = Column(DateTime, nullable=True)
+    launch_offer_applied = Column(Boolean, nullable=False, default=False)
 
     classes = relationship("ClassModel", back_populates="owner")
 

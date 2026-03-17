@@ -267,7 +267,7 @@ export default function CollabBoard({
     const [showPdfPanel, setShowPdfPanel] = useState(false);
     const [pdfPageNum, setPdfPageNum] = useState(1);
     const [pdfNumPages, setPdfNumPages] = useState(1);
-    const [pdfViewScale, setPdfViewScale] = useState(1.25);
+    const [pdfViewScale, setPdfViewScale] = useState(1);
     const [pdfInsertScale, setPdfInsertScale] = useState(1);
     const [pdfCanvasSize, setPdfCanvasSize] = useState({ w: 0, h: 0 });
     const [clipRect, setClipRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -287,14 +287,30 @@ export default function CollabBoard({
     const pdfBlobUrlRef = useRef<string | null>(null);
     const pdfSourceUrlRef = useRef<string | null>(null);
     const pdfRenderTokenRef = useRef(0);
+    const pdfRenderTaskRef = useRef<any>(null);
     const clipDragRef = useRef(false);
     const clipStartRef = useRef<{ x: number; y: number } | null>(null);
     const pdfImportNonceRef = useRef<number | undefined>(undefined);
     const hasSeenPdfImportNonceRef = useRef(false);
+    const pdfPanRef = useRef<{ active: boolean; startX: number; startY: number; scrollLeft: number; scrollTop: number }>({
+        active: false,
+        startX: 0,
+        startY: 0,
+        scrollLeft: 0,
+        scrollTop: 0,
+    });
 
 
     const boardLabel = useMemo(() => `${sessionCode} / ${roomKey}`, [sessionCode, roomKey]);
     const canLoadPdfImports = Boolean(editable && classId && apiBase && apiFetch);
+    const backgroundObjects = useMemo(
+        () => objects.filter((obj) => obj.type === "image" && obj.id !== selectedObjectId),
+        [objects, selectedObjectId]
+    );
+    const foregroundObjects = useMemo(
+        () => objects.filter((obj) => obj.type !== "image" || obj.id === selectedObjectId),
+        [objects, selectedObjectId]
+    );
 
     function resolveFileUrl(fileUrl: string): string {
         if (!fileUrl) return fileUrl;
@@ -792,6 +808,12 @@ export default function CollabBoard({
         if (!canvas || !viewer) return;
 
         const renderToken = ++pdfRenderTokenRef.current;
+        if (pdfRenderTaskRef.current?.cancel) {
+            try {
+                pdfRenderTaskRef.current.cancel();
+            } catch { }
+        }
+        pdfRenderTaskRef.current = null;
 
         const pdfjsLib = await loadPdfJs();
         const pdfUrl = await getAuthenticatedPdfUrl(importedPdf.item.file_url);
@@ -813,19 +835,35 @@ export default function CollabBoard({
 
         if (renderToken !== pdfRenderTokenRef.current) return;
 
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
         canvas.style.width = `${viewport.width}px`;
         canvas.style.height = `${viewport.height}px`;
-        setPdfCanvasSize({ w: viewport.width, h: viewport.height });
 
-        await page.render({ canvasContext: ctx, viewport }).promise;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        setPdfCanvasSize((prev) =>
+            prev.w === viewport.width && prev.h === viewport.height
+                ? prev
+                : { w: viewport.width, h: viewport.height }
+        );
+
+        const renderTask = page.render({ canvasContext: ctx, viewport });
+        pdfRenderTaskRef.current = renderTask;
+        try {
+            await renderTask.promise;
+        } catch (error: any) {
+            if (error?.name === "RenderingCancelledException") return;
+            throw error;
+        }
 
         if (renderToken !== pdfRenderTokenRef.current) return;
 
+        pdfRenderTaskRef.current = null;
         setPdfNumPages(pdfDoc.numPages || 1);
         setPdfPageNum(safePage);
         setClipRect(null);
@@ -895,7 +933,52 @@ export default function CollabBoard({
         clipStartRef.current = null;
     }
 
+    function onPdfViewerPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+        if (snipMode) return;
+        const viewer = pdfViewerRef.current;
+        if (!viewer) return;
+        pdfPanRef.current = {
+            active: true,
+            startX: e.clientX,
+            startY: e.clientY,
+            scrollLeft: viewer.scrollLeft,
+            scrollTop: viewer.scrollTop,
+        };
+        viewer.setPointerCapture?.(e.pointerId);
+    }
+
+    function onPdfViewerPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+        if (snipMode || !pdfPanRef.current.active) return;
+        const viewer = pdfViewerRef.current;
+        if (!viewer) return;
+        viewer.scrollLeft = pdfPanRef.current.scrollLeft - (e.clientX - pdfPanRef.current.startX);
+        viewer.scrollTop = pdfPanRef.current.scrollTop - (e.clientY - pdfPanRef.current.startY);
+    }
+
+    function onPdfViewerPointerEnd(e: React.PointerEvent<HTMLDivElement>) {
+        const viewer = pdfViewerRef.current;
+        if (viewer) {
+            try {
+                viewer.releasePointerCapture?.(e.pointerId);
+            } catch { }
+        }
+        pdfPanRef.current.active = false;
+    }
+
     function closePdfImport() {
+        pdfRenderTokenRef.current += 1;
+        if (pdfRenderTaskRef.current?.cancel) {
+            try {
+                pdfRenderTaskRef.current.cancel();
+            } catch { }
+        }
+        pdfRenderTaskRef.current = null;
+        const canvas = pdfCanvasRef.current;
+        const ctx = canvas?.getContext("2d");
+        if (canvas && ctx) {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, canvas.width || 0, canvas.height || 0);
+        }
         setShowPdfPanel(false);
         setShowImportModal(false);
         setImportedPdf(null);
@@ -1067,6 +1150,13 @@ export default function CollabBoard({
     }, [onExportReady, sessionCode, roomKey]);
 
     useEffect(() => {
+        if (pdfRenderTaskRef.current?.cancel) {
+            try {
+                pdfRenderTaskRef.current.cancel();
+            } catch { }
+        }
+        pdfRenderTaskRef.current = null;
+        pdfRenderTokenRef.current += 1;
         pdfDocRef.current = null;
         pdfUrlRef.current = null;
         if (pdfBlobUrlRef.current) {
@@ -1078,6 +1168,12 @@ export default function CollabBoard({
 
     useEffect(() => {
         return () => {
+            if (pdfRenderTaskRef.current?.cancel) {
+                try {
+                    pdfRenderTaskRef.current.cancel();
+                } catch { }
+            }
+            pdfRenderTaskRef.current = null;
             if (pdfBlobUrlRef.current) {
                 window.URL.revokeObjectURL(pdfBlobUrlRef.current);
                 pdfBlobUrlRef.current = null;
@@ -1099,6 +1195,16 @@ export default function CollabBoard({
         setSnipMode(false);
         setClipRect(null);
     }, [editable, pdfImportRequestNonce]);
+
+    useEffect(() => {
+        if (showImportModal) return;
+        if (pdfRenderTaskRef.current?.cancel) {
+            try {
+                pdfRenderTaskRef.current.cancel();
+            } catch { }
+        }
+        pdfRenderTaskRef.current = null;
+    }, [showImportModal]);
 
     useEffect(() => {
         if (!editable) return;
@@ -1142,17 +1248,8 @@ export default function CollabBoard({
             void renderPdfToViewer(pdfPageNum);
         });
 
-        let ro: ResizeObserver | null = null;
-        if (pdfViewerRef.current && "ResizeObserver" in window) {
-            ro = new ResizeObserver(() => {
-                void renderPdfToViewer(pdfPageNum);
-            });
-            ro.observe(pdfViewerRef.current);
-        }
-
         return () => {
             window.cancelAnimationFrame(frame);
-            ro?.disconnect();
         };
     }, [importedPdf, showPdfPanel, pdfPageNum, pdfViewScale]);
 
@@ -1692,6 +1789,11 @@ export default function CollabBoard({
 
                 <div className="flex items-center gap-2">
                     {editable && (
+                        <div className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600 md:inline-flex">
+                            Paste image: Ctrl+V / Cmd+V
+                        </div>
+                    )}
+                    {editable && (
                         <button
                             type="button"
                             onClick={() => {
@@ -1737,10 +1839,11 @@ export default function CollabBoard({
 
                 <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:26px_26px]" />
 
-                <canvas ref={committedCanvasRef} className="absolute inset-0" />
-                <canvas ref={previewCanvasRef} className="absolute inset-0" />
+                <div className="absolute inset-0">{backgroundObjects.map((obj) => renderObject(obj))}</div>
+                <canvas ref={committedCanvasRef} className="pointer-events-none absolute inset-0" />
+                <canvas ref={previewCanvasRef} className="pointer-events-none absolute inset-0" />
 
-                <div className="absolute inset-0">{objects.map((obj) => renderObject(obj))}</div>
+                <div className="absolute inset-0">{foregroundObjects.map((obj) => renderObject(obj))}</div>
             </div>
 
             {editable && showImportModal && (
@@ -1801,11 +1904,10 @@ export default function CollabBoard({
                                             setClipRect(null);
                                             setSnipMode(false);
                                         }}
-                                        className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                                            importedPdf?.item.id === entry.item.id && importedPdf?.kind === entry.kind
-                                                ? "border-emerald-300 bg-emerald-50"
-                                                : "border-slate-200 bg-white hover:bg-slate-50"
-                                        }`}
+                                        className={`w-full rounded-2xl border px-4 py-3 text-left transition ${importedPdf?.item.id === entry.item.id && importedPdf?.kind === entry.kind
+                                            ? "border-emerald-300 bg-emerald-50"
+                                            : "border-slate-200 bg-white hover:bg-slate-50"
+                                            }`}
                                     >
                                         <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
                                             {entry.kind === "notes" ? "Notes" : "Exam Papers"}
@@ -1824,7 +1926,7 @@ export default function CollabBoard({
                             </div>
                         </div>
 
-                        <div className="flex min-w-0 flex-1 flex-col bg-white">
+                        <div className="flex min-w-0 min-h-0 flex-1 flex-col bg-white">
                             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
                                 <div className="min-w-0">
                                     <div className="text-sm font-black text-slate-900">
@@ -1906,22 +2008,29 @@ export default function CollabBoard({
                                 )}
                             </div>
 
-                            <div className="flex-1 p-5">
+                            <div className="min-h-0 flex-1 p-5">
                                 {!showPdfPanel || !importedPdf ? (
                                     <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
                                         Choose a PDF from the list to preview and import it.
                                     </div>
                                 ) : (
-                                    <div className="flex h-full flex-col gap-3">
+                                    <div className="flex h-full min-h-0 flex-col gap-3">
                                         <div className="text-xs text-slate-500">
                                             Zoom {pdfViewScale.toFixed(2)}x | Insert scale {pdfInsertScale.toFixed(2)}x
                                         </div>
+                                        <div className="text-xs text-slate-500">
+                                            Scroll or drag to move around the page.
+                                        </div>
                                         <div
                                             ref={pdfViewerRef}
-                                            className="relative min-h-0 flex-1 overflow-auto rounded-[24px] border border-slate-200 bg-slate-50 p-3"
+                                            className="relative min-h-0 flex-1 overflow-x-auto overflow-y-auto rounded-[24px] border border-slate-200 bg-slate-50 p-3"
+                                            onPointerDown={onPdfViewerPointerDown}
+                                            onPointerMove={onPdfViewerPointerMove}
+                                            onPointerUp={onPdfViewerPointerEnd}
+                                            onPointerCancel={onPdfViewerPointerEnd}
                                         >
-                                            <div className="relative inline-block">
-                                                <canvas ref={pdfCanvasRef} className="block rounded-xl bg-white shadow-sm" />
+                                            <div className="relative min-h-0 w-max">
+                                                <canvas ref={pdfCanvasRef} className="block max-w-none rounded-xl bg-white shadow-sm" />
                                                 <div
                                                     ref={pdfOverlayRef}
                                                     className="absolute inset-0"

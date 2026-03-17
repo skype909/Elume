@@ -482,6 +482,35 @@ export default function ClassPage() {
     setClassPin(data.class_pin);
   }
 
+  async function openProtectedLinkInNewTab(link: string) {
+    const token =
+      localStorage.getItem("token") ||
+      localStorage.getItem("access_token");
+
+    if (!token) {
+      throw new Error("Missing login token");
+    }
+
+    const res = await fetch(resolveFileUrl(link), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to open file (${res.status})`);
+    }
+
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+
+    window.open(objectUrl, "_blank", "noopener,noreferrer");
+
+    window.setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 60000);
+  }
+
   // --- fetch class ---
   useEffect(() => {
     if (!validClassId) {
@@ -641,9 +670,9 @@ export default function ClassPage() {
         await apiFetch(`${API_BASE}/posts/${postId}`, {
           method: "PUT",
           body: JSON.stringify({
-          content: editContentDraft,
-          links: editLinksDraft,
-        }),
+            content: editContentDraft,
+            links: editLinksDraft,
+          }),
         })
       );
 
@@ -1356,15 +1385,21 @@ export default function ClassPage() {
                   ))}
 
                   {p.links?.map((l, i) => (
-                    <a
+                    <button
                       key={i}
-                      href={resolveFileUrl(l)}
-                      target="_blank"
-                      rel="noreferrer"
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await openProtectedLinkInNewTab(l);
+                        } catch (err) {
+                          console.error(err);
+                          alert("Could not open attachment.");
+                        }
+                      }}
                       className={`${chip} hover:bg-slate-100`}
                     >
                       📎 Click here
-                    </a>
+                    </button>
                   ))}
 
 

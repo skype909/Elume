@@ -9,6 +9,7 @@ import string
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, List, Optional
+import stripe
 
 from copy import deepcopy
 
@@ -106,6 +107,12 @@ APP_BASE_URL = (os.getenv("APP_BASE_URL") or "http://localhost:5173").strip()
 JWT_ALG = "HS256"
 JWT_EXPIRE_DAYS = 30
 
+STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
+STRIPE_PRICE_MONTHLY_EUR = (os.getenv("STRIPE_PRICE_MONTHLY_EUR") or "").strip()
+STRIPE_PRICE_ANNUAL_EUR = (os.getenv("STRIPE_PRICE_ANNUAL_EUR") or "").strip()
+
+stripe.api_key = STRIPE_SECRET_KEY
+
 
 if _jwt_secret_is_weak(JWT_SECRET) and not _is_explicit_development():
     raise RuntimeError(
@@ -140,6 +147,13 @@ class AdminRenameUser(BaseModel):
     old_email: str
     new_email: str
 
+class CreateCheckoutSessionRequest(BaseModel):
+    plan: str  # "monthly" | "annual"
+
+
+class CreateCheckoutSessionResponse(BaseModel):
+    checkout_url: str
+
 def _make_token(user_id: int, email: str) -> str:
     exp = datetime.utcnow() + timedelta(days=JWT_EXPIRE_DAYS)
     return jwt.encode(
@@ -147,6 +161,14 @@ def _make_token(user_id: int, email: str) -> str:
         JWT_SECRET,
         algorithm=JWT_ALG,
     )
+
+def _annual_launch_offer_applies(now: datetime | None = None) -> bool:
+    now = now or datetime.utcnow()
+
+    # Adjust this date if you want a different launch window start
+    offer_start = datetime(2026, 4, 1)
+
+    return now >= offer_start
 
 # -------------------------
 # DOCX Export (editable Word doc)
@@ -441,6 +463,62 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="User not found")
 
     return user
+
+@app.post("/billing/create-checkout-session", response_model=CreateCheckoutSessionResponse)
+def create_checkout_session(
+    payload: CreateCheckoutSessionRequest,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Stripe is not configured")
+    if not STRIPE_PRICE_MONTHLY_EUR or not STRIPE_PRICE_ANNUAL_EUR:
+        raise HTTPException(status_code=500, detail="Stripe prices are not configured")
+
+    plan = (payload.plan or "").strip().lower()
+    if plan not in {"monthly", "annual"}:
+        raise HTTPException(status_code=400, detail="plan must be 'monthly' or 'annual'")
+
+    price_id = STRIPE_PRICE_MONTHLY_EUR if plan == "monthly" else STRIPE_PRICE_ANNUAL_EUR
+    launch_offer_candidate = (plan == "annual" and _annual_launch_offer_applies())
+
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            payment_method_types=["card"],
+            customer_email=user.email,
+            line_items=[
+                {
+                    "price": price_id,
+                    "quantity": 1,
+                }
+            ],
+            success_url=f"{APP_BASE_URL.rstrip('/')}/#/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{APP_BASE_URL.rstrip('/')}/#/billing/cancel",
+            metadata={
+                "user_id": str(user.id),
+                "email": user.email,
+                "plan": plan,
+                "launch_offer_candidate": "true" if launch_offer_candidate else "false",
+            },
+            subscription_data={
+                "metadata": {
+                    "user_id": str(user.id),
+                    "email": user.email,
+                    "plan": plan,
+                    "launch_offer_candidate": "true" if launch_offer_candidate else "false",
+                }
+            },
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create Stripe checkout session: {e}")
+
+    user.subscription_status = "pending"
+    user.billing_interval = plan
+    user.stripe_checkout_session_id = session.id
+    db.commit()
+
+    return {"checkout_url": session.url}
 
 def get_owned_class_or_404(
     class_id: int,
@@ -1024,8 +1102,11 @@ def _current_question(session: LiveQuizSessionModel) -> Optional[dict]:
 def ensure_columns():
     # Safely add missing columns to existing SQLite tables
     with engine.connect() as conn:
+        # -------------------------
+        # classes table
+        # -------------------------
         cols = conn.execute(text("PRAGMA table_info(classes)")).fetchall()
-        col_names = {c[1] for c in cols}  # (cid, name, type, notnull, dflt_value, pk)
+        col_names = {c[1] for c in cols}
 
         if "owner_user_id" not in col_names:
             conn.execute(text("ALTER TABLE classes ADD COLUMN owner_user_id INTEGER"))
@@ -1041,6 +1122,44 @@ def ensure_columns():
             text("CREATE UNIQUE INDEX IF NOT EXISTS ix_classes_class_code ON classes (class_code)")
         )
         conn.commit()
+
+        # -------------------------
+        # users table
+        # -------------------------
+        user_cols = conn.execute(text("PRAGMA table_info(users)")).fetchall()
+        user_col_names = {c[1] for c in user_cols}
+
+        if "subscription_status" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN subscription_status TEXT DEFAULT 'inactive' NOT NULL"))
+            conn.commit()
+
+        if "billing_interval" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN billing_interval TEXT"))
+            conn.commit()
+
+        if "stripe_customer_id" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN stripe_customer_id TEXT"))
+            conn.commit()
+
+        if "stripe_subscription_id" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT"))
+            conn.commit()
+
+        if "stripe_checkout_session_id" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN stripe_checkout_session_id TEXT"))
+            conn.commit()
+
+        if "subscription_started_at" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN subscription_started_at DATETIME"))
+            conn.commit()
+
+        if "current_period_end" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN current_period_end DATETIME"))
+            conn.commit()
+
+        if "launch_offer_applied" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN launch_offer_applied BOOLEAN DEFAULT 0 NOT NULL"))
+            conn.commit()
 
 
 def _ensure_class_access_details(cls: ClassModel, db: Session) -> ClassModel:
