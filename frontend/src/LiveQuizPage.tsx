@@ -137,7 +137,14 @@ function normaliseSavedQuiz(q: SavedQuizAny): NormalisedQuiz | null {
 
       let choicesObj: Record<ChoiceKey, string> = { A: "", B: "", C: "", D: "" };
 
-      if (rq.choices && typeof rq.choices === "object") {
+      if (Array.isArray(rq.choices) && rq.choices.length === 4) {
+        choicesObj = {
+          A: String(rq.choices[0] ?? ""),
+          B: String(rq.choices[1] ?? ""),
+          C: String(rq.choices[2] ?? ""),
+          D: String(rq.choices[3] ?? ""),
+        };
+      } else if (rq.choices && typeof rq.choices === "object") {
         if (Array.isArray(rq.choices)) {
           choicesObj = {
             A: String(rq.choices[0] ?? ""),
@@ -180,12 +187,14 @@ function normaliseSavedQuiz(q: SavedQuizAny): NormalisedQuiz | null {
 
       let correct: ChoiceKey | null | undefined = undefined;
       const rawCorrect =
-        rq.correct ??
-        rq.answer ??
-        rq.correctAnswer ??
-        rq.correctIndex ??
-        rq.key ??
-        null;
+        typeof rq.correctIndex === "number" && rq.correctIndex >= 0 && rq.correctIndex <= 3
+          ? rq.correctIndex
+          : rq.correct ??
+            rq.answer ??
+            rq.correctAnswer ??
+            rq.correctIndex ??
+            rq.key ??
+            null;
 
       if (rawCorrect === null || rawCorrect === undefined || rawCorrect === "") {
         correct = null;
@@ -333,19 +342,91 @@ export default function LiveQuizPage() {
     return () => controller.abort();
   }, [classId]);
 
-  useEffect(() => {
+  async function loadSavedQuizzes() {
     const raw = localStorage.getItem(quizzesStorageKey);
     const parsed = safeJsonParse<any>(raw, []);
-    const arr = Array.isArray(parsed) ? parsed : parsed?.quizzes && Array.isArray(parsed.quizzes) ? parsed.quizzes : [];
+    const storedArr = Array.isArray(parsed) ? parsed : parsed?.quizzes && Array.isArray(parsed.quizzes) ? parsed.quizzes : [];
+    const storedNormalised = (storedArr as SavedQuizAny[]).map(normaliseSavedQuiz).filter(Boolean) as NormalisedQuiz[];
 
-    const normalised = (arr as SavedQuizAny[]).map(normaliseSavedQuiz).filter(Boolean) as NormalisedQuiz[];
-    setSavedQuizzes(normalised);
-
-    if (normalised.length && !selectedSavedQuizId) {
-      setSelectedSavedQuizId(normalised[0].id);
+    if (storedNormalised.length) {
+      setSavedQuizzes(storedNormalised);
+      setSelectedSavedQuizId((prev) => prev || storedNormalised[0].id);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quizzesStorageKey]);
+
+    if (!classId || Number.isNaN(classId)) return;
+
+    try {
+      const data = await apiFetch(`${API_BASE}/classes/${classId}/quizzes`);
+      const apiQuizzes = (Array.isArray(data) ? data : []).map((q: any) => ({
+        id: String(q.id),
+        title: String(q.title || ""),
+        category: String(q.category || "General"),
+        description: String(q.description || ""),
+        createdAt: q.created_at ? new Date(q.created_at).getTime() : Date.now(),
+        questions: Array.isArray(q.questions)
+          ? [...q.questions]
+              .sort((a: any, b: any) => Number(a.position ?? 0) - Number(b.position ?? 0))
+              .map((qq: any) => ({
+                id: String(qq.id),
+                prompt: String(qq.prompt || ""),
+                choices: [
+                  String(qq.choices?.[0] || ""),
+                  String(qq.choices?.[1] || ""),
+                  String(qq.choices?.[2] || ""),
+                  String(qq.choices?.[3] || ""),
+                ],
+                correctIndex: Math.max(0, Math.min(3, Number(qq.correct_index ?? 0))),
+                explanation: qq.explanation ? String(qq.explanation) : undefined,
+              }))
+          : [],
+      }));
+
+      const normalised = apiQuizzes.map(normaliseSavedQuiz).filter(Boolean) as NormalisedQuiz[];
+      setSavedQuizzes(normalised);
+      setSelectedSavedQuizId((prev) => {
+        if (prev && normalised.some((q) => q.id === prev)) return prev;
+        return normalised[0]?.id || "";
+      });
+      localStorage.setItem(quizzesStorageKey, JSON.stringify(apiQuizzes));
+    } catch {
+      if (!storedNormalised.length) {
+        setSavedQuizzes([]);
+        setSelectedSavedQuizId("");
+      }
+    }
+  }
+
+  useEffect(() => {
+    void loadSavedQuizzes();
+  }, [classId, quizzesStorageKey]);
+
+  useEffect(() => {
+    function handleFocus() {
+      void loadSavedQuizzes();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void loadSavedQuizzes();
+      }
+    }
+
+    function handleStorage(e: StorageEvent) {
+      if (e.key === quizzesStorageKey) {
+        void loadSavedQuizzes();
+      }
+    }
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [quizzesStorageKey, classId]);
 
   useEffect(() => {
     const raw = localStorage.getItem(liveHistoryKey);

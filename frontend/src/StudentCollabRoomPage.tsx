@@ -76,7 +76,7 @@ export default function StudentCollabRoomPage() {
     const data = (await res.json()) as MeResponse;
     setAnonId(data.anon_id);
     setParticipantName(data.name);
-    setRoomNumber(data.room_number);
+    setRoomNumber(data.room_number == null ? null : Number(data.room_number));
     setSessionState(data.session_state);
   }
 
@@ -85,12 +85,15 @@ export default function StudentCollabRoomPage() {
     if (!res.ok) throw new Error("Could not fetch participants");
     const data = await res.json();
     const list = Array.isArray(data?.participants) ? data.participants : [];
+    const currentRoomNumber = roomNumber == null ? null : Number(roomNumber);
     setRoomMembers(
-      list.filter((p: any) => p.room_number === roomNumber).map((p: any) => ({
-        id: Number(p.id),
-        name: String(p.name || "Student"),
-        room_number: p.room_number == null ? null : Number(p.room_number),
-      }))
+      list
+        .map((p: any) => ({
+          id: Number(p.id),
+          name: String(p.name || "Student"),
+          room_number: p.room_number == null ? null : Number(p.room_number),
+        }))
+        .filter((p: ParticipantListItem) => p.room_number !== null && p.room_number === currentRoomNumber)
     );
   }
 
@@ -122,7 +125,7 @@ export default function StudentCollabRoomPage() {
 
       setAnonId(data.anon_id);
       setParticipantName(data.name);
-      setRoomNumber(data.room_number);
+      setRoomNumber(data.room_number == null ? null : Number(data.room_number));
 
       await fetchStatus();
       await fetchMe(data.anon_id);

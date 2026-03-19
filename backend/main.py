@@ -20,7 +20,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -110,6 +110,7 @@ JWT_EXPIRE_DAYS = 30
 STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
 STRIPE_PRICE_MONTHLY_EUR = (os.getenv("STRIPE_PRICE_MONTHLY_EUR") or "").strip()
 STRIPE_PRICE_ANNUAL_EUR = (os.getenv("STRIPE_PRICE_ANNUAL_EUR") or "").strip()
+STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
 
 stripe.api_key = STRIPE_SECRET_KEY
 
@@ -153,6 +154,116 @@ class CreateCheckoutSessionRequest(BaseModel):
 
 class CreateCheckoutSessionResponse(BaseModel):
     checkout_url: str
+
+
+def _stripe_obj_get(obj: Any, key: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    getter = getattr(obj, "get", None)
+    if callable(getter):
+        return getter(key, default)
+    return getattr(obj, key, default)
+
+
+def _stripe_epoch_to_datetime(value: Any) -> Optional[datetime]:
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.utcfromtimestamp(int(value))
+    except Exception:
+        return None
+
+
+def _resolve_billing_interval(obj: Any, fallback: Optional[str] = None) -> Optional[str]:
+    metadata = _stripe_obj_get(obj, "metadata") or {}
+    plan = (metadata.get("plan") or "").strip().lower()
+    if plan in {"monthly", "annual"}:
+        return plan
+
+    items = _stripe_obj_get(obj, "items") or {}
+    data = _stripe_obj_get(items, "data") or []
+    if data:
+        first_item = data[0]
+        price = _stripe_obj_get(first_item, "price") or {}
+        recurring = _stripe_obj_get(price, "recurring") or {}
+        interval = (_stripe_obj_get(recurring, "interval") or "").strip().lower()
+        if interval == "month":
+            interval_count = int(_stripe_obj_get(recurring, "interval_count", 1) or 1)
+            return "annual" if interval_count >= 12 else "monthly"
+        if interval == "year":
+            return "annual"
+
+    return fallback
+
+
+def _find_billing_user(db: Session, stripe_obj: Any) -> Optional[models.UserModel]:
+    metadata = _stripe_obj_get(stripe_obj, "metadata") or {}
+    user_id = _stripe_obj_get(metadata, "user_id")
+    customer_id = _stripe_obj_get(stripe_obj, "customer")
+    subscription_id = _stripe_obj_get(stripe_obj, "subscription")
+    checkout_session_id = _stripe_obj_get(stripe_obj, "id") if _stripe_obj_get(stripe_obj, "object") == "checkout.session" else None
+    email = (
+        _stripe_obj_get(metadata, "email")
+        or _stripe_obj_get(stripe_obj, "customer_email")
+        or _stripe_obj_get(stripe_obj, "email")
+    )
+
+    if user_id:
+        try:
+            user = db.query(models.UserModel).filter(models.UserModel.id == int(user_id)).first()
+            if user:
+                return user
+        except Exception:
+            pass
+
+    if subscription_id:
+        user = db.query(models.UserModel).filter(models.UserModel.stripe_subscription_id == str(subscription_id)).first()
+        if user:
+            return user
+
+    if customer_id:
+        user = db.query(models.UserModel).filter(models.UserModel.stripe_customer_id == str(customer_id)).first()
+        if user:
+            return user
+
+    if checkout_session_id:
+        user = db.query(models.UserModel).filter(models.UserModel.stripe_checkout_session_id == str(checkout_session_id)).first()
+        if user:
+            return user
+
+    if email:
+        user = db.query(models.UserModel).filter(models.UserModel.email == str(email).strip().lower()).first()
+        if user:
+            return user
+
+    return None
+
+
+def _apply_subscription_update(user: models.UserModel, subscription_obj: Any) -> None:
+    customer_id = _stripe_obj_get(subscription_obj, "customer")
+    subscription_id = _stripe_obj_get(subscription_obj, "id")
+    status = (_stripe_obj_get(subscription_obj, "status") or user.subscription_status or "inactive").strip().lower()
+    created_at = _stripe_epoch_to_datetime(_stripe_obj_get(subscription_obj, "created"))
+    period_end = _stripe_epoch_to_datetime(_stripe_obj_get(subscription_obj, "current_period_end"))
+    billing_interval = _resolve_billing_interval(subscription_obj, user.billing_interval)
+    metadata = _stripe_obj_get(subscription_obj, "metadata") or {}
+
+    if customer_id:
+        user.stripe_customer_id = str(customer_id)
+    if subscription_id:
+        user.stripe_subscription_id = str(subscription_id)
+
+    user.subscription_status = status or "inactive"
+    user.billing_interval = billing_interval
+    user.current_period_end = period_end
+
+    if status in {"active", "trialing"} and not user.subscription_started_at:
+        user.subscription_started_at = created_at or datetime.utcnow()
+
+    if (metadata.get("launch_offer_candidate") or "").strip().lower() == "true" and status in {"active", "trialing"}:
+        user.launch_offer_applied = True
 
 def _make_token(user_id: int, email: str) -> str:
     exp = datetime.utcnow() + timedelta(days=JWT_EXPIRE_DAYS)
@@ -483,25 +594,25 @@ def create_checkout_session(
     launch_offer_candidate = (plan == "annual" and _annual_launch_offer_applies())
 
     try:
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            payment_method_types=["card"],
-            customer_email=user.email,
-            line_items=[
+        session_kwargs = {
+            "mode": "subscription",
+            "payment_method_types": ["card"],
+            "client_reference_id": str(user.id),
+            "line_items": [
                 {
                     "price": price_id,
                     "quantity": 1,
                 }
             ],
-            success_url=f"{APP_BASE_URL.rstrip('/')}/#/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{APP_BASE_URL.rstrip('/')}/#/billing/cancel",
-            metadata={
+            "success_url": f"{APP_BASE_URL.rstrip('/')}/#/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
+            "cancel_url": f"{APP_BASE_URL.rstrip('/')}/#/billing/cancel",
+            "metadata": {
                 "user_id": str(user.id),
                 "email": user.email,
                 "plan": plan,
                 "launch_offer_candidate": "true" if launch_offer_candidate else "false",
             },
-            subscription_data={
+            "subscription_data": {
                 "metadata": {
                     "user_id": str(user.id),
                     "email": user.email,
@@ -509,6 +620,15 @@ def create_checkout_session(
                     "launch_offer_candidate": "true" if launch_offer_candidate else "false",
                 }
             },
+        }
+
+        if user.stripe_customer_id:
+            session_kwargs["customer"] = user.stripe_customer_id
+        else:
+            session_kwargs["customer_email"] = user.email
+
+        session = stripe.checkout.Session.create(
+            **session_kwargs,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create Stripe checkout session: {e}")
@@ -519,6 +639,92 @@ def create_checkout_session(
     db.commit()
 
     return {"checkout_url": session.url}
+
+
+@app.post("/billing/webhook")
+async def stripe_billing_webhook(request: Request, db: Session = Depends(get_db)):
+    if not STRIPE_SECRET_KEY or not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(status_code=500, detail="Stripe webhook is not configured")
+
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    if not sig_header:
+        raise HTTPException(status_code=400, detail="Missing Stripe signature")
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    event_type = (event.get("type") or "").strip()
+    stripe_obj = event.get("data", {}).get("object", {})
+
+    if event_type not in {
+        "checkout.session.completed",
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+        "invoice.payment_failed",
+    }:
+        return {"received": True}
+
+    user = _find_billing_user(db, stripe_obj)
+    if not user:
+        logger.warning("Stripe webhook could not match user for event %s", event_type)
+        return {"received": True}
+
+    if event_type == "checkout.session.completed":
+        session_customer = _stripe_obj_get(stripe_obj, "customer")
+        session_subscription = _stripe_obj_get(stripe_obj, "subscription")
+        session_status = (_stripe_obj_get(stripe_obj, "payment_status") or "").strip().lower()
+        billing_interval = _resolve_billing_interval(stripe_obj, user.billing_interval)
+        metadata = _stripe_obj_get(stripe_obj, "metadata") or {}
+
+        if session_customer:
+            user.stripe_customer_id = str(session_customer)
+        if session_subscription:
+            user.stripe_subscription_id = str(session_subscription)
+
+        user.stripe_checkout_session_id = str(_stripe_obj_get(stripe_obj, "id") or user.stripe_checkout_session_id or "")
+        user.billing_interval = billing_interval
+        user.subscription_status = "active" if session_status == "paid" else "pending"
+
+        if user.subscription_status == "active" and not user.subscription_started_at:
+            user.subscription_started_at = datetime.utcnow()
+
+        if (metadata.get("launch_offer_candidate") or "").strip().lower() == "true" and user.subscription_status == "active":
+            user.launch_offer_applied = True
+
+    elif event_type in {"customer.subscription.created", "customer.subscription.updated"}:
+        _apply_subscription_update(user, stripe_obj)
+
+    elif event_type == "customer.subscription.deleted":
+        _apply_subscription_update(user, stripe_obj)
+        user.subscription_status = "canceled"
+
+    elif event_type == "invoice.payment_failed":
+        customer_id = _stripe_obj_get(stripe_obj, "customer")
+        subscription_id = _stripe_obj_get(stripe_obj, "subscription")
+        if customer_id:
+            user.stripe_customer_id = str(customer_id)
+        if subscription_id:
+            user.stripe_subscription_id = str(subscription_id)
+        user.subscription_status = "past_due"
+
+    db.commit()
+    return {"received": True}
+
+
+@app.get("/billing/me", response_model=schemas.BillingStatusOut)
+def billing_me(user: models.UserModel = Depends(get_current_user)):
+    return {
+        "subscription_status": user.subscription_status or "inactive",
+        "billing_interval": user.billing_interval,
+        "current_period_end": user.current_period_end,
+        "has_stripe_customer": bool(user.stripe_customer_id),
+    }
 
 def get_owned_class_or_404(
     class_id: int,

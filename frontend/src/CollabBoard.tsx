@@ -54,7 +54,7 @@ type BoardObject = {
     updatedAt: number;
 };
 
-type BoardSnapshot = {
+export type BoardSnapshot = {
     strokes: Stroke[];
     objects: BoardObject[];
 };
@@ -97,6 +97,8 @@ type Props = {
     viewportMode?: "fixed" | "pan";
     boardWidth?: number;
     boardHeight?: number;
+    onSnapshotReady?: (getSnapshot: () => BoardSnapshot) => void;
+    initialSnapshot?: BoardSnapshot | null;
 };
 
 type Interaction =
@@ -261,6 +263,8 @@ export default function CollabBoard({
     viewportMode = "fixed",
     boardWidth,
     boardHeight,
+    onSnapshotReady,
+    initialSnapshot,
 }: Props) {
     const viewportRef = useRef<HTMLDivElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -316,6 +320,7 @@ export default function CollabBoard({
         scrollLeft: 0,
         scrollTop: 0,
     });
+    const appliedInitialSnapshotRef = useRef<BoardSnapshot | null>(null);
     const boardPanRef = useRef<{ active: boolean; startX: number; startY: number; scrollLeft: number; scrollTop: number }>({
         active: false,
         startX: 0,
@@ -484,6 +489,8 @@ export default function CollabBoard({
         };
     }
 
+    const getSnapshot = useCallback(() => createSnapshot(), [objects]);
+
     function pushHistorySnapshot(snapshot?: BoardSnapshot) {
         historyRef.current.push(snapshot ?? createSnapshot());
         if (historyRef.current.length > 50) {
@@ -632,7 +639,7 @@ export default function CollabBoard({
         ctx.restore();
     }
 
-    function drawPreviewStroke() {
+    const drawPreviewStroke = useCallback(() => {
         const preview = previewCanvasRef.current;
         const container = containerRef.current;
         if (!preview || !container) return;
@@ -660,7 +667,7 @@ export default function CollabBoard({
             ctx.stroke();
             ctx.restore();
         }
-    }
+    }, [cursor, eraserSize, tool]);
 
     function commitLiveStroke() {
         if (!liveStrokeRef.current) return;
@@ -1073,6 +1080,27 @@ export default function CollabBoard({
         setClipRect(null);
     }
 
+    const clearBoardStateRef = useRef(clearBoardState);
+    const clearPreviewRef = useRef(clearPreview);
+    const redrawCommittedRef = useRef(redrawCommitted);
+    const drawPreviewStrokeRef = useRef(drawPreviewStroke);
+
+    useEffect(() => {
+        clearBoardStateRef.current = clearBoardState;
+    }, [clearBoardState]);
+
+    useEffect(() => {
+        clearPreviewRef.current = clearPreview;
+    }, [clearPreview]);
+
+    useEffect(() => {
+        redrawCommittedRef.current = redrawCommitted;
+    }, [redrawCommitted]);
+
+    useEffect(() => {
+        drawPreviewStrokeRef.current = drawPreviewStroke;
+    }, [drawPreviewStroke]);
+
     async function snipToBoardAndClose() {
         if (!clipRect) return;
 
@@ -1123,8 +1151,9 @@ export default function CollabBoard({
     useEffect(() => {
         connectionVersionRef.current += 1;
         const connectionVersion = connectionVersionRef.current;
+        console.log("[CollabBoard] websocket effect run", { sessionCode, roomKey, participantId, readOnly, connectionVersion });
 
-        clearBoardState(false);
+        clearBoardStateRef.current(false);
 
         if (!sessionCode || !roomKey) {
             setIsConnected(false);
@@ -1136,17 +1165,20 @@ export default function CollabBoard({
 
         ws.onopen = () => {
             if (connectionVersion !== connectionVersionRef.current) return;
+            console.log("[CollabBoard] websocket open", { sessionCode, roomKey, connectionVersion });
             setIsConnected(true);
             ws.send(JSON.stringify({ type: "ping" }));
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
             if (connectionVersion !== connectionVersionRef.current) return;
+            console.log("[CollabBoard] websocket close", { sessionCode, roomKey, connectionVersion, code: event.code, reason: event.reason });
             setIsConnected(false);
         };
 
         ws.onerror = () => {
             if (connectionVersion !== connectionVersionRef.current) return;
+            console.log("[CollabBoard] websocket error", { sessionCode, roomKey, connectionVersion });
             setIsConnected(false);
         };
 
@@ -1160,9 +1192,9 @@ export default function CollabBoard({
                     if (!readOnly && incoming.createdBy === participantId) return;
                     remotePreviewStrokesRef.current.delete(incoming.id);
                     strokesRef.current.push(incoming);
-                    redrawCommitted();
-                    clearPreview();
-                    drawPreviewStroke();
+                    redrawCommittedRef.current();
+                    clearPreviewRef.current();
+                    drawPreviewStrokeRef.current();
                     return;
                 }
 
@@ -1170,7 +1202,7 @@ export default function CollabBoard({
                     const incoming = data.stroke;
                     if (incoming.createdBy === participantId) return;
                     remotePreviewStrokesRef.current.set(incoming.id, incoming);
-                    drawPreviewStroke();
+                    drawPreviewStrokeRef.current();
                     return;
                 }
 
@@ -1206,8 +1238,8 @@ export default function CollabBoard({
                 }
 
                 if (data.type === "clear-preview") {
-                    clearPreview();
-                    drawPreviewStroke();
+                    clearPreviewRef.current();
+                    drawPreviewStrokeRef.current();
                     return;
                 }
 
@@ -1217,8 +1249,8 @@ export default function CollabBoard({
                     strokesRef.current = data.snapshot.strokes.map(cloneStroke);
                     remotePreviewStrokesRef.current.clear();
                     setObjects(data.snapshot.objects.map(cloneObject));
-                    redrawCommitted();
-                    clearPreview();
+                    redrawCommittedRef.current();
+                    clearPreviewRef.current();
                     setSelectedObjectId(null);
                     return;
                 }
@@ -1229,10 +1261,11 @@ export default function CollabBoard({
         };
 
         return () => {
+            console.log("[CollabBoard] websocket cleanup", { sessionCode, roomKey, connectionVersion });
             remotePreviewStrokesRef.current.clear();
             ws.close();
         };
-    }, [clearBoardState, clearPreview, drawPreviewStroke, participantId, readOnly, redrawCommitted, roomKey, sessionCode]);
+    }, [participantId, readOnly, roomKey, sessionCode]);
 
     useEffect(() => {
         if (!onUndoReady) return;
@@ -1243,6 +1276,24 @@ export default function CollabBoard({
         if (!onExportReady) return;
         onExportReady(exportBoardAsPng);
     }, [onExportReady, sessionCode, roomKey]);
+
+    useEffect(() => {
+        if (!onSnapshotReady) return;
+        onSnapshotReady(getSnapshot);
+    }, [getSnapshot, onSnapshotReady, roomKey, sessionCode]);
+
+    useEffect(() => {
+        appliedInitialSnapshotRef.current = null;
+    }, [roomKey, sessionCode]);
+
+    useEffect(() => {
+        if (!initialSnapshot) return;
+        if (appliedInitialSnapshotRef.current === initialSnapshot) return;
+        appliedInitialSnapshotRef.current = initialSnapshot;
+        historyRef.current = [];
+        remotePreviewStrokesRef.current.clear();
+        restoreSnapshot(initialSnapshot);
+    }, [initialSnapshot]);
 
     useEffect(() => {
         function onClearBoard(event: Event) {

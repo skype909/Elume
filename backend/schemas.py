@@ -245,6 +245,13 @@ class WhiteboardStateOut(BaseModel):
 class WhiteboardStateListResponse(BaseModel):
     items: List[WhiteboardStateListItemOut]
 
+
+class BillingStatusOut(BaseModel):
+    subscription_status: str
+    billing_interval: Optional[str] = None
+    current_period_end: Optional[datetime] = None
+    has_stripe_customer: bool = False
+
 # -------------------------
 # Teacher Admin State
 # -------------------------

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import elumeLogo from "./assets/ELogo2.png";
 import CollabBoard from "./CollabBoard";
+import type { BoardSnapshot } from "./CollabBoard";
 import { apiFetch } from "./api";
 
 const API_BASE = "/api";
@@ -73,13 +74,23 @@ type BoardOption = {
 };
 
 type SessionState = "draft" | "lobby" | "assigning" | "live" | "review" | "ended";
-
 function uid(prefix = "id") {
     return `${prefix}_${Math.random().toString(36).slice(2, 9)}_${Date.now().toString(36)}`;
 }
 
 function cls(...parts: Array<string | false | null | undefined>) {
     return parts.filter(Boolean).join(" ");
+}
+
+function getWsBase() {
+    const isLocal =
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1";
+
+    if (isLocal) return "ws://127.0.0.1:8000";
+
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}`;
 }
 
 function buildRoomsFromParticipants(participants: CollabParticipant[], roomCount: number): BreakoutRoom[] {
@@ -226,10 +237,12 @@ export default function CollaborationPage() {
     ]);
 
     const teacherBoardExportRef = useRef<null | (() => Promise<void>)>(null);
+    const teacherBoardSnapshotRef = useRef<null | (() => BoardSnapshot)>(null);
     const reviewBoardExportRefs = useRef<Record<string, () => Promise<void>>>({});
     const focusedReviewBoardExportRef = useRef<null | (() => Promise<void>)>(null);
 
     const [focusedReviewBoard, setFocusedReviewBoard] = useState<string | null>(null);
+    const [roomInitialSnapshots, setRoomInitialSnapshots] = useState<Record<string, BoardSnapshot>>({});
     const joinCode = sessionCode;
     const hasSession = Boolean(joinCode);
 
@@ -519,6 +532,8 @@ export default function CollaborationPage() {
 
         try {
             const nextParticipants = autoAssignParticipants(participants, roomCount);
+            const teacherMainSnapshot = teacherBoardSnapshotRef.current?.() ?? null;
+            const roomKeys = Array.from({ length: roomCount }, (_, i) => `room-${i + 1}`);
 
             setParticipants(nextParticipants);
             setRooms(buildRoomsFromParticipants(nextParticipants, roomCount));
@@ -530,6 +545,18 @@ export default function CollaborationPage() {
                 method: "POST",
                 body: JSON.stringify({}),
             });
+
+            if (teacherMainSnapshot) {
+                setRoomInitialSnapshots(
+                    Object.fromEntries(roomKeys.map((targetRoomKey) => [targetRoomKey, teacherMainSnapshot]))
+                );
+
+                await Promise.allSettled(
+                    roomKeys.map((targetRoomKey) =>
+                        fanOutRoomSnapshot(code, targetRoomKey, teacherMainSnapshot)
+                    )
+                );
+            }
 
             await Promise.all([fetchStatus(code), fetchParticipants(code)]);
             setSessionState("live");
@@ -605,6 +632,7 @@ export default function CollaborationPage() {
         stopPolling();
         joinCodeRef.current = "";
         teacherBoardExportRef.current = null;
+        teacherBoardSnapshotRef.current = null;
         reviewBoardExportRefs.current = {};
         focusedReviewBoardExportRef.current = null;
 
@@ -618,6 +646,7 @@ export default function CollaborationPage() {
         setIsCreating(false);
         setIsStartingBreakout(false);
         setFocusedReviewBoard(null);
+        setRoomInitialSnapshots({});
     }
 
     function handleFullReset() {
@@ -649,6 +678,57 @@ export default function CollaborationPage() {
                 detail: { roomKey: targetRoomKey, nonce },
             })
         );
+    }
+
+    function fanOutRoomSnapshot(code: string, targetRoomKey: string, snapshot: BoardSnapshot) {
+        return new Promise<void>((resolve) => {
+            const ws = new WebSocket(`${getWsBase()}/ws/collab/${code}/${targetRoomKey}`);
+            let settled = false;
+
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                window.setTimeout(() => {
+                    try {
+                        ws.close();
+                    } catch { }
+                }, 80);
+                resolve();
+            };
+
+            const timeout = window.setTimeout(() => {
+                console.warn("[CollaborationPage] breakout snapshot fan-out timed out", { code, targetRoomKey });
+                finish();
+            }, 1500);
+
+            ws.onopen = () => {
+                try {
+                    ws.send(
+                        JSON.stringify({
+                            type: "snapshot-sync",
+                            snapshot,
+                            sourceId: "teacher",
+                        })
+                    );
+                } catch (error) {
+                    console.warn("[CollaborationPage] breakout snapshot send failed", { code, targetRoomKey, error });
+                }
+
+                window.clearTimeout(timeout);
+                finish();
+            };
+
+            ws.onerror = () => {
+                window.clearTimeout(timeout);
+                console.warn("[CollaborationPage] breakout snapshot socket error", { code, targetRoomKey });
+                finish();
+            };
+
+            ws.onclose = () => {
+                window.clearTimeout(timeout);
+                finish();
+            };
+        });
     }
 
     function applyTeacherBoardPrompt() {
@@ -1057,6 +1137,9 @@ export default function CollaborationPage() {
                                                 onExportReady={(fn) => {
                                                     teacherBoardExportRef.current = fn;
                                                 }}
+                                                onSnapshotReady={(getSnapshot) => {
+                                                    teacherBoardSnapshotRef.current = getSnapshot;
+                                                }}
                                             />
                                         ) : (
                                             <div className="grid min-h-[760px] place-items-center rounded-[28px] border border-dashed border-slate-300 bg-slate-50">
@@ -1155,6 +1238,9 @@ export default function CollaborationPage() {
                                                 viewportMode="pan"
                                                 boardWidth={1600}
                                                 boardHeight={960}
+                                                initialSnapshot={
+                                                    focusedReviewBoard ? roomInitialSnapshots[focusedReviewBoard] ?? null : null
+                                                }
                                                 onExportReady={(fn) => {
                                                     focusedReviewBoardExportRef.current = fn;
                                                 }}
@@ -1229,6 +1315,7 @@ export default function CollaborationPage() {
                                                                 viewportMode="pan"
                                                                 boardWidth={1600}
                                                                 boardHeight={960}
+                                                                initialSnapshot={roomInitialSnapshots[panel.selectedBoard] ?? null}
                                                             />
 
                                                             <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
@@ -1248,6 +1335,7 @@ export default function CollaborationPage() {
                                                                         viewportMode="pan"
                                                                         boardWidth={1600}
                                                                         boardHeight={960}
+                                                                        initialSnapshot={roomInitialSnapshots[panel.selectedBoard] ?? null}
                                                                     />
 
                                                                     <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
@@ -1266,6 +1354,7 @@ export default function CollaborationPage() {
                                                                             viewportMode="pan"
                                                                             boardWidth={1600}
                                                                             boardHeight={960}
+                                                                            initialSnapshot={roomInitialSnapshots[panel.selectedBoard] ?? null}
                                                                             onExportReady={(fn) => {
                                                                                 reviewBoardExportRefs.current[panel.selectedBoard] = fn;
                                                                             }}

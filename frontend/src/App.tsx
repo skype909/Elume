@@ -29,6 +29,8 @@ import CollaborationPage from "./CollaborationPage";
 import LegalPage from "./LegalPage";
 import ResetPasswordPage from "./ResetPasswordPage";
 import StudentPage from "./StudentPage";
+import BillingSuccessPage from "./BillingSuccessPage";
+import BillingCancelPage from "./BillingCancelPage";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -1741,6 +1743,8 @@ export default function App() {
         <Route path="/create-resources" element={<CreateResources />} />
         <Route path="/legal" element={<LegalPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/billing/success" element={<BillingSuccessPage />} />
+        <Route path="/billing/cancel" element={<BillingCancelPage />} />
       </Routes>
 
       {!location.pathname.startsWith("/join/") &&

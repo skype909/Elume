@@ -76,6 +76,12 @@ type ClassItem = {
 
 type ClassMeta = { color: string; order: number };
 type MetaStore = Record<string, ClassMeta>;
+type BillingStatus = {
+  subscription_status: string;
+  billing_interval: string | null;
+  current_period_end: string | null;
+  has_stripe_customer: boolean;
+};
 
 const DAYS: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -463,6 +469,9 @@ export default function TeacherAdminPage() {
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
 
   const [setupDraft, setSetupDraft] = useState<TimetableConfig>(() =>
     structuredClone(defaultTimetableConfig())
@@ -539,6 +548,25 @@ export default function TeacherAdminPage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    apiFetch("/billing/me")
+      .then((data) => {
+        if (!cancelled) {
+          setBilling(data as BillingStatus);
+          setBillingError(null);
+        }
+      })
+      .catch((e: any) => {
+        if (!cancelled) setBillingError(e?.message || "Could not load billing status.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (loadedFromServer && !state.timetableConfig.setupComplete && !setupPromptDismissed) {
       setSetupDraft(structuredClone(state.timetableConfig));
       setSetupOpen(true);
@@ -563,6 +591,26 @@ export default function TeacherAdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state: next }),
       }).catch(() => {});
+    }
+  }
+
+  async function startMonthlyCheckout() {
+    setBillingBusy(true);
+    setBillingError(null);
+
+    try {
+      const data = await apiFetch("/billing/create-checkout-session", {
+        method: "POST",
+        body: JSON.stringify({ plan: "monthly" }),
+      });
+
+      const checkoutUrl = String((data as any)?.checkout_url || "").trim();
+      if (!checkoutUrl) throw new Error("No Stripe checkout URL was returned.");
+
+      window.location.assign(checkoutUrl);
+    } catch (e: any) {
+      setBillingError(e?.message || "Could not start Stripe checkout.");
+      setBillingBusy(false);
     }
   }
 
@@ -1124,6 +1172,41 @@ export default function TeacherAdminPage() {
                   <span className="font-semibold"> Timetable settings</span>.
                 </div>
               )}
+
+              <div className="mt-4 rounded-[28px] border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="text-base font-extrabold tracking-tight text-slate-900">
+                      Elume monthly plan
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Start the live monthly Stripe checkout for teacher pilot signups.
+                    </div>
+                    <div className="mt-2 text-xs font-semibold text-slate-700">
+                      Status: <span className="capitalize">{billing?.subscription_status || "inactive"}</span>
+                      {billing?.billing_interval ? ` • ${billing.billing_interval}` : ""}
+                      {billing?.current_period_end
+                        ? ` • renews until ${new Date(billing.current_period_end).toLocaleDateString()}`
+                        : ""}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    className={btnPrimary}
+                    onClick={startMonthlyCheckout}
+                    disabled={billingBusy}
+                  >
+                    {billingBusy ? "Redirecting…" : "Start monthly checkout"}
+                  </button>
+                </div>
+
+                {billingError ? (
+                  <div className="mt-3 rounded-2xl border-2 border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+                    {billingError}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
 

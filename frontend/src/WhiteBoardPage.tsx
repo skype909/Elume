@@ -696,6 +696,7 @@ export default function WhiteBoardPage() {
   // Scroll container
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewportRedrawRafRef = useRef<number | null>(null);
+  const canvasMetricsRef = useRef<{ width: number; height: number; ratio: number } | null>(null);
 
   // ✅ Unsaved-changes guard
   const dirtyRef = useRef(false);
@@ -1279,6 +1280,18 @@ export default function WhiteBoardPage() {
       }, 80);
       return;
     }
+
+    const nextMetrics = { width: widthCss, height: heightCss, ratio };
+    const prevMetrics = canvasMetricsRef.current;
+    if (
+      prevMetrics &&
+      prevMetrics.width === nextMetrics.width &&
+      prevMetrics.height === nextMetrics.height &&
+      prevMetrics.ratio === nextMetrics.ratio
+    ) {
+      return;
+    }
+    canvasMetricsRef.current = nextMetrics;
 
     // Overlay canvas (grid/axes layer)
     const overlayCanvas = overlayCanvasRef.current;
@@ -2167,8 +2180,6 @@ export default function WhiteBoardPage() {
   const onScroll = () => {
     const el = containerRef.current;
     if (!el) return;
-    const nearBottom = el.scrollTop + el.clientHeight > el.scrollHeight - 500;
-    if (nearBottom) setCanvasHeight((h) => Math.min(h + 2000, 30000));
     scheduleViewportRedraw();
   };
 
@@ -3279,6 +3290,12 @@ export default function WhiteBoardPage() {
             </div>
 
             <div className="ml-auto flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap">
+              <button type="button" className={pill} onClick={undo} disabled={inkUndoStack.length === 0}>
+                Undo
+              </button>
+              <button type="button" className={pill} onClick={redo} disabled={inkRedoStack.length === 0}>
+                Redo
+              </button>
               <button type="button" className={pill} onClick={() => addPage()}>
                 + Add Page
               </button>
@@ -3359,13 +3376,6 @@ export default function WhiteBoardPage() {
                 </button>
                 <button type="button" className={pill} onClick={() => removeAxes()} disabled={!axesApplied}>
                   Remove XY
-                </button>
-                <div className="ml-auto" />
-                <button type="button" className={pill} onClick={undo} disabled={inkUndoStack.length === 0}>
-                  Undo
-                </button>
-                <button type="button" className={pill} onClick={redo} disabled={inkRedoStack.length === 0}>
-                  Redo
                 </button>
               </div>
             </div>
