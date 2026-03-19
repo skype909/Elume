@@ -136,7 +136,7 @@ function getWsBase() {
     if (isLocal) return "ws://127.0.0.1:8000";
 
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}/api`;
+    return `${proto}//${window.location.host}`;
 }
 
 function getPointFromEvent(

@@ -1294,76 +1294,30 @@ def collab_me(code: str, anon_id: str, db: Session = Depends(get_db)):
         "session_state": s.state,
     }
 
-@app.websocket("/ws/collab/{code}/{room_key}")
-async def collab_room_socket(websocket: WebSocket, code: str, room_key: str):
-    await collab_room_manager.connect(code, room_key, websocket)
+@app.websocket("/ws/collab/{session_code}/{room_key}")
+async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
+    print("WS connect attempt:", session_code, room_key)
+
+    await websocket.accept()
+    print("WS accepted")
 
     try:
-        # 1) Replay saved board history first so new joins/review panels see the board immediately
-        for evt in _get_collab_history(code, room_key):
-            await websocket.send_json(evt)
-
-        # 2) Then tell everyone someone joined
-        await collab_room_manager.broadcast(code, room_key, {
-            "type": "presence",
-            "message": "peer_joined",
-        })
-
         while True:
-            raw = await websocket.receive_text()
+            data = await websocket.receive_text()
+            print("WS received:", data)
 
-            try:
-                data = json.loads(raw)
-            except Exception:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Invalid JSON payload"
-                })
-                continue
-
-            msg_type = data.get("type")
-
-            if msg_type == "ping":
-                await websocket.send_json({"type": "pong"})
-                continue
-
-            # Save only real board events
-            if msg_type in {
-                "stroke",
-                "object-create",
-                "object-update",
-                "object-delete",
-            }:
-                _append_collab_event(code, room_key, data)
-                await collab_room_manager.broadcast(code, room_key, data)
-                continue
-
-            if msg_type == "snapshot-sync":
-                snapshot = data.get("snapshot") or {"strokes": [], "objects": []}
-                replacement_events = _events_from_snapshot(snapshot)
-                _replace_collab_history(code, room_key, replacement_events)
-                await collab_room_manager.broadcast(code, room_key, data)
-                continue
-
-            # These are live-only and should not be persisted
-            if msg_type in {
-                "cursor",
-                "clear-preview",
-                "stroke-batch",
-            }:
-                await collab_room_manager.broadcast(code, room_key, data)
-                continue
-
-            await websocket.send_json({
-                "type": "error",
-                "message": f"Unsupported message type: {msg_type}"
-            })
+            # echo back (temporary for testing)
+            await websocket.send_text(data)
 
     except WebSocketDisconnect:
-        collab_room_manager.disconnect(code, room_key, websocket)
+        print("WS disconnected")
 
-    except Exception:
-        collab_room_manager.disconnect(code, room_key, websocket)
+    except Exception as e:
+        print("WS error:", str(e))
+        try:
+            await websocket.close()
+        except:
+            pass
 
 def _assert_class_access(class_id: int, db: Session, user: models.UserModel):
     cls = (
