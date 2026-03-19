@@ -136,7 +136,7 @@ function getWsBase() {
     if (isLocal) return "ws://127.0.0.1:8000";
 
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}`;
+    return `${proto}//${window.location.host}/api`;
 }
 
 function getPointFromEvent(
@@ -645,10 +645,6 @@ export default function CollabBoard({
 
         if (liveStrokeRef.current) {
             drawStroke(ctx, liveStrokeRef.current);
-        }
-
-        for (const remoteStroke of remotePreviewStrokesRef.current.values()) {
-            drawStroke(ctx, remoteStroke);
         }
 
         for (const remoteStroke of remotePreviewStrokesRef.current.values()) {

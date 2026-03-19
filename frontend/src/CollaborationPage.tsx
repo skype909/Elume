@@ -180,6 +180,7 @@ export default function CollaborationPage() {
     const [teacherBoardPromptDraft, setTeacherBoardPromptDraft] = useState("");
     const [teacherBoardPrompt, setTeacherBoardPrompt] = useState("");
     const [teacherBoardClearNonce, setTeacherBoardClearNonce] = useState(0);
+    const [showTeacherPromptModal, setShowTeacherPromptModal] = useState(false);
 
     const [showJoinModal, setShowJoinModal] = useState(false);
     const [showBreakoutModal, setShowBreakoutModal] = useState(false);
@@ -656,6 +657,7 @@ export default function CollaborationPage() {
         setTeacherBoardPrompt(nextPrompt);
         setTeacherBoardClearNonce(nextNonce);
         dispatchScopedBoardClear("teacher-main", nextNonce);
+        setShowTeacherPromptModal(false);
     }
 
     const assignedCount = participants.filter((p) => p.roomNumber !== null).length;
@@ -809,7 +811,7 @@ export default function CollaborationPage() {
                     </div>
 
                     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[220px_minmax(0,1fr)_320px]">
-                        <div className="sticky top-4 self-start">
+                        <div className="sticky top-3 z-20 self-start">
                             <div className="rounded-[24px] border border-white/70 bg-white/90 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl">
                                 <div className="mb-3 flex items-center justify-between gap-2 px-1">
                                     <div className="text-sm font-black text-slate-900">Tools</div>
@@ -994,38 +996,23 @@ export default function CollaborationPage() {
                             >
                                 {sessionState !== "review" ? (
                                     <div className="relative">
-                                        <div className="mb-4 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
-                                            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-                                                <div className="min-w-0 flex-1">
-                                                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
-                                                        New board prompt
-                                                    </div>
-                                                    <div className="mt-1 text-sm text-slate-600">
-                                                        Clear the teacher board for a fresh round while keeping breakout setup intact.
-                                                    </div>
-                                                </div>
+                                        <div className="sticky top-3 z-10 mb-4 flex flex-wrap items-center gap-2 rounded-[22px] border border-slate-200 bg-white/88 px-4 py-3 shadow-sm backdrop-blur-xl">
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowTeacherPromptModal(true)}
+                                                className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 shadow-sm hover:bg-emerald-100"
+                                            >
+                                                New board prompt
+                                            </button>
 
-                                                <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
-                                                    <input
-                                                        value={teacherBoardPromptDraft}
-                                                        onChange={(e) => setTeacherBoardPromptDraft(e.target.value)}
-                                                        placeholder="e.g. Sketch your first ideas for today’s challenge"
-                                                        className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 lg:min-w-[340px]"
-                                                    />
-                                                    <button
-                                                        type="button"
-                                                        onClick={applyTeacherBoardPrompt}
-                                                        className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700 shadow-sm hover:bg-emerald-100"
-                                                    >
-                                                        Apply prompt
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {teacherBoardPrompt && (
-                                                <div className="mt-3 inline-flex max-w-full items-center rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-black text-cyan-800">
+                                            {teacherBoardPrompt ? (
+                                                <div className="inline-flex max-w-full items-center rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-black text-cyan-800">
                                                     <span className="mr-2 uppercase tracking-[0.14em] text-cyan-600">Prompt</span>
-                                                    <span className="truncate">{teacherBoardPrompt}</span>
+                                                    <span className="max-w-[42rem] truncate">{teacherBoardPrompt}</span>
+                                                </div>
+                                            ) : (
+                                                <div className="text-xs font-semibold text-slate-500">
+                                                    Clear the teacher board for a fresh round without changing breakout setup.
                                                 </div>
                                             )}
                                         </div>
@@ -1609,6 +1596,64 @@ export default function CollaborationPage() {
                                     {isStartingBreakout ? "Starting breakout..." : "Start breakout session"}
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showTeacherPromptModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm">
+                    <div className="w-full max-w-xl rounded-[28px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">Teacher Board</div>
+                                <h3 className="mt-1 text-xl font-black tracking-tight text-slate-900">New board prompt</h3>
+                                <p className="mt-2 text-sm leading-6 text-slate-600">
+                                    Add a short prompt, then apply it to clear the teacher board for a fresh round while keeping breakout setup intact.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setShowTeacherPromptModal(false)}
+                                className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
+                            >
+                                Close
+                            </button>
+                        </div>
+
+                        <div className="mt-5">
+                            <input
+                                value={teacherBoardPromptDraft}
+                                onChange={(e) => setTeacherBoardPromptDraft(e.target.value)}
+                                placeholder="e.g. Sketch your first ideas for today’s challenge"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                                autoFocus
+                            />
+                        </div>
+
+                        {teacherBoardPrompt && (
+                            <div className="mt-4 inline-flex max-w-full items-center rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-black text-cyan-800">
+                                <span className="mr-2 uppercase tracking-[0.14em] text-cyan-600">Current</span>
+                                <span className="truncate">{teacherBoardPrompt}</span>
+                            </div>
+                        )}
+
+                        <div className="mt-6 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowTeacherPromptModal(false)}
+                                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={applyTeacherBoardPrompt}
+                                className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 shadow-sm hover:bg-emerald-100"
+                            >
+                                Apply prompt
+                            </button>
                         </div>
                     </div>
                 </div>
