@@ -177,6 +177,9 @@ export default function CollaborationPage() {
     const [eraserSize, setEraserSize] = useState<EraserSize>(1);
     const [highlightColor, setHighlightColor] = useState<HighlightColor>("yellow");
     const [pdfImportRequestNonce, setPdfImportRequestNonce] = useState(0);
+    const [teacherBoardPromptDraft, setTeacherBoardPromptDraft] = useState("");
+    const [teacherBoardPrompt, setTeacherBoardPrompt] = useState("");
+    const [teacherBoardClearNonce, setTeacherBoardClearNonce] = useState(0);
 
     const [showJoinModal, setShowJoinModal] = useState(false);
     const [showBreakoutModal, setShowBreakoutModal] = useState(false);
@@ -604,24 +607,29 @@ export default function CollaborationPage() {
         reviewBoardExportRefs.current = {};
         focusedReviewBoardExportRef.current = null;
 
-        setSessionTitle("Collaboration Whiteboard");
         setSessionState("draft");
-        setTool("pen");
-        setPenColor("black");
-        setPenSize(1);
-        setEraserSize(1);
-        setHighlightColor("yellow");
         setShowJoinModal(false);
         setShowBreakoutModal(false);
-        setRoomCount(4);
-        setTimerMinutes(10);
         setTimeLeftSeconds(null);
-        setParticipants([]);
         setSessionCode("");
         setStatus(null);
         setStatusError(null);
         setIsCreating(false);
         setIsStartingBreakout(false);
+        setFocusedReviewBoard(null);
+    }
+
+    function handleFullReset() {
+        handleStartNewSession();
+        setSessionTitle("Collaboration Whiteboard");
+        setTool("pen");
+        setPenColor("black");
+        setPenSize(1);
+        setEraserSize(1);
+        setHighlightColor("yellow");
+        setRoomCount(4);
+        setTimerMinutes(10);
+        setParticipants([]);
         setRooms(Array.from({ length: 4 }, (_, i) => ({ roomNumber: i + 1, participantIds: [] })));
         setReviewPanels([
             { id: uid("panel"), selectedBoard: "room-1" },
@@ -629,7 +637,25 @@ export default function CollaborationPage() {
             { id: uid("panel"), selectedBoard: "room-3" },
             { id: uid("panel"), selectedBoard: "room-4" },
         ]);
-        setFocusedReviewBoard(null);
+        setTeacherBoardPrompt("");
+        setTeacherBoardPromptDraft("");
+        setTeacherBoardClearNonce(0);
+    }
+
+    function dispatchScopedBoardClear(targetRoomKey: string, nonce: number) {
+        window.dispatchEvent(
+            new CustomEvent("collab-clear-board", {
+                detail: { roomKey: targetRoomKey, nonce },
+            })
+        );
+    }
+
+    function applyTeacherBoardPrompt() {
+        const nextPrompt = teacherBoardPromptDraft.trim();
+        const nextNonce = teacherBoardClearNonce + 1;
+        setTeacherBoardPrompt(nextPrompt);
+        setTeacherBoardClearNonce(nextNonce);
+        dispatchScopedBoardClear("teacher-main", nextNonce);
     }
 
     const assignedCount = participants.filter((p) => p.roomNumber !== null).length;
@@ -720,6 +746,13 @@ export default function CollaborationPage() {
                                     </button>
 
                                     <button
+                                        onClick={handleFullReset}
+                                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-50"
+                                    >
+                                        Full reset
+                                    </button>
+
+                                    <button
                                         onClick={() => navigate(`/class/${classId}`)}
                                         className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 hover:bg-slate-50"
                                     >
@@ -735,7 +768,11 @@ export default function CollaborationPage() {
 
                                 <div className="flex flex-wrap items-center gap-2">
                                     <button
-                                        onClick={() => window.dispatchEvent(new Event("collab-clear-board"))}
+                                        onClick={() => {
+                                            const nextNonce = teacherBoardClearNonce + 1;
+                                            setTeacherBoardClearNonce(nextNonce);
+                                            dispatchScopedBoardClear("teacher-main", nextNonce);
+                                        }}
                                         className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-800 hover:bg-slate-50"
                                     >
                                         Erase all
@@ -957,6 +994,42 @@ export default function CollaborationPage() {
                             >
                                 {sessionState !== "review" ? (
                                     <div className="relative">
+                                        <div className="mb-4 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
+                                            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                                                        New board prompt
+                                                    </div>
+                                                    <div className="mt-1 text-sm text-slate-600">
+                                                        Clear the teacher board for a fresh round while keeping breakout setup intact.
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+                                                    <input
+                                                        value={teacherBoardPromptDraft}
+                                                        onChange={(e) => setTeacherBoardPromptDraft(e.target.value)}
+                                                        placeholder="e.g. Sketch your first ideas for today’s challenge"
+                                                        className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 lg:min-w-[340px]"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={applyTeacherBoardPrompt}
+                                                        className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700 shadow-sm hover:bg-emerald-100"
+                                                    >
+                                                        Apply prompt
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {teacherBoardPrompt && (
+                                                <div className="mt-3 inline-flex max-w-full items-center rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-black text-cyan-800">
+                                                    <span className="mr-2 uppercase tracking-[0.14em] text-cyan-600">Prompt</span>
+                                                    <span className="truncate">{teacherBoardPrompt}</span>
+                                                </div>
+                                            )}
+                                        </div>
+
                                         {hasSession ? (
                                             <CollabBoard
                                                 sessionCode={joinCode}
@@ -997,7 +1070,6 @@ export default function CollaborationPage() {
                                                 onExportReady={(fn) => {
                                                     teacherBoardExportRef.current = fn;
                                                 }}
-
                                             />
                                         ) : (
                                             <div className="grid min-h-[760px] place-items-center rounded-[28px] border border-dashed border-slate-300 bg-slate-50">
@@ -1090,12 +1162,15 @@ export default function CollaborationPage() {
                                                     penColor={penColor}
                                                     penSize={penSize}
                                                     highlighterColor={highlightColor}
-                                                    eraserSize={eraserSize}
-                                                    height={760}
-                                                    readOnly
-                                                    onExportReady={(fn) => {
-                                                        focusedReviewBoardExportRef.current = fn;
-                                                    }}
+                                                eraserSize={eraserSize}
+                                                height={760}
+                                                readOnly
+                                                viewportMode="pan"
+                                                boardWidth={1600}
+                                                boardHeight={960}
+                                                onExportReady={(fn) => {
+                                                    focusedReviewBoardExportRef.current = fn;
+                                                }}
                                                 />
 
                                             ) : (
@@ -1164,6 +1239,9 @@ export default function CollaborationPage() {
                                                                 eraserSize={eraserSize}
                                                                 height={300}
                                                                 readOnly
+                                                                viewportMode="pan"
+                                                                boardWidth={1600}
+                                                                boardHeight={960}
                                                             />
 
                                                             <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
@@ -1180,6 +1258,9 @@ export default function CollaborationPage() {
                                                                         eraserSize={eraserSize}
                                                                         height={300}
                                                                         readOnly
+                                                                        viewportMode="pan"
+                                                                        boardWidth={1600}
+                                                                        boardHeight={960}
                                                                     />
 
                                                                     <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
@@ -1195,6 +1276,9 @@ export default function CollaborationPage() {
                                                                             eraserSize={eraserSize}
                                                                             height={760}
                                                                             readOnly
+                                                                            viewportMode="pan"
+                                                                            boardWidth={1600}
+                                                                            boardHeight={960}
                                                                             onExportReady={(fn) => {
                                                                                 reviewBoardExportRefs.current[panel.selectedBoard] = fn;
                                                                             }}
@@ -1347,7 +1431,8 @@ export default function CollaborationPage() {
 
             {showBreakoutModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm">
-                    <div className="w-full max-w-6xl rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
+                    <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-[32px] border border-white/70 bg-white/95 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
+                        <div className="border-b border-slate-100 px-6 py-6">
                         <div className="flex items-start justify-between gap-4">
                             <div>
                                 <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-violet-700">Breakout Rooms</div>
@@ -1365,8 +1450,10 @@ export default function CollaborationPage() {
                                 Close
                             </button>
                         </div>
+                        </div>
 
-                        <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
+                        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+                        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
                             <div className="space-y-5">
                                 <div className="rounded-[28px] border border-violet-100 bg-gradient-to-br from-violet-50 via-white to-cyan-50 p-5 shadow-sm">
                                     <div className="text-sm font-black text-slate-900">Room settings</div>
@@ -1495,6 +1582,32 @@ export default function CollaborationPage() {
                                         </div>
                                     );
                                 })}
+                            </div>
+                        </div>
+                        </div>
+                        <div className="sticky bottom-0 border-t border-slate-100 bg-white/95 px-6 py-4">
+                            <div className="flex flex-wrap items-center justify-end gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowBreakoutModal(false)}
+                                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                                >
+                                    Close
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        try {
+                                            await startBreakoutAndPersist();
+                                        } catch (e: any) {
+                                            window.alert(e?.message || "Failed to start breakout session.");
+                                        }
+                                    }}
+                                    disabled={!hasSession || isStartingBreakout}
+                                    className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-sm font-black text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {isStartingBreakout ? "Starting breakout..." : "Start breakout session"}
+                                </button>
                             </div>
                         </div>
                     </div>

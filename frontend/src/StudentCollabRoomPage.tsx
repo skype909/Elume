@@ -32,6 +32,12 @@ type StatusResponse = {
   assigned_count: number;
 };
 
+type ParticipantListItem = {
+  id: number;
+  name: string;
+  room_number: number | null;
+};
+
 function cleanCode(s: string) {
   return s.replace(/[^A-Za-z0-9-_]/g, "").trim();
 }
@@ -53,6 +59,9 @@ export default function StudentCollabRoomPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [tool, setTool] = useState<"pen" | "highlighter" | "eraser">("pen");
+  const [penSize, setPenSize] = useState<1 | 2 | 3>(1);
+  const [roomMembers, setRoomMembers] = useState<ParticipantListItem[]>([]);
+  const [membersExpanded, setMembersExpanded] = useState(true);
 
   async function fetchStatus() {
     const res = await fetch(`${API_BASE}/collab/${sessionCode}/status`);
@@ -69,6 +78,20 @@ export default function StudentCollabRoomPage() {
     setParticipantName(data.name);
     setRoomNumber(data.room_number);
     setSessionState(data.session_state);
+  }
+
+  async function fetchParticipants() {
+    const res = await fetch(`${API_BASE}/collab/${sessionCode}/participants`);
+    if (!res.ok) throw new Error("Could not fetch participants");
+    const data = await res.json();
+    const list = Array.isArray(data?.participants) ? data.participants : [];
+    setRoomMembers(
+      list.filter((p: any) => p.room_number === roomNumber).map((p: any) => ({
+        id: Number(p.id),
+        name: String(p.name || "Student"),
+        room_number: p.room_number == null ? null : Number(p.room_number),
+      }))
+    );
   }
 
   async function joinSession() {
@@ -150,10 +173,16 @@ export default function StudentCollabRoomPage() {
     const timer = window.setInterval(() => {
       fetchStatus().catch(() => {});
       fetchMe(anonId).catch(() => {});
+      fetchParticipants().catch(() => {});
     }, 1500);
 
     return () => window.clearInterval(timer);
-  }, [anonId, sessionCode]);
+  }, [anonId, roomNumber, sessionCode]);
+
+  useEffect(() => {
+    if (!anonId || roomNumber === null) return;
+    fetchParticipants().catch(() => {});
+  }, [anonId, roomNumber, sessionCode]);
 
     useEffect(() => {
     if (sessionState !== "ended") return;
@@ -340,21 +369,71 @@ export default function StudentCollabRoomPage() {
               >
                 Eraser
               </button>
+              <div className="ml-1 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
+                <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Size</span>
+                {([1, 2, 3] as const).map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => setPenSize(size)}
+                    className={`rounded-xl px-3 py-2 text-xs font-black ${
+                      penSize === size
+                        ? "bg-slate-900 text-white"
+                        : "border border-slate-200 bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
 
-        <CollabBoard
-          sessionCode={sessionCode}
-          roomKey={`room-${roomNumber}`}
-          participantId={anonId}
-          tool={tool}
-          penColor="black"
-          penSize={2}
-          highlighterColor="yellow"
-          eraserSize={2}
-          height={760}
-        />
+        <div className="relative">
+          <div className="absolute right-3 top-3 z-10 w-56 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-lg backdrop-blur-xl">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
+                Room members
+              </div>
+              <button
+                type="button"
+                onClick={() => setMembersExpanded((prev) => !prev)}
+                className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-black text-slate-600"
+              >
+                {membersExpanded ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            {membersExpanded && (
+              <div className="mt-3 space-y-2">
+                {roomMembers.length ? (
+                  roomMembers.map((member) => (
+                    <div key={member.id} className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-sm font-semibold text-slate-800">
+                      {member.name}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-slate-200 bg-white/70 px-3 py-2 text-xs text-slate-500">
+                    Room list updates when available.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <CollabBoard
+            sessionCode={sessionCode}
+            roomKey={`room-${roomNumber}`}
+            participantId={anonId}
+            tool={tool}
+            penColor="black"
+            penSize={penSize}
+            highlighterColor="yellow"
+            eraserSize={2}
+            height={760}
+          />
+        </div>
       </div>
     </div>
   );

@@ -64,7 +64,7 @@ type Post = {
 
   // UI-only for now:
   links?: string[];
-  files?: { name: string; size: number }[];
+  files?: { name: string; size: number; url?: string; path?: string }[];
 };
 
 type CalendarEvent = {
@@ -140,7 +140,14 @@ function normalizePost(p: any): Post {
           ? p.created_at
           : undefined,
     links: normalizeLinks(p?.links),
-    files: Array.isArray(p?.files) ? p.files : [],
+    files: Array.isArray(p?.files)
+      ? p.files.map((f: any) => ({
+        name: typeof f?.name === "string" ? f.name : "Attachment",
+        size: typeof f?.size === "number" ? f.size : 0,
+        url: typeof f?.url === "string" ? f.url : undefined,
+        path: typeof f?.path === "string" ? f.path : typeof f?.file_url === "string" ? f.file_url : undefined,
+      }))
+      : [],
   };
 }
 
@@ -1091,13 +1098,26 @@ export default function ClassPage() {
       <div className={`${card} ${cardPad}`}>
         <div className="mb-4">
           <div className="flex items-center gap-4">
-            <img
-              src={ELogo2}
-              alt="ELume Logo"
-              className="h-16 w-16 rounded-2xl object-cover shadow-sm"
-            />
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => navigate("/")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") navigate("/");
+              }}
+              className="cursor-pointer rounded-2xl focus:outline-none shrink-0"
+              title="Back to Dashboard"
+            >
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-sm overflow-hidden">
+                <img
+                  src={ELogo2}
+                  alt="ELume Logo"
+                  className="h-14 w-14 object-contain"
+                />
+              </div>
+            </div>
 
-            <div className="leading-tight">
+            <div className="min-w-0 leading-tight">
               <div className="text-sm text-slate-500">Learn, Grow, Succeed</div>
             </div>
           </div>
@@ -1112,27 +1132,43 @@ export default function ClassPage() {
             { label: "Collaborate", to: `/class/${classId}/collaboration` },
             { label: "eBooks", to: null },
             { label: "Class Admin", to: `/class/${classId}/admin` },
-          ].map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => {
-                if (!item.to) {
-                  alert("Coming soon 🙂");
-                  return;
-                }
+          ].map((item) => {
+            const className =
+              item.label === "Dashboard"
+                ? "block w-full rounded-2xl border-2 border-emerald-600 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100"
+                : "block w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-3 text-left text-sm hover:bg-slate-50";
 
-                navigate(item.to);
-              }}
-              className={
-                item.label === "Dashboard"
-                  ? "w-full rounded-2xl border-2 border-emerald-600 bg-emerald-50 px-3 py-2 text-left text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100"
-                  : "w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50"
-              }
-            >
-              {item.label}
-            </button>
-          ))}
+            if (item.label === "Whiteboard") {
+              return (
+                <a
+                  key={item.label}
+                  href={`${window.location.origin}/#/whiteboard/${classId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={className}
+                >
+                  {item.label}
+                </a>
+              );
+            }
+
+            return (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => {
+                  if (!item.to) {
+                    alert("Coming soon 🙂");
+                    return;
+                  }
+                  navigate(item.to);
+                }}
+                className={className}
+              >
+                {item.label}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="mt-4 rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
@@ -1140,11 +1176,11 @@ export default function ClassPage() {
           <div className="mt-1 text-xs text-slate-500">Scan to open read-only view.</div>
 
           <div className="mt-3 flex flex-col items-center">
-            <div className="bg-white p-2 rounded-xl border border-slate-200">
+            <div className="rounded-xl border border-slate-200 bg-white p-2">
               {studentUrl ? (
                 <QRCode value={studentUrl} size={120} />
               ) : (
-                <div className="h-[120px] w-[120px] grid place-items-center text-xs text-slate-500">
+                <div className="grid h-[120px] w-[120px] place-items-center text-xs text-slate-500">
                   Loading…
                 </div>
               )}
@@ -1154,7 +1190,7 @@ export default function ClassPage() {
               <button
                 type="button"
                 onClick={() => copyText(studentUrl, "Student link copied")}
-                className="mt-2 rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
+                className="mt-3 w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
               >
                 Copy link
               </button>
@@ -1162,32 +1198,21 @@ export default function ClassPage() {
           </div>
 
           <div className="mt-3 rounded-2xl border border-slate-200 bg-white/90 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
-                  Class code
-                </div>
-                <div className="mt-1 text-lg font-black tracking-[0.18em] text-slate-900">
-                  {loadingClassAccess ? "Loading..." : classCode || "—"}
-                </div>
+            <div className="text-center">
+              <div className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">
+                Class code
               </div>
 
-              {classCode ? (
-                <button
-                  type="button"
-                  onClick={() => copyText(classCode, "Class code copied")}
-                  className="rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
-                >
-                  Copy
-                </button>
-              ) : null}
+              <div className="mt-3 text-2xl font-black tracking-[0.02em] text-slate-900">
+                {loadingClassAccess ? "Loading..." : classCode || "—"}
+              </div>
             </div>
-            <div className="mt-1 text-[11px] leading-5 text-slate-500">
+
+            <div className="mt-4 text-center text-[11px] leading-5 text-slate-500">
               Students use this with the class PIN in Student Hub.
             </div>
           </div>
         </div>
-
       </div>
     </aside>
   );
@@ -1355,9 +1380,25 @@ export default function ClassPage() {
               {(p.links?.length || p.files?.length) && (
                 <div className="mt-5 flex flex-wrap gap-2">
                   {p.files?.map((f, i) => (
-                    <span key={i} className={chip}>
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={async () => {
+                        const fileLink = f.url || f.path;
+                        if (!fileLink) return;
+                        try {
+                          await openProtectedAttachmentInNewTab(fileLink);
+                        } catch (err) {
+                          console.error("File open failed:", fileLink, err);
+                          alert("Could not open file.");
+                        }
+                      }}
+                      className={`${chip} ${f.url || f.path ? "hover:bg-slate-100" : ""}`}
+                      disabled={!f.url && !f.path}
+                      title={f.url || f.path ? "Open attachment" : "Attachment URL unavailable"}
+                    >
                       📄 {f.name}
-                    </span>
+                    </button>
                   ))}
 
                   {p.links?.map((l, i) => (
@@ -1945,9 +1986,9 @@ export default function ClassPage() {
 
 
           {showClassSettings && (
-            <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-              <div className="w-full max-w-lg rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl">
-                <div className="flex items-center justify-between gap-3">
+            <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-3 sm:p-4">
+              <div className="flex w-full max-w-lg max-h-[90vh] flex-col overflow-hidden rounded-3xl border-2 border-slate-200 bg-white shadow-xl">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
                   <div className="text-lg font-extrabold text-slate-900">Class settings</div>
                   <button
                     type="button"
@@ -1958,112 +1999,116 @@ export default function ClassPage() {
                   </button>
                 </div>
 
-                <div className="mt-4 grid gap-3">
-                  <label className="text-sm font-semibold text-slate-700">
-                    Class name
-                    <input
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
-                      placeholder="e.g. 6th Year Physics"
-                    />
-                  </label>
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                  <div className="grid gap-3">
+                    <label className="text-sm font-semibold text-slate-700">
+                      Class name
+                      <input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
+                        placeholder="e.g. 6th Year Physics"
+                      />
+                    </label>
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Subject
-                    <input
-                      value={editSubject}
-                      onChange={(e) => setEditSubject(e.target.value)}
-                      className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
-                      placeholder="e.g. Physics"
-                    />
-                  </label>
+                    <label className="text-sm font-semibold text-slate-700">
+                      Subject
+                      <input
+                        value={editSubject}
+                        onChange={(e) => setEditSubject(e.target.value)}
+                        className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
+                        placeholder="e.g. Physics"
+                      />
+                    </label>
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Teacher
-                    <input
-                      value={editTeacher}
-                      onChange={(e) => setEditTeacher(e.target.value)}
-                      className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
-                      placeholder="e.g. Mr Fitzgerald"
-                    />
-                  </label>
+                    <label className="text-sm font-semibold text-slate-700">
+                      Teacher
+                      <input
+                        value={editTeacher}
+                        onChange={(e) => setEditTeacher(e.target.value)}
+                        className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
+                        placeholder="e.g. Mr Fitzgerald"
+                      />
+                    </label>
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Group
-                    <input
-                      value={editGroup}
-                      onChange={(e) => setEditGroup(e.target.value)}
-                      className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
-                      placeholder="e.g. 1E"
-                    />
-                  </label>
+                    <label className="text-sm font-semibold text-slate-700">
+                      Group
+                      <input
+                        value={editGroup}
+                        onChange={(e) => setEditGroup(e.target.value)}
+                        className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
+                        placeholder="e.g. 1E"
+                      />
+                    </label>
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Room
-                    <input
-                      value={editRoom}
-                      onChange={(e) => setEditRoom(e.target.value)}
-                      className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
-                      placeholder="e.g. Lab"
-                    />
-                  </label>
+                    <label className="text-sm font-semibold text-slate-700">
+                      Room
+                      <input
+                        value={editRoom}
+                        onChange={(e) => setEditRoom(e.target.value)}
+                        className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
+                        placeholder="e.g. Lab"
+                      />
+                    </label>
 
-                  <div className="rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
-                    <div className="text-sm font-extrabold text-slate-900">Student access details</div>
-                    <div className="mt-1 text-xs leading-5 text-slate-600">
-                      Use this with the class code on Student Hub.
-                    </div>
-
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
-                          Class code
-                        </div>
-                        <div className="mt-2 text-xl font-black tracking-[0.14em] text-slate-900">
-                          {loadingClassAccess ? "Loading..." : classCode || "—"}
-                        </div>
-                        {classCode ? (
-                          <button
-                            type="button"
-                            onClick={() => copyText(classCode, "Class code copied")}
-                            className="mt-3 rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
-                          >
-                            Copy code
-                          </button>
-                        ) : null}
+                    <div className="rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
+                      <div className="text-sm font-extrabold text-slate-900">Student access details</div>
+                      <div className="mt-1 text-xs leading-5 text-slate-600">
+                        Use this with the class code on Student Hub.
                       </div>
 
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
-                          Class PIN
-                        </div>
-                        <div className="mt-2 text-xl font-black tracking-[0.18em] text-slate-900">
-                          {loadingClassAccess ? "Loading..." : classPin || "—"}
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {classPin ? (
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                            Class code
+                          </div>
+                          <div className="mt-2 text-xl font-black tracking-[0.14em] text-slate-900">
+                            {loadingClassAccess ? "Loading..." : classCode || "—"}
+                          </div>
+                          {classCode ? (
                             <button
                               type="button"
-                              onClick={() => copyText(classPin, "Class PIN copied")}
-                              className="rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
+                              onClick={() => copyText(classCode, "Class code copied")}
+                              className="mt-3 rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
                             >
-                              Copy PIN
+                              Copy code
                             </button>
                           ) : null}
-                          <button
-                            type="button"
-                            onClick={regenerateClassPin}
-                            className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
-                          >
-                            Regenerate PIN
-                          </button>
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                            Class PIN
+                          </div>
+                          <div className="mt-2 text-xl font-black tracking-[0.18em] text-slate-900">
+                            {loadingClassAccess ? "Loading..." : classPin || "—"}
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {classPin ? (
+                              <button
+                                type="button"
+                                onClick={() => copyText(classPin, "Class PIN copied")}
+                                className="rounded-xl border-2 border-slate-200 bg-white px-3 py-1 text-xs font-semibold hover:bg-slate-50"
+                              >
+                                Copy PIN
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={regenerateClassPin}
+                              className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                            >
+                              Regenerate PIN
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
+                </div>
 
-                  <div className="mt-2 flex items-center justify-end gap-2">
+                <div className="border-t border-slate-200 bg-white px-5 py-4">
+                  <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
                       onClick={() => setShowClassSettings(false)}
@@ -2084,7 +2129,6 @@ export default function ClassPage() {
                         });
                         setClassInfo(updated);
 
-                        // Persist UI-only fields (teacher/group/room) per class
                         try {
                           const raw = localStorage.getItem(metaKeyForUser());
                           const meta = raw ? JSON.parse(raw) : {};
@@ -2100,7 +2144,6 @@ export default function ClassPage() {
                           localStorage.setItem(metaKeyForUser(), JSON.stringify(meta));
                         } catch { }
 
-                        // Apply immediately to header + post composer default
                         const t = editTeacher.trim() || "Mr Fitzgerald";
                         setTeacherName(t);
                         setAuthor(t);
@@ -2108,7 +2151,6 @@ export default function ClassPage() {
                         setRoomLabel(editRoom.trim() || "Lab");
 
                         setShowClassSettings(false);
-
                       }}
                       className="rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                     >
@@ -2119,7 +2161,6 @@ export default function ClassPage() {
               </div>
             </div>
           )}
-
 
 
           <RightPanel />

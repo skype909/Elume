@@ -53,6 +53,21 @@ class TeacherAdminStateModel(Base):
 
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+
+class WhiteboardStateModel(Base):
+    __tablename__ = "whiteboard_states"
+
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=False, index=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    title = Column(String, nullable=False)
+    state_json = Column(Text, nullable=False)
+    preview_image_path = Column(String, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
 class ClassModel(Base):
     __tablename__ = "classes"
 

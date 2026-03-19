@@ -213,6 +213,38 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
+
+class WhiteboardStateSave(BaseModel):
+    whiteboard_id: Optional[int] = None
+    class_id: int
+    title: str
+    state: dict
+
+
+class WhiteboardStateListItemOut(BaseModel):
+    id: int
+    class_id: int
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WhiteboardStateOut(BaseModel):
+    id: int
+    class_id: int
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    state: dict
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WhiteboardStateListResponse(BaseModel):
+    items: List[WhiteboardStateListItemOut]
+
 # -------------------------
 # Teacher Admin State
 # -------------------------

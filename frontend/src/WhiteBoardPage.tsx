@@ -27,10 +27,52 @@ type NoteItem = {
 const PEN_COLORS = ["#111827", "#ef4444", "#3b82f6", "#22c55e", "#a855f7"];
 const PEN_SIZES = [2, 6, 12];
 const ERASER_SIZES = [10, 24, 40];
+const VISIBLE_RESIZE_HANDLE_SIZE = 14;
+const RESIZE_HIT_SIZE = 28;
 
 function formatKindLabel(kind: "notes" | "exam") {
   return kind === "notes" ? "Notes" : "Exam Papers";
 }
+
+type WhiteboardDraftState = {
+  boardTitle: string;
+  canvasHeight: number;
+  placedImages: Array<{
+    id: string;
+    src: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }>;
+  tool?: Tool;
+  penColor?: string;
+  penSize?: number;
+  eraserSize?: number;
+  gridMode?: "full" | "half";
+  gridX?: number;
+  gridY?: number;
+  gridTop?: number | null;
+  gridApplied?: boolean;
+  axesMode?: "full" | "half";
+  domMin?: number;
+  domMax?: number;
+  domStep?: number;
+  rngMin?: number;
+  rngMax?: number;
+  rngStep?: number;
+  axesApplied?: boolean;
+  axesTop?: number | null;
+  bgDataUrl?: string | null;
+  inkDataUrl?: string | null;
+};
+
+type RecentWhiteboardListItem = {
+  id: number;
+  title?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+};
 
 /**
  * Dynamically load PDF.js from CDN (no npm install).
@@ -646,9 +688,14 @@ export default function WhiteBoardPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const classId = useMemo(() => Number(id), [id]);
+  const draftKey = useMemo(
+    () => (Number.isFinite(classId) && classId > 0 ? `elume_whiteboard_draft_v1__${classId}` : null),
+    [classId]
+  );
 
   // Scroll container
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const viewportRedrawRafRef = useRef<number | null>(null);
 
   // ✅ Unsaved-changes guard
   const dirtyRef = useRef(false);
@@ -669,6 +716,8 @@ export default function WhiteBoardPage() {
   // ✅ Confirm modal when leaving via UI buttons (e.g., Back to Class)
   const [leaveOpen, setLeaveOpen] = useState(false);
   const pendingNavRef = useRef<string | null>(null);
+  const [draftPromptOpen, setDraftPromptOpen] = useState(false);
+  const pendingDraftRef = useRef<WhiteboardDraftState | null>(null);
 
   function requestLeave(to: string) {
     if (dirtyRef.current) {
@@ -683,6 +732,7 @@ export default function WhiteBoardPage() {
     const to = pendingNavRef.current;
     pendingNavRef.current = null;
     setLeaveOpen(false);
+    saveDraftToLocalStorage();
     if (to) navigate(to);
   }
 
@@ -762,12 +812,18 @@ export default function WhiteBoardPage() {
 
 
   // Long page + pages
-  const PAGE_HEIGHT = 4000;
-  const [canvasHeight, setCanvasHeight] = useState(4000);
+  const PAGE_HEIGHT = 2400;
+  const [canvasHeight, setCanvasHeight] = useState(2400);
 
   // Modals
   const [showTitleModal, setShowTitleModal] = useState(true);
   const [titleDraft, setTitleDraft] = useState("Class Whiteboard");
+  const [currentWhiteboardId, setCurrentWhiteboardId] = useState<number | null>(null);
+  const [entryMode, setEntryMode] = useState<"menu" | "new" | "recent">("menu");
+  const [recentWhiteboards, setRecentWhiteboards] = useState<RecentWhiteboardListItem[]>([]);
+  const [recentLoading, setRecentLoading] = useState(false);
+  const [recentError, setRecentError] = useState<string | null>(null);
+  const [openingRecentId, setOpeningRecentId] = useState<number | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -806,6 +862,8 @@ export default function WhiteBoardPage() {
   const pdfOverlayRef = useRef<HTMLDivElement | null>(null);
   const [pdfCanvasSize, setPdfCanvasSize] = useState({ w: 0, h: 0 });
   const pdfPanelRef = useRef<HTMLDivElement | null>(null); // ✅ the scroll viewer container
+  const pdfBlobUrlRef = useRef<string | null>(null);
+  const pdfSourceUrlRef = useRef<string | null>(null);
 
   const clipDragRef = useRef(false);
   const clipStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -903,6 +961,164 @@ export default function WhiteBoardPage() {
       if (gridApplied) drawGridOverlay();
       else if (axesApplied) drawAxesOverlay();
     });
+  }
+
+  function scheduleViewportRedraw() {
+    if (viewportRedrawRafRef.current != null) return;
+    viewportRedrawRafRef.current = requestAnimationFrame(() => {
+      viewportRedrawRafRef.current = null;
+      void redrawImages();
+      if (gridApplied) drawGridOverlay();
+      else if (axesApplied) drawAxesOverlay();
+    });
+  }
+
+  function serializeWhiteboardState(): WhiteboardDraftState | null {
+    const bgCanvas = bgCanvasRef.current;
+    const inkCanvas = inkCanvasRef.current;
+    if (!bgCanvas || !inkCanvas) return null;
+    return {
+      boardTitle,
+      canvasHeight,
+      placedImages,
+      tool,
+      penColor,
+      penSize,
+      eraserSize,
+      gridMode,
+      gridX,
+      gridY,
+      gridTop,
+      gridApplied,
+      axesMode,
+      domMin,
+      domMax,
+      domStep,
+      rngMin,
+      rngMax,
+      rngStep,
+      axesApplied,
+      axesTop,
+      bgDataUrl: bgCanvas.toDataURL("image/png"),
+      inkDataUrl: inkCanvas.toDataURL("image/png"),
+    };
+  }
+
+  async function drawDataUrlToCanvas(
+    dataUrl: string | null | undefined,
+    ctx: CanvasRenderingContext2D | null,
+    width: number,
+    height: number
+  ) {
+    if (!dataUrl || !ctx) return;
+    const img = new Image();
+    img.src = dataUrl;
+    try {
+      await img.decode();
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+    } catch {
+      ctx.clearRect(0, 0, width, height);
+    }
+  }
+
+  function restoreWhiteboardState(draft: WhiteboardDraftState) {
+    setBoardTitle(draft.boardTitle || "Class Whiteboard");
+    setTitleDraft(draft.boardTitle || "Class Whiteboard");
+    setCanvasHeight(Math.max(PAGE_HEIGHT, draft.canvasHeight || PAGE_HEIGHT));
+    setPlacedImages(Array.isArray(draft.placedImages) ? draft.placedImages : []);
+    setSelectedImageId(null);
+    setTool(draft.tool ?? "pen");
+    setPenColor(draft.penColor ?? PEN_COLORS[0]);
+    setPenSize(draft.penSize ?? PEN_SIZES[0]);
+    setEraserSize(draft.eraserSize ?? ERASER_SIZES[1]);
+    setGridMode(draft.gridMode ?? "full");
+    setGridX(draft.gridX ?? 24);
+    setGridY(draft.gridY ?? 24);
+    setGridTop(draft.gridTop ?? null);
+    setGridApplied(Boolean(draft.gridApplied));
+    setAxesMode(draft.axesMode ?? "full");
+    setDomMin(draft.domMin ?? -10);
+    setDomMax(draft.domMax ?? 10);
+    setDomStep(draft.domStep ?? 1);
+    setRngMin(draft.rngMin ?? -50);
+    setRngMax(draft.rngMax ?? 50);
+    setRngStep(draft.rngStep ?? 5);
+    setAxesTop(draft.axesTop ?? null);
+    setAxesApplied(Boolean(draft.axesApplied));
+    setShowTitleModal(false);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(async () => {
+        const container = containerRef.current;
+        const width = container?.clientWidth ?? 0;
+        const height = Math.max(PAGE_HEIGHT, draft.canvasHeight || PAGE_HEIGHT);
+        await drawDataUrlToCanvas(draft.bgDataUrl, bgCtxRef.current, width, height);
+        await drawDataUrlToCanvas(draft.inkDataUrl, inkCtxRef.current, width, height);
+        scheduleViewportRedraw();
+        markDirty();
+      });
+    });
+  }
+
+  function saveDraftToLocalStorage() {
+    if (!draftKey || !dirtyRef.current) return;
+    try {
+      const draft = serializeWhiteboardState();
+      if (!draft) return;
+      localStorage.setItem(draftKey, JSON.stringify(draft));
+    } catch {
+      // Ignore local draft save failures.
+    }
+  }
+
+  function clearDraftFromLocalStorage() {
+    if (!draftKey) return;
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {
+      // Ignore local draft clear failures.
+    }
+  }
+
+  async function loadRecentWhiteboards() {
+    if (!classId) return;
+    setRecentLoading(true);
+    setRecentError(null);
+    try {
+      const data = await apiFetch(`${API_BASE}/classes/${classId}/whiteboards?limit=5`);
+      const items = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+      setRecentWhiteboards(items);
+    } catch (e: any) {
+      setRecentWhiteboards([]);
+      setRecentError(e?.message || "Recent editable whiteboards are not available yet.");
+    } finally {
+      setRecentLoading(false);
+    }
+  }
+
+  async function openRecentWhiteboard(whiteboardId: number) {
+    setOpeningRecentId(whiteboardId);
+    setRecentError(null);
+    try {
+      const data = await apiFetch(`${API_BASE}/whiteboards/${whiteboardId}`);
+      const rawState = data?.state ?? data?.state_json ?? data?.whiteboard_state ?? null;
+      const parsedState =
+        typeof rawState === "string" ? (JSON.parse(rawState) as WhiteboardDraftState) : (rawState as WhiteboardDraftState | null);
+      if (!parsedState) throw new Error("This whiteboard does not include editable state yet.");
+      restoreWhiteboardState(parsedState);
+      setCurrentWhiteboardId(Number(data?.id || whiteboardId));
+      if (typeof data?.title === "string" && data.title.trim()) {
+        setBoardTitle(data.title.trim());
+        setTitleDraft(data.title.trim());
+      }
+      setShowTitleModal(false);
+      setEntryMode("menu");
+    } catch (e: any) {
+      setRecentError(e?.message || "Could not open that whiteboard yet.");
+    } finally {
+      setOpeningRecentId(null);
+    }
   }
 
   function pressCalc(k: string) {
@@ -1018,12 +1234,6 @@ export default function WhiteBoardPage() {
 
     setInkUndoStack((s) => [...s, { y: yPx, h: hPx, data: snap }]);
     setInkRedoStack([]); // clear redo on new action
-  }
-
-  function restoreInkSnap(snap: { y: number; h: number; data: ImageData }) {
-    const ctx = inkCtxRef.current;
-    if (!ctx) return;
-    ctx.putImageData(snap.data, 0, snap.y);
   }
 
   function snapshotObjects() {
@@ -1199,6 +1409,7 @@ export default function WhiteBoardPage() {
   // ✅ Also catches browser Back/Forward gestures (popstate)
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      saveDraftToLocalStorage();
       if (!dirtyRef.current) return;
       e.preventDefault();
       e.returnValue = ""; // required for Chrome/Edge
@@ -1212,23 +1423,48 @@ export default function WhiteBoardPage() {
       );
 
       if (!ok) {
-        // stay on page: push state back so the URL doesn't change
-        window.history.pushState(null, "", window.location.href);
+        window.setTimeout(() => window.history.go(1), 0);
       }
       // if ok, allow navigation naturally
     };
-
-    // Create a history “buffer” so swipe-back triggers popstate we can intercept
-    window.history.pushState(null, "", window.location.href);
+    const onPageHide = () => {
+      saveDraftToLocalStorage();
+    };
 
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("popstate", onPopState);
+    window.addEventListener("pagehide", onPageHide);
 
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
       window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("pagehide", onPageHide);
     };
-  }, []);
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (!draftKey) return;
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (!raw) return;
+      pendingDraftRef.current = JSON.parse(raw) as WhiteboardDraftState;
+      setDraftPromptOpen(true);
+    } catch {
+      clearDraftFromLocalStorage();
+    }
+  }, [draftKey]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      saveDraftToLocalStorage();
+    }, 25000);
+    return () => window.clearInterval(timer);
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (!showTitleModal || entryMode !== "recent") return;
+    void loadRecentWhiteboards();
+  }, [showTitleModal, entryMode, classId]);
 
   // ✅ Prevent horizontal swipe gestures from triggering browser Back/Forward
   useEffect(() => {
@@ -1272,6 +1508,14 @@ export default function WhiteBoardPage() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (viewportRedrawRafRef.current != null) {
+        cancelAnimationFrame(viewportRedrawRafRef.current);
+      }
+    };
   }, []);
 
   /* ---------- Helpers ---------- */
@@ -1348,12 +1592,7 @@ export default function WhiteBoardPage() {
       container.scrollTop + container.clientHeight + pad
     );
 
-    if (widthCss < 20 || y1 - y0 < 20) {
-      window.setTimeout(() => {
-        void redrawImages();
-      }, 80);
-      return;
-    }
+    if (widthCss < 20 || y1 - y0 < 20) return;
 
     ctx.clearRect(0, y0, widthCss, y1 - y0);
 
@@ -1363,14 +1602,42 @@ export default function WhiteBoardPage() {
       try {
         const img = await getCachedImage(p.src);
         ctx.drawImage(img, p.x, p.y, p.w, p.h);
+        if (p.id === selectedImageId) {
+          const handle = VISIBLE_RESIZE_HANDLE_SIZE;
+          const xBox = 22;
+          ctx.save();
+          ctx.strokeStyle = "#2563eb";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([8, 6]);
+          ctx.strokeRect(p.x, p.y, p.w, p.h);
+          ctx.setLineDash([]);
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = "#1d4ed8";
+          for (const [hx, hy] of [
+            [p.x, p.y],
+            [p.x + p.w, p.y],
+            [p.x, p.y + p.h],
+            [p.x + p.w, p.y + p.h],
+          ]) {
+            ctx.fillRect(hx - handle / 2, hy - handle / 2, handle, handle);
+            ctx.strokeRect(hx - handle / 2, hy - handle / 2, handle, handle);
+          }
+          ctx.fillStyle = "#dc2626";
+          ctx.fillRect(p.x + p.w - xBox, p.y - xBox, xBox, xBox);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 16px system-ui";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("×", p.x + p.w - xBox / 2, p.y - xBox / 2 + 1);
+          ctx.restore();
+        }
       } catch { }
     }
   }
   
   useEffect(() => {
-    redrawImages();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placedImages]);
+    scheduleViewportRedraw();
+  }, [placedImages, selectedImageId]);
 
   function stampTextToBoard(text: string) {
     const bgCtx = bgCtxRef.current;
@@ -1391,8 +1658,13 @@ export default function WhiteBoardPage() {
   }
   /* ---------- Ink drawing + Hand tool ---------- */
   function getBoardPoint(e: React.PointerEvent) {
-    const r = containerRef.current!.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    const container = containerRef.current;
+    if (!container) return { x: 0, y: 0 };
+    const r = container.getBoundingClientRect();
+    return {
+      x: e.clientX - r.left + container.scrollLeft,
+      y: e.clientY - r.top + container.scrollTop,
+    };
   }
 
   function findTopImageAt(x: number, y: number) {
@@ -1403,86 +1675,99 @@ export default function WhiteBoardPage() {
     return null;
   }
 
-  function getImgCanvasPoint(e: React.PointerEvent) {
-    const r = containerRef.current!.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  function beginImageInteraction(x: number, y: number) {
+    const hit = findTopImageAt(x, y);
+    if (!hit) {
+      setSelectedImageId(null);
+      return false;
+    }
+
+    setSelectedImageId(hit.id);
+
+    const inRect = (px: number, py: number, rx: number, ry: number, rw: number, rh: number) =>
+      px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+
+    const visibleHandleHalf = VISIBLE_RESIZE_HANDLE_SIZE / 2;
+    const resizeHitHalf = RESIZE_HIT_SIZE / 2;
+    const XBOX = 22;
+    const xbx = hit.x + hit.w - XBOX;
+    const xby = hit.y - XBOX;
+
+    if (inRect(x, y, xbx, xby, XBOX, XBOX)) {
+      snapshotObjects();
+      markDirty();
+      setPlacedImages((arr) => arr.filter((p) => p.id !== hit.id));
+      setSelectedImageId(null);
+      return true;
+    }
+
+    const corners = {
+      nw: { cx: hit.x, cy: hit.y },
+      ne: { cx: hit.x + hit.w, cy: hit.y },
+      sw: { cx: hit.x, cy: hit.y + hit.h },
+      se: { cx: hit.x + hit.w, cy: hit.y + hit.h },
+    } as const;
+
+    const didHitHandle = (cx: number, cy: number) =>
+      inRect(
+        x,
+        y,
+        cx - Math.max(visibleHandleHalf, resizeHitHalf),
+        cy - Math.max(visibleHandleHalf, resizeHitHalf),
+        Math.max(VISIBLE_RESIZE_HANDLE_SIZE, RESIZE_HIT_SIZE),
+        Math.max(VISIBLE_RESIZE_HANDLE_SIZE, RESIZE_HIT_SIZE)
+      );
+
+    let mode: "move" | "nw" | "ne" | "sw" | "se" = "move";
+    if (didHitHandle(corners.nw.cx, corners.nw.cy)) mode = "nw";
+    else if (didHitHandle(corners.ne.cx, corners.ne.cy)) mode = "ne";
+    else if (didHitHandle(corners.sw.cx, corners.sw.cy)) mode = "sw";
+    else if (didHitHandle(corners.se.cx, corners.se.cy)) mode = "se";
+
+    snapshotObjects();
+    imgDragRef.current = {
+      id: hit.id,
+      mode,
+      startX: x,
+      startY: y,
+      orig: { x: hit.x, y: hit.y, w: hit.w, h: hit.h },
+    };
+    return true;
   }
 
   const onImgPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const onImgPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-      // "hand" is effectively your select/move tool for images
-      if (tool !== "hand") return;
-
+    if (tool !== "hand") return;
+    const { x, y } = getBoardPoint(e);
+    if (beginImageInteraction(x, y)) {
+      handModeRef.current = "img";
       e.preventDefault();
+      e.stopPropagation();
       e.currentTarget.setPointerCapture(e.pointerId);
-
-      const { x, y } = getImgCanvasPoint(e);
-      const hit = findTopImageAt(x, y);
-
-      if (!hit) {
-        setSelectedImageId(null);
-        return;
-      }
-
-      setSelectedImageId(hit.id);
-
-      // --- hit areas ---
-      const HANDLE = 14;
-      const half = HANDLE / 2;
-
-      const inRect = (px: number, py: number, rx: number, ry: number, rw: number, rh: number) =>
-        px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
-
-      // delete box (same geometry as redraw)
-      const XBOX = 22;
-      const xbx = hit.x + hit.w - XBOX;
-      const xby = hit.y - XBOX;
-
-      // If tap delete box -> delete immediately
-      if (inRect(x, y, xbx, xby, XBOX, XBOX)) {
-        snapshotObjects(); // keep undo working
-        markDirty();
-        setPlacedImages((arr) => arr.filter((p) => p.id !== hit.id));
-        setSelectedImageId(null);
-        return;
-      }
-
-      // corner handle hit test
-      const corners = {
-        nw: { cx: hit.x, cy: hit.y },
-        ne: { cx: hit.x + hit.w, cy: hit.y },
-        sw: { cx: hit.x, cy: hit.y + hit.h },
-        se: { cx: hit.x + hit.w, cy: hit.y + hit.h },
-      } as const;
-
-      const hitHandle = (cx: number, cy: number) =>
-        inRect(x, y, cx - half, cy - half, HANDLE, HANDLE);
-
-      let mode: "move" | "nw" | "ne" | "sw" | "se" = "move";
-      if (hitHandle(corners.nw.cx, corners.nw.cy)) mode = "nw";
-      else if (hitHandle(corners.ne.cx, corners.ne.cy)) mode = "ne";
-      else if (hitHandle(corners.sw.cx, corners.sw.cy)) mode = "sw";
-      else if (hitHandle(corners.se.cx, corners.se.cy)) mode = "se";
-
-      snapshotObjects();
-
-      imgDragRef.current = {
-        id: hit.id,
-        mode,
-        startX: x,
-        startY: y,
-        orig: { x: hit.x, y: hit.y, w: hit.w, h: hit.h },
-      };
-
-      e.currentTarget.setPointerCapture(e.pointerId);
-    };
+      return;
+    }
+    setSelectedImageId(null);
+    handModeRef.current = "pan";
+    handDragRef.current = true;
+    handStartRef.current = { y: e.clientY, scrollTop: containerRef.current?.scrollTop ?? 0 };
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
   };
 
   const onImgPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (handModeRef.current === "pan" && handDragRef.current && handStartRef.current) {
+      const dy = e.clientY - handStartRef.current.y;
+      container.scrollTop = handStartRef.current.scrollTop - dy;
+      return;
+    }
+
     if (!imgDragRef.current) return;
 
     markDirty();
-    const { x, y } = getImgCanvasPoint(e);
+    const { x, y } = getBoardPoint(e);
     const dx = x - imgDragRef.current.startX;
     const dy = y - imgDragRef.current.startY;
 
@@ -1530,6 +1815,9 @@ export default function WhiteBoardPage() {
 
 
   const onImgPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    handModeRef.current = "none";
+    handDragRef.current = false;
+    handStartRef.current = null;
     imgDragRef.current = null;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { }
   };
@@ -1540,62 +1828,6 @@ export default function WhiteBoardPage() {
 
     const container = containerRef.current;
     if (!container) return;
-
-    const { x, y } = getImgCanvasPoint(e);
-
-    const hit = findTopImageAt(x, y);
-    if (hit) {
-      setSelectedImageId(hit.id);
-
-      const inRect = (px: number, py: number, rx: number, ry: number, rw: number, rh: number) =>
-        px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
-
-      const HANDLE = 14;
-      const half = HANDLE / 2;
-      const XBOX = 22;
-
-      // Must match redrawImages()
-      const xbx = hit.x + hit.w - XBOX;
-      const xby = hit.y - XBOX;
-
-      // delete
-      if (inRect(x, y, xbx, xby, XBOX, XBOX)) {
-        snapshotObjects();
-        setPlacedImages((arr) => arr.filter((p) => p.id !== hit.id));
-        setSelectedImageId(null);
-        return;
-      }
-
-      const corners = {
-        nw: { cx: hit.x, cy: hit.y },
-        ne: { cx: hit.x + hit.w, cy: hit.y },
-        sw: { cx: hit.x, cy: hit.y + hit.h },
-        se: { cx: hit.x + hit.w, cy: hit.y + hit.h },
-      } as const;
-
-      const hitHandle = (cx: number, cy: number) =>
-        inRect(x, y, cx - half, cy - half, HANDLE, HANDLE);
-
-      let mode: "move" | "nw" | "ne" | "sw" | "se" = "move";
-      if (hitHandle(corners.nw.cx, corners.nw.cy)) mode = "nw";
-      else if (hitHandle(corners.ne.cx, corners.ne.cy)) mode = "ne";
-      else if (hitHandle(corners.sw.cx, corners.sw.cy)) mode = "sw";
-      else if (hitHandle(corners.se.cx, corners.se.cy)) mode = "se";
-
-      snapshotObjects();
-      handModeRef.current = "img";
-      imgDragRef.current = {
-        id: hit.id,
-        mode,
-        startX: x,
-        startY: y,
-        orig: { x: hit.x, y: hit.y, w: hit.w, h: hit.h },
-      };
-
-      e.preventDefault();
-      e.currentTarget.setPointerCapture(e.pointerId);
-      return;
-    }
 
     // otherwise pan
     setSelectedImageId(null);
@@ -1615,7 +1847,8 @@ export default function WhiteBoardPage() {
 
     // Image drag/resize
     if (handModeRef.current === "img" && imgDragRef.current) {
-      const { x, y } = getImgCanvasPoint(e);
+      markDirty();
+      const { x, y } = getBoardPoint(e);
       const dx = x - imgDragRef.current.startX;
       const dy = y - imgDragRef.current.startY;
 
@@ -1876,49 +2109,9 @@ export default function WhiteBoardPage() {
     // ALSO remove all inserted/snipped PDF images
     setPlacedImages([]);
     setSelectedImageId(null);
+    markDirty();
 
   };
-  /* ---------- Undo / Redo (Ink + Objects) ---------- */
-
-  // Snapshot the current ink canvas into the undo stack (and clear redo)
-  function snapshotInkForUndo(pad = 200) {
-    const ink = inkCanvasRef.current;
-    const ctx = inkCtxRef.current;
-    const container = containerRef.current;
-    if (!ink || !ctx || !container) return;
-
-    const dpr = getBoardDpr();
-
-    // Visible viewport on the scroll container (CSS px)
-    const yCss = Math.max(0, Math.floor(container.scrollTop - pad));
-    const hCss = Math.min(
-      canvasHeight - yCss,
-      Math.floor(container.clientHeight + pad * 2)
-    );
-
-    // Convert to canvas pixel coords (because canvas is scaled by DPR)
-    const yPx = Math.floor(yCss * dpr);
-    const hPx = Math.max(1, Math.floor(hCss * dpr));
-
-    const snap = ctx.getImageData(0, yPx, ink.width, hPx);
-
-    setInkUndoStack((s) => [...s, { y: yPx, h: hPx, data: snap }]);
-    setInkRedoStack([]); // new action clears redo
-  }
-
-  // Apply an ImageData back onto the ink canvas
-  function applyInkSnapshot(snap: InkSnap) {
-    const ctx = inkCtxRef.current;
-    if (!ctx) return;
-    ctx.putImageData(snap.data, 0, snap.y);
-  }
-
-  // Snapshot placed images (objects) into undo stack (and clear redo)
-  function snapshotObjectsForUndo() {
-    setObjUndoStack((s) => [...s, placedImages.map((p) => ({ ...p }))]);
-    setObjRedoStack([]); // new action clears redo
-  }
-
   function undo() {
     const ink = inkCanvasRef.current;
     const ctx = inkCtxRef.current;
@@ -1976,14 +2169,7 @@ export default function WhiteBoardPage() {
     if (!el) return;
     const nearBottom = el.scrollTop + el.clientHeight > el.scrollHeight - 500;
     if (nearBottom) setCanvasHeight((h) => Math.min(h + 2000, 30000));
-    requestAnimationFrame(() => {
-      // ✅ keep overlays pinned
-      if (gridApplied) drawGridOverlay();
-      else if (axesApplied) drawAxesOverlay();
-
-      // ✅ scrolling currently “fixes” missing snips — make that explicit
-      if (placedImages.length) void redrawImages();
-    });
+    scheduleViewportRedraw();
   };
 
   function addPage() {
@@ -2228,6 +2414,31 @@ export default function WhiteBoardPage() {
         body: form,
       });
 
+      try {
+        const editableState = serializeWhiteboardState();
+        if (editableState) {
+          const whiteboardRes = await apiFetch(`${API_BASE}/whiteboards`, {
+            method: "POST",
+            body: JSON.stringify({
+              whiteboard_id: currentWhiteboardId ?? undefined,
+              class_id: classId,
+              title: boardTitle,
+              state: editableState,
+            }),
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+          const nextId = Number(whiteboardRes?.id);
+          if (Number.isFinite(nextId) && nextId > 0) {
+            setCurrentWhiteboardId(nextId);
+          }
+        }
+      } catch (e) {
+        console.warn("Editable whiteboard state was not saved.", e);
+      }
+
+      clearDraftFromLocalStorage();
       markClean();
       navigate(`/class/${classId}`);
     } catch (e: any) {
@@ -2333,7 +2544,7 @@ export default function WhiteBoardPage() {
       pushBgUndo();
 
       const pdfjsLib = await loadPdfJs();
-      const pdfUrl = resolveFileUrl(importedPdf.item.file_url);
+      const pdfUrl = await getAuthenticatedPdfUrl(importedPdf.item.file_url);
       const loadingTask = pdfjsLib.getDocument(pdfUrl);
       const pdf = await loadingTask.promise;
       const page = await pdf.getPage(1);
@@ -2393,6 +2604,46 @@ export default function WhiteBoardPage() {
   const pdfUrlRef = useRef<string | null>(null);
   const pdfRenderTokenRef = useRef(0); // cancels stale async renders
 
+  async function getAuthenticatedPdfUrl(fileUrl: string): Promise<string> {
+    const resolvedUrl = resolveFileUrl(fileUrl);
+    if (!resolvedUrl) throw new Error("Missing PDF URL");
+
+    if (pdfBlobUrlRef.current && pdfSourceUrlRef.current === resolvedUrl) {
+      return pdfBlobUrlRef.current;
+    }
+
+    if (pdfBlobUrlRef.current) {
+      window.URL.revokeObjectURL(pdfBlobUrlRef.current);
+      pdfBlobUrlRef.current = null;
+    }
+
+    pdfDocRef.current = null;
+    pdfUrlRef.current = null;
+    pdfSourceUrlRef.current = resolvedUrl;
+
+    const token = (() => {
+      try {
+        return localStorage.getItem("elume_token");
+      } catch {
+        return null;
+      }
+    })();
+
+    const headers = new Headers();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+
+    const res = await fetch(resolvedUrl, { method: "GET", headers });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `Request failed (${res.status})`);
+    }
+
+    const blob = await res.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    pdfBlobUrlRef.current = blobUrl;
+    return blobUrl;
+  }
+
   async function renderPdfToViewer(pageNum: number) {
     if (!importedPdf) return;
 
@@ -2435,7 +2686,7 @@ export default function WhiteBoardPage() {
     const token = ++pdfRenderTokenRef.current;
 
     const pdfjsLib = await loadPdfJs();
-    const pdfUrl = resolveFileUrl(importedPdf.item.file_url);
+    const pdfUrl = await getAuthenticatedPdfUrl(importedPdf.item.file_url);
 
     // Load once per PDF
     if (!pdfDocRef.current || pdfUrlRef.current !== pdfUrl) {
@@ -2480,6 +2731,30 @@ export default function WhiteBoardPage() {
     setPdfPageNum(p);
     setClipRect(null);
   }
+
+  useEffect(() => {
+    pdfRenderTokenRef.current += 1;
+    pdfDocRef.current = null;
+    pdfUrlRef.current = null;
+    setPdfPageNum(1);
+    setPdfNumPages(1);
+    setClipRect(null);
+    if (pdfBlobUrlRef.current) {
+      window.URL.revokeObjectURL(pdfBlobUrlRef.current);
+      pdfBlobUrlRef.current = null;
+    }
+    pdfSourceUrlRef.current = null;
+  }, [importedPdf]);
+
+  useEffect(() => {
+    return () => {
+      if (pdfBlobUrlRef.current) {
+        window.URL.revokeObjectURL(pdfBlobUrlRef.current);
+        pdfBlobUrlRef.current = null;
+      }
+      pdfSourceUrlRef.current = null;
+    };
+  }, []);
 
   function overlayXY(e: React.PointerEvent) {
     const el = pdfOverlayRef.current;
@@ -2584,6 +2859,7 @@ export default function WhiteBoardPage() {
       h = Math.floor(h * s);
     }
     snapshotObjects();
+    markDirty();
     setPlacedImages((arr) => [
       ...arr,
       {
@@ -3051,7 +3327,7 @@ export default function WhiteBoardPage() {
 
                 <canvas
                   ref={imgCanvasRef}
-                  className="absolute left-0 top-0 pointer-events-none"
+                  className={`absolute left-0 top-0 ${tool === "hand" ? "touch-none" : "pointer-events-none"}`}
                   style={{ touchAction: tool === "hand" ? "none" : "auto" }}
                   onPointerDown={onImgPointerDown}
                   onPointerMove={onImgPointerMove}
@@ -3369,39 +3645,123 @@ export default function WhiteBoardPage() {
           {/* Title Modal */}
           {showTitleModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-              <div className="w-full max-w-lg rounded-2xl border-2 border-slate-200 bg-white p-5">
-                <div className="text-xl font-semibold">Title this whiteboard</div>
-                <div className="mt-1 text-sm text-slate-600">Give it a clear name so it saves nicely and posts to the class feed.</div>
-
-                <input
-                  className="mt-4 w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base"
-                  value={titleDraft}
-                  onChange={(e) => setTitleDraft(e.target.value)}
-                  autoFocus
-                />
-
-                <div className="mt-5 flex justify-end gap-2">
-                  <button className={pill} type="button" onClick={() => navigate(`/class/${classId}`)}>
-                    Cancel
-                  </button>
-
-                  <button
-                    className={pill}
-                    type="button"
-                    onClick={() => {
-                      const finalTitle = titleDraft.trim() || "Class Whiteboard";
-                      setBoardTitle(finalTitle);
-
-                      // ✅ default tool + size on startup
-                      setTool("pen");
-                      setPenSize(PEN_SIZES[0]);
-
-                      setShowTitleModal(false);
-                    }}
-                  >
-                    Start
-                  </button>
+              <div className="w-full max-w-2xl rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-xl">
+                <div className="text-xl font-semibold">Open whiteboard</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Start a fresh board for this lesson or reopen one of your recent editable whiteboards.
                 </div>
+
+                {entryMode === "menu" && (
+                  <div className="mt-5 grid gap-3 md:grid-cols-2">
+                    <button
+                      type="button"
+                      className="rounded-3xl border-2 border-slate-200 bg-white p-5 text-left hover:bg-slate-50"
+                      onClick={() => setEntryMode("new")}
+                    >
+                      <div className="text-lg font-semibold text-slate-900">Start new whiteboard</div>
+                      <div className="mt-2 text-sm text-slate-600">
+                        Open a blank teaching board and save it to the class feed when you are ready.
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-3xl border-2 border-slate-200 bg-white p-5 text-left hover:bg-slate-50"
+                      onClick={() => setEntryMode("recent")}
+                    >
+                      <div className="text-lg font-semibold text-slate-900">Open recent whiteboard</div>
+                      <div className="mt-2 text-sm text-slate-600">
+                        Continue from one of the most recent editable whiteboards for this class.
+                      </div>
+                    </button>
+                  </div>
+                )}
+
+                {entryMode === "new" && (
+                  <>
+                    <input
+                      className="mt-4 w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base"
+                      value={titleDraft}
+                      onChange={(e) => setTitleDraft(e.target.value)}
+                      autoFocus
+                    />
+                    <div className="mt-2 text-sm text-slate-600">
+                      Give it a clear title so it saves cleanly and posts to the class feed.
+                    </div>
+                    <div className="mt-5 flex justify-between gap-2">
+                      <button className={pill} type="button" onClick={() => setEntryMode("menu")}>
+                        Back
+                      </button>
+                      <div className="flex gap-2">
+                        <button className={pill} type="button" onClick={() => navigate(`/class/${classId}`)}>
+                          Cancel
+                        </button>
+                        <button
+                          className={pill}
+                          type="button"
+                          onClick={() => {
+                            const finalTitle = titleDraft.trim() || "Class Whiteboard";
+                            setBoardTitle(finalTitle);
+                            setTool("pen");
+                            setPenSize(PEN_SIZES[0]);
+                            setShowTitleModal(false);
+                            setEntryMode("menu");
+                          }}
+                        >
+                          Start
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {entryMode === "recent" && (
+                  <>
+                    <div className="mt-4 rounded-2xl border-2 border-slate-200 bg-slate-50">
+                      {recentLoading ? (
+                        <div className="p-4 text-sm text-slate-600">Loading recent whiteboards…</div>
+                      ) : recentWhiteboards.length === 0 ? (
+                        <div className="p-4 text-sm text-slate-600">
+                          {recentError || "No recent editable whiteboards are available for this class yet."}
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-slate-200">
+                          {recentWhiteboards.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className="w-full px-4 py-3 text-left hover:bg-white"
+                              disabled={openingRecentId === item.id}
+                              onClick={() => void openRecentWhiteboard(item.id)}
+                            >
+                              <div className="font-semibold text-slate-900">
+                                {item.title?.trim() || "Untitled whiteboard"}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {item.updated_at || item.created_at || "Recently saved"}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {recentError && recentWhiteboards.length > 0 && (
+                      <div className="mt-3 text-sm text-amber-700">{recentError}</div>
+                    )}
+                    <div className="mt-5 flex justify-between gap-2">
+                      <button className={pill} type="button" onClick={() => setEntryMode("menu")}>
+                        Back
+                      </button>
+                      <div className="flex gap-2">
+                        <button className={pill} type="button" onClick={() => void loadRecentWhiteboards()} disabled={recentLoading}>
+                          Refresh
+                        </button>
+                        <button className={pill} type="button" onClick={() => navigate(`/class/${classId}`)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -3433,6 +3793,42 @@ export default function WhiteBoardPage() {
                     }}
                   >
                     {saving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {draftPromptOpen && (
+            <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 px-4">
+              <div className="w-full max-w-lg rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-xl">
+                <div className="text-xl font-semibold">Restore whiteboard draft?</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  A local draft was found for this class. You can restore it or discard it and start fresh.
+                </div>
+                <div className="mt-5 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className={pill}
+                    onClick={() => {
+                      pendingDraftRef.current = null;
+                      clearDraftFromLocalStorage();
+                      setDraftPromptOpen(false);
+                    }}
+                  >
+                    Discard draft
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
+                    onClick={() => {
+                      const draft = pendingDraftRef.current;
+                      pendingDraftRef.current = null;
+                      setDraftPromptOpen(false);
+                      if (draft) restoreWhiteboardState(draft);
+                    }}
+                  >
+                    Restore draft
                   </button>
                 </div>
               </div>

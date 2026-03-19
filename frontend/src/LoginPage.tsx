@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch, setToken } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
 
@@ -8,23 +8,21 @@ type Props = { onLoggedIn: () => void };
 
 export default function LoginPage({ onLoggedIn }: Props) {
     const navigate = useNavigate();
+    const location = useLocation();
     const [email, setEmail] = useState("");
 
     const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
-    const [showWaitlistModal, setShowWaitlistModal] = useState(false);
-    const [waitlistName, setWaitlistName] = useState("");
-    const [waitlistEmail, setWaitlistEmail] = useState("");
-    const [waitlistSchool, setWaitlistSchool] = useState("");
-    const [waitlistLoading, setWaitlistLoading] = useState(false);
-    const [waitlistSuccess, setWaitlistSuccess] = useState<string | null>(null);
-    const [waitlistError, setWaitlistError] = useState<string | null>(null);
     const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
     const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
     const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
     const [forgotPasswordSuccess, setForgotPasswordSuccess] = useState<string | null>(null);
     const [forgotPasswordError, setForgotPasswordError] = useState<string | null>(null);
+    const redirectPath = useMemo(() => {
+        const path = `${location.pathname || "/"}${location.search || ""}`;
+        return path === "/login" ? "/" : path;
+    }, [location.pathname, location.search]);
 
     function isLocalDev() {
         const h = window.location.hostname;
@@ -54,7 +52,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                 } catch { }
 
                 onLoggedIn();
-                navigate("/", { replace: true });
+                navigate(redirectPath, { replace: true });
 
             } catch {
                 // silently fail so normal login form still works
@@ -66,7 +64,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
         return () => {
             cancelled = true;
         };
-    }, [onLoggedIn, navigate]);
+    }, [onLoggedIn, navigate, redirectPath]);
 
     useEffect(() => {
         document.title = "Elume – AI Tools for Secondary School Teachers";
@@ -133,7 +131,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
             } catch { }
 
             onLoggedIn();
-            navigate("/", { replace: true });
+            navigate(redirectPath, { replace: true });
 
         } catch (err: any) {
             setError(err?.message || "Login failed");
@@ -142,37 +140,6 @@ export default function LoginPage({ onLoggedIn }: Props) {
         }
     }
 
-    async function submitWaitlist(e: React.FormEvent) {
-        e.preventDefault();
-        setWaitlistError(null);
-        setWaitlistSuccess(null);
-        setWaitlistLoading(true);
-
-        try {
-            await apiFetch("/waitlist", {
-                method: "POST",
-                body: JSON.stringify({
-                    name: waitlistName.trim(),
-                    email: waitlistEmail.trim(),
-                    school: waitlistSchool.trim(),
-                }),
-            });
-
-            setWaitlistSuccess("Thanks — you’ve been added to the Elume waitlist.");
-            setWaitlistName("");
-            setWaitlistEmail("");
-            setWaitlistSchool("");
-
-            setTimeout(() => {
-                setShowWaitlistModal(false);
-                setWaitlistSuccess(null);
-            }, 1400);
-        } catch (err: any) {
-            setWaitlistError(err?.message || "Could not join waitlist");
-        } finally {
-            setWaitlistLoading(false);
-        }
-    }
 
     return (
         <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
@@ -428,33 +395,25 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                 </div>
 
                                 <div className="mt-5 border-t border-slate-200 pt-4">
-                                    <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 px-4 py-4 shadow-sm">
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div>
-                                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">
-                                                    Early Access
-                                                </div>
-                                                <div className="mt-1 text-base font-black tracking-tight text-slate-900">
-                                                    Join the Elume Waitlist
-                                                </div>
-                                            </div>
+                                    <div className="rounded-2xl border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-emerald-50 px-4 py-4 shadow-sm">
+                                        <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-700">
+                                            Student Hub
+                                        </div>
 
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setWaitlistError(null);
-                                                    setWaitlistSuccess(null);
-                                                    setShowWaitlistModal(true);
-                                                }}
-                                                className="shrink-0 rounded-xl border border-emerald-200 bg-white px-4 py-2 text-xs font-bold text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md"
-                                            >
-                                                Join
-                                            </button>
+                                        <div className="mt-1 text-lg font-black tracking-tight text-slate-900">
+                                            Students start here
                                         </div>
 
                                         <p className="mt-2 text-sm leading-5 text-slate-600">
-                                            Be first to hear when new teacher and school access opens.
+                                            Joining a class? Open Student Hub to enter your class code and PIN.
                                         </p>
+
+                                        <a
+                                            href={`${window.location.origin}/#/student`}
+                                            className="mt-4 flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-cyan-500 via-teal-500 to-emerald-500 px-5 py-3.5 text-base font-black text-white shadow-lg transition duration-200 hover:scale-[1.01] hover:shadow-xl active:scale-[0.995]"
+                                        >
+                                            Open Student Hub
+                                        </a>
                                     </div>
                                 </div>
                             </div>
@@ -531,94 +490,6 @@ export default function LoginPage({ onLoggedIn }: Props) {
                     </div>
                 </div>
             </div>
-            {showWaitlistModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 px-4 backdrop-blur-sm">
-                    <div className="w-full max-w-md rounded-[28px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
-                        <div className="flex items-start justify-between gap-4">
-                            <div>
-                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">
-                                    Early Access
-                                </div>
-                                <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">
-                                    Join the Elume Waitlist
-                                </h3>
-                                <p className="mt-2 text-sm leading-6 text-slate-600">
-                                    Leave your details and I’ll keep you updated on early access and rollout.
-                                </p>
-                            </div>
-
-                            <button
-                                type="button"
-                                onClick={() => setShowWaitlistModal(false)}
-                                className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
-                            >
-                                Close
-                            </button>
-                        </div>
-
-                        <form className="mt-5 space-y-4" onSubmit={submitWaitlist}>
-                            <label className="block">
-                                <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                                    Name
-                                </span>
-                                <input
-                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
-                                    value={waitlistName}
-                                    onChange={(e) => setWaitlistName(e.target.value)}
-                                    placeholder="Your name"
-                                    required
-                                />
-                            </label>
-
-                            <label className="block">
-                                <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                                    Email
-                                </span>
-                                <input
-                                    type="email"
-                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
-                                    value={waitlistEmail}
-                                    onChange={(e) => setWaitlistEmail(e.target.value)}
-                                    placeholder="you@school.ie"
-                                    required
-                                />
-                            </label>
-
-                            <label className="block">
-                                <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                                    School <span className="font-normal text-slate-400">(optional)</span>
-                                </span>
-                                <input
-                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
-                                    value={waitlistSchool}
-                                    onChange={(e) => setWaitlistSchool(e.target.value)}
-                                    placeholder="School name"
-                                />
-                            </label>
-
-                            {waitlistError && (
-                                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-                                    {waitlistError}
-                                </div>
-                            )}
-
-                            {waitlistSuccess && (
-                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-                                    {waitlistSuccess}
-                                </div>
-                            )}
-
-                            <button
-                                type="submit"
-                                disabled={waitlistLoading}
-                                className="w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-base font-black text-white shadow-lg transition hover:shadow-xl disabled:opacity-60"
-                            >
-                                {waitlistLoading ? "Joining..." : "Join the Waitlist"}
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

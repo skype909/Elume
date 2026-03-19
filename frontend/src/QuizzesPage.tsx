@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiFetch } from "./api";
+import { apiFetch, apiFetchBlob } from "./api";
 
 /** ---------------- Types ---------------- */
 type MCQQuestion = {
@@ -44,6 +44,14 @@ type GenerateQuizResponse = {
 
 /** ---------------- Helpers ---------------- */
 const API_BASE = "/api";
+
+function resolveFileUrl(fileUrl: string) {
+  if (!fileUrl) return "";
+  if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
+  if (fileUrl.startsWith("/api/")) return fileUrl;
+  if (fileUrl.startsWith("/")) return `${API_BASE}${fileUrl}`;
+  return `${API_BASE}/${fileUrl}`;
+}
 
 function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
@@ -151,6 +159,8 @@ export default function QuizzesPage() {
   const [genNoteId, setGenNoteId] = useState<number | null>(null);
   const [genNum, setGenNum] = useState<number>(10);
   const [genBusy, setGenBusy] = useState(false);
+  const [genPreviewUrl, setGenPreviewUrl] = useState<string>("");
+  const genPreviewObjectUrlRef = useRef<string | null>(null);
 
   /** --------- Play Mode --------- */
   type PlayState = {
@@ -527,9 +537,54 @@ export default function QuizzesPage() {
     setGenNum(10);
     setGenNotes([]);
     setGenNoteId(null);
+    setGenPreviewUrl("");
     setError(null);
     fetchNotes("notes");
   }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreview() {
+      if (genPreviewObjectUrlRef.current) {
+        URL.revokeObjectURL(genPreviewObjectUrlRef.current);
+        genPreviewObjectUrlRef.current = null;
+      }
+
+      if (!showGenerate || !genNoteId) {
+        setGenPreviewUrl("");
+        return;
+      }
+
+      const selected = genNotes.find((x) => x.id === genNoteId);
+      if (!selected?.file_url) {
+        setGenPreviewUrl("");
+        return;
+      }
+
+      try {
+        const blob = await apiFetchBlob(resolveFileUrl(selected.file_url), { method: "GET" });
+        if (cancelled) return;
+        const objectUrl = URL.createObjectURL(blob);
+        genPreviewObjectUrlRef.current = objectUrl;
+        setGenPreviewUrl(objectUrl);
+      } catch (e: any) {
+        if (cancelled) return;
+        setGenPreviewUrl("");
+        setError(e?.message || "Failed to preview PDF.");
+      }
+    }
+
+    void loadPreview();
+
+    return () => {
+      cancelled = true;
+      if (genPreviewObjectUrlRef.current) {
+        URL.revokeObjectURL(genPreviewObjectUrlRef.current);
+        genPreviewObjectUrlRef.current = null;
+      }
+    };
+  }, [genNoteId, genNotes, showGenerate]);
 
   async function runGenerate() {
     if (!genNoteId) {
@@ -1123,6 +1178,7 @@ export default function QuizzesPage() {
                   setShowGenerate(false);
                   setGenNotes([]);
                   setGenNoteId(null);
+                  setGenPreviewUrl("");
                   setGenBusy(false);
                   setGenLoading(false);
                 }}
@@ -1226,7 +1282,7 @@ export default function QuizzesPage() {
                   <div className="mt-3 rounded-2xl border-2 border-slate-200 overflow-hidden">
                     <iframe
                       title="PDF Preview"
-                      src={genNotes.find((x) => x.id === genNoteId)?.file_url || ""}
+                      src={genPreviewUrl}
                       className="h-[420px] w-full"
                     />
                   </div>

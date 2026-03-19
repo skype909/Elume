@@ -1658,9 +1658,7 @@ export default function App() {
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1";
 
-  const [isAuthed, setIsAuthed] = useState(
-    isLocalhost ? false : !!localStorage.getItem("elume_token")
-  );
+  const [isAuthed, setIsAuthed] = useState(() => !!getToken());
   const userEmail = useMemo(() => getEmailFromToken(), [isAuthed]);
   const userLabel = userEmail ?? "";
   const pilotUsers = new Set(["admin@elume.ie", "rob@elume.ie", "emma@elume.ie", "gillian@elume.ie"]);

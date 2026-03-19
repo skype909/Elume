@@ -61,6 +61,7 @@ type BoardSnapshot = {
 
 type SocketPayload =
     | { type: "stroke"; stroke: Stroke }
+    | { type: "stroke-progress"; stroke: Stroke }
     | { type: "cursor"; x: number; y: number; size: number }
     | { type: "clear-preview" }
     | { type: "ping" }
@@ -93,6 +94,9 @@ type Props = {
     apiBase?: string;
     apiFetch?: (url: string, init?: RequestInit) => Promise<any>;
     pdfImportRequestNonce?: number;
+    viewportMode?: "fixed" | "pan";
+    boardWidth?: number;
+    boardHeight?: number;
 };
 
 type Interaction =
@@ -223,6 +227,13 @@ function objectContainsPoint(obj: BoardObject, pt: StrokePoint) {
     );
 }
 
+function findTopObjectAtPoint(objects: BoardObject[], pt: StrokePoint) {
+    for (let i = objects.length - 1; i >= 0; i--) {
+        if (objectContainsPoint(objects[i], pt)) return objects[i];
+    }
+    return null;
+}
+
 function getObjectDefaultFill(type: BoardObjectType) {
     if (type === "sticky") return "#FDE68A";
     if (type === "speech") return "#ffffff";
@@ -247,7 +258,11 @@ export default function CollabBoard({
     apiBase,
     apiFetch,
     pdfImportRequestNonce,
+    viewportMode = "fixed",
+    boardWidth,
+    boardHeight,
 }: Props) {
+    const viewportRef = useRef<HTMLDivElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const committedCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -277,8 +292,10 @@ export default function CollabBoard({
     const liveStrokeRef = useRef<Stroke | null>(null);
     const interactionRef = useRef<Interaction>({ mode: "idle" });
     const historyRef = useRef<BoardSnapshot[]>([]);
+    const remotePreviewStrokesRef = useRef<Map<string, Stroke>>(new Map());
     const eraserGestureSnapshotTakenRef = useRef(false);
     const activePointerIdRef = useRef<number | null>(null);
+    const liveStrokeBroadcastRef = useRef(0);
     const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const pdfViewerRef = useRef<HTMLDivElement | null>(null);
     const pdfOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -299,10 +316,20 @@ export default function CollabBoard({
         scrollLeft: 0,
         scrollTop: 0,
     });
+    const boardPanRef = useRef<{ active: boolean; startX: number; startY: number; scrollLeft: number; scrollTop: number }>({
+        active: false,
+        startX: 0,
+        startY: 0,
+        scrollLeft: 0,
+        scrollTop: 0,
+    });
 
 
     const boardLabel = useMemo(() => `${sessionCode} / ${roomKey}`, [sessionCode, roomKey]);
     const canLoadPdfImports = Boolean(editable && classId && apiBase && apiFetch);
+    const resolvedBoardWidth = boardWidth ?? 1600;
+    const resolvedBoardHeight = boardHeight ?? height;
+    const isPannableViewport = readOnly && viewportMode === "pan";
     const backgroundObjects = useMemo(
         () => objects.filter((obj) => obj.type === "image" && obj.id !== selectedObjectId),
         [objects, selectedObjectId]
@@ -466,14 +493,12 @@ export default function CollabBoard({
 
     const redrawCommitted = useCallback(() => {
         const committed = committedCanvasRef.current;
-        const container = containerRef.current;
-        if (!committed || !container) return;
+        if (!committed) return;
 
         const ctx = committed.getContext("2d");
         if (!ctx) return;
 
-        const rect = container.getBoundingClientRect();
-        ctx.clearRect(0, 0, rect.width, rect.height);
+        ctx.clearRect(0, 0, committed.width || 0, committed.height || 0);
 
         for (const stroke of strokesRef.current) {
             drawStroke(ctx, stroke);
@@ -482,15 +507,28 @@ export default function CollabBoard({
 
     const clearPreview = useCallback(() => {
         const preview = previewCanvasRef.current;
-        const container = containerRef.current;
-        if (!preview || !container) return;
+        if (!preview) return;
 
         const ctx = preview.getContext("2d");
         if (!ctx) return;
 
-        const rect = container.getBoundingClientRect();
-        ctx.clearRect(0, 0, rect.width, rect.height);
+        ctx.clearRect(0, 0, preview.width || 0, preview.height || 0);
     }, []);
+
+    const clearBoardState = useCallback((shouldBroadcast: boolean) => {
+        strokesRef.current = [];
+        remotePreviewStrokesRef.current.clear();
+        liveStrokeRef.current = null;
+        historyRef.current = [];
+        setObjects([]);
+        setSelectedObjectId(null);
+        redrawCommitted();
+        clearPreview();
+
+        if (shouldBroadcast && editable) {
+            broadcastSnapshotSync({ strokes: [], objects: [] });
+        }
+    }, [clearPreview, editable, redrawCommitted]);
 
     function restoreSnapshot(snapshot: BoardSnapshot) {
         strokesRef.current = snapshot.strokes.map(cloneStroke);
@@ -525,18 +563,19 @@ export default function CollabBoard({
         const preview = previewCanvasRef.current;
         if (!container || !committed || !preview) return;
 
-        const rect = container.getBoundingClientRect();
         const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        const width = isPannableViewport ? resolvedBoardWidth : container.clientWidth;
+        const boardPixelHeight = isPannableViewport ? resolvedBoardHeight : height;
 
-        committed.width = Math.floor(rect.width * dpr);
-        committed.height = Math.floor(rect.height * dpr);
-        preview.width = Math.floor(rect.width * dpr);
-        preview.height = Math.floor(rect.height * dpr);
+        committed.width = Math.floor(width * dpr);
+        committed.height = Math.floor(boardPixelHeight * dpr);
+        preview.width = Math.floor(width * dpr);
+        preview.height = Math.floor(boardPixelHeight * dpr);
 
-        committed.style.width = `${rect.width}px`;
-        committed.style.height = `${rect.height}px`;
-        preview.style.width = `${rect.width}px`;
-        preview.style.height = `${rect.height}px`;
+        committed.style.width = `${width}px`;
+        committed.style.height = `${boardPixelHeight}px`;
+        preview.style.width = `${width}px`;
+        preview.style.height = `${boardPixelHeight}px`;
 
         const cctx = committed.getContext("2d");
         const pctx = preview.getContext("2d");
@@ -547,7 +586,7 @@ export default function CollabBoard({
 
         redrawCommitted();
         clearPreview();
-    }, [clearPreview, redrawCommitted]);
+    }, [clearPreview, height, isPannableViewport, redrawCommitted, resolvedBoardHeight, resolvedBoardWidth]);
 
     function drawShapePreview(obj: BoardObject) {
         const preview = previewCanvasRef.current;
@@ -608,6 +647,14 @@ export default function CollabBoard({
             drawStroke(ctx, liveStrokeRef.current);
         }
 
+        for (const remoteStroke of remotePreviewStrokesRef.current.values()) {
+            drawStroke(ctx, remoteStroke);
+        }
+
+        for (const remoteStroke of remotePreviewStrokesRef.current.values()) {
+            drawStroke(ctx, remoteStroke);
+        }
+
         if (tool === "eraser" && cursor) {
             ctx.save();
             ctx.beginPath();
@@ -625,6 +672,7 @@ export default function CollabBoard({
         pushHistorySnapshot();
 
         strokesRef.current.push(liveStrokeRef.current);
+        remotePreviewStrokesRef.current.delete(liveStrokeRef.current.id);
         redrawCommitted();
 
         sendWsMessage({
@@ -646,12 +694,21 @@ export default function CollabBoard({
             createdBy: participantId,
         };
         liveStrokeRef.current = stroke;
+        liveStrokeBroadcastRef.current = 0;
         drawPreviewStroke();
     }
 
     function extendStroke(pt: StrokePoint) {
         if (!liveStrokeRef.current) return;
         liveStrokeRef.current.points.push(pt);
+        const now = Date.now();
+        if (now - liveStrokeBroadcastRef.current >= 50) {
+            liveStrokeBroadcastRef.current = now;
+            sendWsMessage({
+                type: "stroke-progress",
+                stroke: cloneStroke(liveStrokeRef.current),
+            });
+        }
         drawPreviewStroke();
     }
 
@@ -965,6 +1022,40 @@ export default function CollabBoard({
         pdfPanRef.current.active = false;
     }
 
+    function onBoardViewportPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+        if (!isPannableViewport) return;
+        const viewport = viewportRef.current;
+        if (!viewport) return;
+
+        boardPanRef.current = {
+            active: true,
+            startX: e.clientX,
+            startY: e.clientY,
+            scrollLeft: viewport.scrollLeft,
+            scrollTop: viewport.scrollTop,
+        };
+        viewport.setPointerCapture?.(e.pointerId);
+    }
+
+    function onBoardViewportPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+        if (!isPannableViewport || !boardPanRef.current.active) return;
+        const viewport = viewportRef.current;
+        if (!viewport) return;
+
+        viewport.scrollLeft = boardPanRef.current.scrollLeft - (e.clientX - boardPanRef.current.startX);
+        viewport.scrollTop = boardPanRef.current.scrollTop - (e.clientY - boardPanRef.current.startY);
+    }
+
+    function onBoardViewportPointerEnd(e: React.PointerEvent<HTMLDivElement>) {
+        const viewport = viewportRef.current;
+        if (viewport) {
+            try {
+                viewport.releasePointerCapture?.(e.pointerId);
+            } catch { }
+        }
+        boardPanRef.current.active = false;
+    }
+
     function closePdfImport() {
         pdfRenderTokenRef.current += 1;
         if (pdfRenderTaskRef.current?.cancel) {
@@ -1037,13 +1128,7 @@ export default function CollabBoard({
         connectionVersionRef.current += 1;
         const connectionVersion = connectionVersionRef.current;
 
-        strokesRef.current = [];
-        liveStrokeRef.current = null;
-        historyRef.current = [];
-        setObjects([]);
-        setSelectedObjectId(null);
-        clearPreview();
-        redrawCommitted();
+        clearBoardState(false);
 
         if (!sessionCode || !roomKey) {
             setIsConnected(false);
@@ -1077,8 +1162,19 @@ export default function CollabBoard({
                 if (data.type === "stroke" && data.stroke) {
                     const incoming = data.stroke;
                     if (!readOnly && incoming.createdBy === participantId) return;
+                    remotePreviewStrokesRef.current.delete(incoming.id);
                     strokesRef.current.push(incoming);
                     redrawCommitted();
+                    clearPreview();
+                    drawPreviewStroke();
+                    return;
+                }
+
+                if (data.type === "stroke-progress" && data.stroke) {
+                    const incoming = data.stroke;
+                    if (incoming.createdBy === participantId) return;
+                    remotePreviewStrokesRef.current.set(incoming.id, incoming);
+                    drawPreviewStroke();
                     return;
                 }
 
@@ -1115,6 +1211,7 @@ export default function CollabBoard({
 
                 if (data.type === "clear-preview") {
                     clearPreview();
+                    drawPreviewStroke();
                     return;
                 }
 
@@ -1122,6 +1219,7 @@ export default function CollabBoard({
                     if (data.sourceId === participantId) return;
 
                     strokesRef.current = data.snapshot.strokes.map(cloneStroke);
+                    remotePreviewStrokesRef.current.clear();
                     setObjects(data.snapshot.objects.map(cloneObject));
                     redrawCommitted();
                     clearPreview();
@@ -1135,9 +1233,10 @@ export default function CollabBoard({
         };
 
         return () => {
+            remotePreviewStrokesRef.current.clear();
             ws.close();
         };
-    }, [sessionCode, roomKey, participantId, readOnly, redrawCommitted, clearPreview]);
+    }, [clearBoardState, clearPreview, drawPreviewStroke, participantId, readOnly, redrawCommitted, roomKey, sessionCode]);
 
     useEffect(() => {
         if (!onUndoReady) return;
@@ -1148,6 +1247,17 @@ export default function CollabBoard({
         if (!onExportReady) return;
         onExportReady(exportBoardAsPng);
     }, [onExportReady, sessionCode, roomKey]);
+
+    useEffect(() => {
+        function onClearBoard(event: Event) {
+            const detail = (event as CustomEvent<{ roomKey?: string; nonce?: number }>).detail;
+            if (!detail?.roomKey || detail.roomKey !== roomKey) return;
+            clearBoardState(true);
+        }
+
+        window.addEventListener("collab-clear-board", onClearBoard as EventListener);
+        return () => window.removeEventListener("collab-clear-board", onClearBoard as EventListener);
+    }, [clearBoardState, roomKey]);
 
     useEffect(() => {
         if (pdfRenderTaskRef.current?.cancel) {
@@ -1277,7 +1387,10 @@ export default function CollabBoard({
         setCursor(tool === "eraser" ? { x: pt.x, y: pt.y, size: eraserSize } : null);
 
         if (tool === "select") {
-            setSelectedObjectId(null);
+            const hitObject = findTopObjectAtPoint(objects, pt);
+            if (!hitObject) {
+                setSelectedObjectId(null);
+            }
             interactionRef.current = { mode: "idle" };
             return;
         }
@@ -1827,23 +1940,37 @@ export default function CollabBoard({
             </div>
 
             <div
-                ref={containerRef}
-                className="relative touch-none select-none"
-                style={{ height, touchAction: "none" }}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerCancel}
-                onPointerLeave={handlePointerLeave}
+                ref={viewportRef}
+                className={isPannableViewport ? "overflow-auto bg-slate-50/60" : ""}
+                style={{ height }}
+                onPointerDown={isPannableViewport ? onBoardViewportPointerDown : undefined}
+                onPointerMove={isPannableViewport ? onBoardViewportPointerMove : undefined}
+                onPointerUp={isPannableViewport ? onBoardViewportPointerEnd : undefined}
+                onPointerCancel={isPannableViewport ? onBoardViewportPointerEnd : undefined}
             >
+                <div
+                    ref={containerRef}
+                    className="relative touch-none select-none"
+                    style={{
+                        height: isPannableViewport ? resolvedBoardHeight : height,
+                        width: isPannableViewport ? resolvedBoardWidth : "100%",
+                        touchAction: "none",
+                    }}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerCancel={handlePointerCancel}
+                    onPointerLeave={handlePointerLeave}
+                >
 
-                <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:26px_26px]" />
+                    <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:26px_26px]" />
 
-                <div className="absolute inset-0">{backgroundObjects.map((obj) => renderObject(obj))}</div>
-                <canvas ref={committedCanvasRef} className="pointer-events-none absolute inset-0" />
-                <canvas ref={previewCanvasRef} className="pointer-events-none absolute inset-0" />
+                    <div className="absolute inset-0">{backgroundObjects.map((obj) => renderObject(obj))}</div>
+                    <canvas ref={committedCanvasRef} className="pointer-events-none absolute inset-0" />
+                    <canvas ref={previewCanvasRef} className="pointer-events-none absolute inset-0" />
 
-                <div className="absolute inset-0">{foregroundObjects.map((obj) => renderObject(obj))}</div>
+                    <div className="absolute inset-0">{foregroundObjects.map((obj) => renderObject(obj))}</div>
+                </div>
             </div>
 
             {editable && showImportModal && (

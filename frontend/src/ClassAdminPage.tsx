@@ -114,6 +114,8 @@ export default function ClassAdminPage() {
     const [firstName, setFirstName] = useState("");
     const [notes, setNotes] = useState("");
     const [bulkNames, setBulkNames] = useState("");
+    const [deletingStudent, setDeletingStudent] = useState<Student | null>(null);
+    const [deleteBusy, setDeleteBusy] = useState(false);
 
     // ---- Assessments / Results UI ----
     const [showCreateTest, setShowCreateTest] = useState(false);
@@ -311,6 +313,45 @@ export default function ClassAdminPage() {
             setStudents((prev) => prev.map((s) => (s.id === studentId ? updated : s)));
         } catch (e: any) {
             setError(e?.message || "Failed to update student");
+        }
+    }
+
+    async function confirmDeleteStudent() {
+        if (!deletingStudent) return;
+
+        try {
+            setDeleteBusy(true);
+            setError(null);
+            await apiFetch(`${API_BASE}/students/${deletingStudent.id}`, {
+                method: "DELETE",
+            });
+            setStudents((prev) => prev.filter((s) => s.id !== deletingStudent.id));
+            setHistoryCache((prev) => {
+                const next = { ...prev };
+                delete next[deletingStudent.id];
+                return next;
+            });
+            setHistoryLoading((prev) => {
+                const next = { ...prev };
+                delete next[deletingStudent.id];
+                return next;
+            });
+            setReportDrafts((prev) => {
+                const next = { ...prev };
+                delete next[deletingStudent.id];
+                return next;
+            });
+            if (selectedHistoryStudent?.student_id === deletingStudent.id) {
+                setSelectedHistoryStudent(null);
+            }
+            setDeletingStudent(null);
+            if (tab === "insights" || tab === "reports") {
+                void loadInsights();
+            }
+        } catch (e: any) {
+            setError(e?.message || "Failed to delete student");
+        } finally {
+            setDeleteBusy(false);
         }
     }
 
@@ -749,6 +790,7 @@ export default function ClassAdminPage() {
             : null;
 
     return (
+        <>
         <div className="min-h-screen bg-emerald-100 p-6">
             <div className="mx-auto max-w-6xl px-4 py-6">
                 {/* Header card */}
@@ -958,14 +1000,22 @@ export default function ClassAdminPage() {
                                                 </div>
                                                 {!!s.notes && <div className="text-sm text-slate-600">{s.notes}</div>}
                                             </div>
-
-                                            <button
-                                                type="button"
-                                                onClick={() => toggleActive(s.id, !s.active)}
-                                                className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-                                            >
-                                                {s.active ? "Deactivate" : "Activate"}
-                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleActive(s.id, !s.active)}
+                                                    className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+                                                >
+                                                    {s.active ? "Deactivate" : "Activate"}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setDeletingStudent(s)}
+                                                    className="rounded-2xl border-2 border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
@@ -1731,5 +1781,37 @@ export default function ClassAdminPage() {
                 )}
             </div>
         </div>
+
+        {deletingStudent && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+                <div className="w-full max-w-lg rounded-2xl border-2 border-slate-200 bg-white p-5">
+                    <div className="text-xl font-semibold">Delete student?</div>
+                    <div className="mt-2 text-sm text-slate-600">
+                        Deleting {deletingStudent.first_name} will also permanently remove their saved results and result history for this class.
+                        Please print or save any report you may need before continuing.
+                    </div>
+
+                    <div className="mt-5 flex justify-end gap-2">
+                        <button
+                            type="button"
+                            className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+                            onClick={() => setDeletingStudent(null)}
+                            disabled={deleteBusy}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            className="rounded-2xl border-2 border-rose-700 bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+                            onClick={() => void confirmDeleteStudent()}
+                            disabled={deleteBusy}
+                        >
+                            {deleteBusy ? "Deleting…" : "Delete student"}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+        </>
     );
 }

@@ -2584,6 +2584,110 @@ async def save_whiteboard(
         "createdAt": getattr(post, "created_at", None),
     }
 
+
+@app.post("/whiteboards", response_model=schemas.WhiteboardStateOut)
+def save_whiteboard_state(
+    payload: schemas.WhiteboardStateSave,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(payload.class_id, db, user)
+
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Whiteboard title is required")
+
+    try:
+        state_json = json.dumps(payload.state)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Whiteboard state must be JSON serialisable")
+
+    now = datetime.utcnow()
+
+    if payload.whiteboard_id is not None:
+        row = db.query(models.WhiteboardStateModel).filter(
+            models.WhiteboardStateModel.id == payload.whiteboard_id
+        ).first()
+        if not row or row.owner_user_id != user.id:
+            raise HTTPException(status_code=404, detail="Whiteboard not found")
+        if row.class_id != payload.class_id:
+            raise HTTPException(status_code=400, detail="Whiteboard does not belong to this class")
+        row.title = title
+        row.state_json = state_json
+        row.updated_at = now
+    else:
+        row = models.WhiteboardStateModel(
+            class_id=payload.class_id,
+            owner_user_id=user.id,
+            title=title,
+            state_json=state_json,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+
+    db.commit()
+    db.refresh(row)
+
+    return {
+        "id": row.id,
+        "class_id": row.class_id,
+        "title": row.title,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "state": payload.state,
+    }
+
+
+@app.get("/classes/{class_id}/whiteboards", response_model=schemas.WhiteboardStateListResponse)
+def list_whiteboard_states(
+    class_id: int,
+    limit: int = 5,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(class_id, db, user)
+    safe_limit = max(1, min(20, int(limit)))
+    rows = (
+        db.query(models.WhiteboardStateModel)
+        .filter(
+            models.WhiteboardStateModel.class_id == class_id,
+            models.WhiteboardStateModel.owner_user_id == user.id,
+        )
+        .order_by(models.WhiteboardStateModel.updated_at.desc())
+        .limit(safe_limit)
+        .all()
+    )
+    return {"items": rows}
+
+
+@app.get("/whiteboards/{whiteboard_id}", response_model=schemas.WhiteboardStateOut)
+def get_whiteboard_state(
+    whiteboard_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    row = db.query(models.WhiteboardStateModel).filter(
+        models.WhiteboardStateModel.id == whiteboard_id,
+        models.WhiteboardStateModel.owner_user_id == user.id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Whiteboard not found")
+
+    try:
+        state = json.loads(row.state_json)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=500, detail="Stored whiteboard state is invalid")
+
+    return {
+        "id": row.id,
+        "class_id": row.class_id,
+        "title": row.title,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "state": state,
+    }
+
 @app.get("/classes/{class_id}")
 def get_class(
     class_id: int,
@@ -3698,6 +3802,26 @@ def update_student(
     db.commit()
     db.refresh(s)
     return s
+
+
+@app.delete("/students/{student_id}")
+def delete_student(
+    student_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = db.query(StudentModel).filter(StudentModel.id == student_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Student not found")
+    get_owned_class_or_404(s.class_id, db, user)
+
+    db.query(AssessmentResultModel).filter(
+        AssessmentResultModel.student_id == student_id
+    ).delete(synchronize_session=False)
+
+    db.delete(s)
+    db.commit()
+    return {"ok": True, "student_id": student_id}
 
 @app.post("/classes/{class_id}/students/bulk")
 def create_students_bulk(
