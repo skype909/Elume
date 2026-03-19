@@ -1297,23 +1297,75 @@ def collab_me(code: str, anon_id: str, db: Session = Depends(get_db)):
 @app.websocket("/ws/collab/{session_code}/{room_key}")
 async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
     print("WS connect attempt:", session_code, room_key)
-
     await websocket.accept()
     print("WS accepted")
 
-    try:
-        while True:
-            data = await websocket.receive_text()
-            print("WS received:", data)
+    collab_room_manager.rooms[(session_code, room_key)].append(websocket)
 
-            # echo back (temporary for testing)
-            await websocket.send_text(data)
+    try:
+        for evt in _get_collab_history(session_code, room_key):
+            await websocket.send_json(evt)
+
+        await collab_room_manager.broadcast(session_code, room_key, {
+            "type": "presence",
+            "message": "peer_joined",
+        })
+
+        while True:
+            raw = await websocket.receive_text()
+
+            try:
+                data = json.loads(raw)
+            except Exception:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Invalid JSON payload",
+                })
+                continue
+
+            msg_type = data.get("type")
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
+            if msg_type == "pong":
+                continue
+
+            if msg_type in {
+                "stroke",
+                "object-create",
+                "object-update",
+                "object-delete",
+            }:
+                _append_collab_event(session_code, room_key, data)
+                await collab_room_manager.broadcast(session_code, room_key, data)
+                continue
+
+            if msg_type == "snapshot-sync":
+                snapshot = data.get("snapshot") or {"strokes": [], "objects": []}
+                replacement_events = _events_from_snapshot(snapshot)
+                _replace_collab_history(session_code, room_key, replacement_events)
+                await collab_room_manager.broadcast(session_code, room_key, data)
+                continue
+
+            if msg_type in {
+                "stroke-progress",
+                "cursor",
+                "clear-preview",
+            }:
+                await collab_room_manager.broadcast(session_code, room_key, data)
+                continue
+
+            print("WS unknown message type:", msg_type)
 
     except WebSocketDisconnect:
-        print("WS disconnected")
+        print("WS disconnected:", session_code, room_key)
+        collab_room_manager.disconnect(session_code, room_key, websocket)
 
     except Exception as e:
         print("WS error:", str(e))
+        collab_room_manager.disconnect(session_code, room_key, websocket)
         try:
             await websocket.close()
         except:
