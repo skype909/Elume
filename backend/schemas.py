@@ -33,6 +33,7 @@ class NoteOut(BaseModel):
     topic_id: int
     filename: str
     file_url: str
+    whiteboard_state_id: Optional[int] = None
     uploaded_at: datetime
     topic_name: str
 
@@ -219,6 +220,11 @@ class WhiteboardStateSave(BaseModel):
     class_id: int
     title: str
     state: dict
+
+
+class WhiteboardNoteLinkPayload(BaseModel):
+    class_id: int
+    post_id: int
 
 
 class WhiteboardStateListItemOut(BaseModel):

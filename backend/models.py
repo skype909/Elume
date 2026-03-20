@@ -151,6 +151,7 @@ class Note(Base):
 
     filename = Column(String, nullable=False)
     stored_path = Column(String, nullable=False)
+    whiteboard_state_id = Column(Integer, nullable=True, index=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     topic = relationship("Topic", back_populates="notes")

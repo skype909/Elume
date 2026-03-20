@@ -23,6 +23,7 @@ type NoteItem = {
   topic_id: number;
   filename: string;
   file_url: string;
+  whiteboard_state_id?: number | null;
   uploaded_at: string;
   topic_name: string;
 };
@@ -354,6 +355,11 @@ export default function NotesPage() {
     }
   }
 
+  function handleReopenWhiteboard(note: NoteItem) {
+    if (!note.whiteboard_state_id) return;
+    navigate(`/whiteboard/${classId}?whiteboardId=${note.whiteboard_state_id}`);
+  }
+
   function openUploadForTopic(topicId?: number) {
     setShowUploadModal(true);
     setUploadMode(topicId ? "existing" : topics.length ? "existing" : "new");
@@ -603,6 +609,16 @@ export default function NotesPage() {
                       >
                         Open
                       </button>
+
+                      {n.whiteboard_state_id ? (
+                        <button
+                          type="button"
+                          onClick={() => handleReopenWhiteboard(n)}
+                          className="rounded-2xl border-2 border-emerald-200 bg-white px-5 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+                        >
+                          Reopen in Whiteboard
+                        </button>
+                      ) : null}
 
                       <button
                         type="button"

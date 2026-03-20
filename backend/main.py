@@ -426,9 +426,18 @@ def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user = models.UserModel(email=email, password_hash=PWD_CONTEXT.hash(password))
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    try:
+        db.add(user)
+        db.flush()
+        _seed_demo_class(db, user)
+        db.refresh(user)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to provision demo class during registration for %s", email)
+        raise HTTPException(status_code=500, detail="Failed to finish account setup")
 
     return {"access_token": _make_token(user.id, user.email), "token_type": "bearer"}
 
@@ -828,6 +837,35 @@ def _post_attachment_path_or_404(post: PostModel, attachment_index: int) -> tupl
         raise HTTPException(status_code=404, detail="File not found")
 
     return path, path.name
+
+
+SAVED_WHITEBOARDS_TOPIC_NAME = "Saved Whiteboards"
+
+
+def _get_or_create_saved_whiteboards_topic(class_id: int, db: Session) -> models.Topic:
+    topic = (
+        db.query(models.Topic)
+        .filter(
+            models.Topic.class_id == class_id,
+            models.Topic.name == f"{NOTES_PREFIX}{SAVED_WHITEBOARDS_TOPIC_NAME}",
+        )
+        .first()
+    )
+    if topic:
+        return topic
+
+    topic = models.Topic(class_id=class_id, name=f"{NOTES_PREFIX}{SAVED_WHITEBOARDS_TOPIC_NAME}")
+    db.add(topic)
+    db.flush()
+    return topic
+
+
+def _safe_whiteboard_note_filename(title: str, suffix: str) -> str:
+    base = (title or "Whiteboard").strip() or "Whiteboard"
+    safe = re.sub(r'[<>:"/\\\\|?*]+', "", base).strip().rstrip(".")
+    safe = safe or "Whiteboard"
+    ext = suffix if suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"} else ".png"
+    return f"{safe}{ext}"
 
 def require_super_admin(user: models.UserModel):
     if (user.email or "").strip().lower() != "admin@elume.ie":
@@ -1370,6 +1408,21 @@ def ensure_columns():
             conn.execute(text("ALTER TABLE users ADD COLUMN launch_offer_applied BOOLEAN DEFAULT 0 NOT NULL"))
             conn.commit()
 
+        # -------------------------
+        # notes table
+        # -------------------------
+        note_cols = conn.execute(text("PRAGMA table_info(notes)")).fetchall()
+        note_col_names = {c[1] for c in note_cols}
+
+        if "whiteboard_state_id" not in note_col_names:
+            conn.execute(text("ALTER TABLE notes ADD COLUMN whiteboard_state_id INTEGER"))
+            conn.commit()
+
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_notes_whiteboard_state_id ON notes (whiteboard_state_id)")
+        )
+        conn.commit()
+
 
 def _ensure_class_access_details(cls: ClassModel, db: Session) -> ClassModel:
     changed = False
@@ -1386,6 +1439,230 @@ def _ensure_class_access_details(cls: ClassModel, db: Session) -> ClassModel:
         db.add(cls)
 
     return cls
+
+
+DEMO_CLASS_NAME = "Demo Class"
+DEMO_CLASS_SUBJECT = "Science"
+DEMO_NOTES_PREFIX = "NOTES: "
+
+DEMO_STUDENT_NAMES = [
+    "Isaac Newton",
+    "Marie Curie",
+    "Albert Einstein",
+    "Rosalind Franklin",
+    "Galileo Galilei",
+    "Ada Lovelace",
+    "Charles Darwin",
+    "Nikola Tesla",
+    "Katherine Johnson",
+    "Alan Turing",
+    "Michael Faraday",
+    "Lise Meitner",
+    "Niels Bohr",
+    "Emmy Noether",
+    "Louis Pasteur",
+    "Grace Hopper",
+    "Johannes Kepler",
+    "Jane Goodall",
+    "James Clerk Maxwell",
+    "Chien-Shiung Wu",
+    "Carl Linnaeus",
+    "Rachel Carson",
+    "Srinivasa Ramanujan",
+    "Dorothy Hodgkin",
+    "Stephen Hawking",
+]
+
+DEMO_ASSESSMENT_TITLES = [
+    "Baseline Quiz",
+    "Topic Test 1",
+    "Homework Check",
+    "Midterm Assessment",
+    "Practical Task",
+    "Final Quiz",
+]
+
+DEMO_RESULTS_BY_STUDENT = {
+    "Isaac Newton": [68, 71, 74, 72, 76, 78],
+    "Marie Curie": [88, 90, 91, 92, 93, 94],
+    "Albert Einstein": [91, 93, 92, 95, 94, 96],
+    "Rosalind Franklin": [60, 64, 68, 72, 76, 81],
+    "Galileo Galilei": [48, 52, 50, 55, 58, 61],
+    "Ada Lovelace": [63, 67, 61, 72, 70, 74],
+    "Charles Darwin": [69, 71, 73, 74, 72, 75],
+    "Nikola Tesla": [82, 65, 88, 70, 91, 77],
+    "Katherine Johnson": [58, 63, 69, 74, 79, 84],
+    "Alan Turing": [84, 78, 69, 87, 73, 81],
+    "Michael Faraday": [66, 68, 70, 72, 73, 75],
+    "Lise Meitner": [50, 54, 56, 57, 60, 63],
+    "Niels Bohr": [71, 73, 75, 76, 78, 79],
+    "Emmy Noether": [89, 90, 92, 93, 94, 95],
+    "Louis Pasteur": [67, 69, 72, 71, 74, 76],
+    "Grace Hopper": [59, 65, 70, 74, 80, 85],
+    "Johannes Kepler": [64, 66, 69, 71, 73, 74],
+    "Jane Goodall": [72, 74, 73, 76, 78, 80],
+    "James Clerk Maxwell": [79, 70, 82, 73, 86, 78],
+    "Chien-Shiung Wu": [61, 66, 71, 77, 82, 86],
+    "Carl Linnaeus": [52, 55, 57, 60, 62, 64],
+    "Rachel Carson": [70, 72, 74, 75, 77, 79],
+    "Srinivasa Ramanujan": [90, 92, 93, 94, 95, 97],
+    "Dorothy Hodgkin": [54, 56, 58, 61, 63, 66],
+    "Stephen Hawking": [62, 59, 65, 63, 69, 72],
+}
+
+DEMO_NOTE_FILENAMES = [
+    "Events of the 20th Century.pdf",
+    "Science in the 20th Century.pdf",
+]
+LEGACY_DEMO_NOTE_FILENAMES = {
+    "Welcome to Demo Class.txt",
+    "Seating Plan.txt",
+    "How to Explore Demo Data.txt",
+}
+
+
+def _find_existing_demo_class_for_user(db: Session, user: models.UserModel) -> Optional[ClassModel]:
+    return (
+        db.query(ClassModel)
+        .filter(
+            ClassModel.owner_user_id == user.id,
+            ClassModel.name == DEMO_CLASS_NAME,
+        )
+        .order_by(ClassModel.id.asc())
+        .first()
+    )
+
+
+def _sync_demo_note_files(class_id: int, topic_id: int, db: Session) -> None:
+    source_dir = UPLOADS_DIR / "demo"
+    dest_dir = UPLOADS_DIR / "notes" / str(class_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_notes = (
+        db.query(models.Note)
+        .filter(
+            models.Note.class_id == class_id,
+            models.Note.topic_id == topic_id,
+        )
+        .all()
+    )
+    existing_by_name = {note.filename: note for note in existing_notes}
+
+    for note in existing_notes:
+        if note.filename not in LEGACY_DEMO_NOTE_FILENAMES:
+            continue
+        try:
+            Path(note.stored_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+        db.delete(note)
+
+    for filename in DEMO_NOTE_FILENAMES:
+        if filename in existing_by_name:
+            continue
+
+        source_path = source_dir / filename
+        if not source_path.exists():
+            raise HTTPException(status_code=500, detail=f"Missing demo resource: {filename}")
+
+        disk_name = f"demo_{uuid.uuid4().hex}_{Path(filename).name}"
+        stored_path = dest_dir / disk_name
+        shutil.copyfile(source_path, stored_path)
+
+        db.add(
+            models.Note(
+                class_id=class_id,
+                topic_id=topic_id,
+                filename=filename,
+                stored_path=str(stored_path),
+            )
+        )
+
+
+def _get_or_create_demo_topic(class_id: int, db: Session) -> models.Topic:
+    topic = (
+        db.query(models.Topic)
+        .filter(
+            models.Topic.class_id == class_id,
+            models.Topic.name == f"{DEMO_NOTES_PREFIX}Getting Started",
+        )
+        .first()
+    )
+    if topic:
+        return topic
+
+    topic = models.Topic(class_id=class_id, name=f"{DEMO_NOTES_PREFIX}Getting Started")
+    db.add(topic)
+    db.flush()
+    return topic
+
+
+def _seed_demo_class(db: Session, user: models.UserModel) -> ClassModel:
+    existing = _find_existing_demo_class_for_user(db, user)
+    if existing:
+        _ensure_class_access_details(existing, db)
+        demo_topic = _get_or_create_demo_topic(existing.id, db)
+        _sync_demo_note_files(existing.id, demo_topic.id, db)
+        db.commit()
+        db.refresh(existing)
+        _get_or_create_active_student_access_link(existing.id, db)
+        return existing
+
+    now = datetime.utcnow()
+    demo_class = ClassModel(
+        owner_user_id=user.id,
+        name=DEMO_CLASS_NAME,
+        subject=DEMO_CLASS_SUBJECT,
+        class_code=_rand_class_code(db),
+        class_pin=_rand_class_pin(),
+    )
+    db.add(demo_class)
+    db.flush()
+
+    students: list[StudentModel] = []
+    for full_name in DEMO_STUDENT_NAMES:
+        student = StudentModel(
+            class_id=demo_class.id,
+            first_name=full_name,
+            active=True,
+        )
+        db.add(student)
+        students.append(student)
+    db.flush()
+
+    assessments: list[ClassAssessmentModel] = []
+    for idx, title in enumerate(DEMO_ASSESSMENT_TITLES):
+        assessment = ClassAssessmentModel(
+            class_id=demo_class.id,
+            title=title,
+            assessment_date=now - timedelta(days=(len(DEMO_ASSESSMENT_TITLES) - idx) * 7),
+        )
+        db.add(assessment)
+        assessments.append(assessment)
+    db.flush()
+
+    student_by_name = {student.first_name: student for student in students}
+    for assessment_index, assessment in enumerate(assessments):
+        for student_name, scores in DEMO_RESULTS_BY_STUDENT.items():
+            student = student_by_name.get(student_name)
+            if not student:
+                continue
+            db.add(
+                AssessmentResultModel(
+                    assessment_id=assessment.id,
+                    student_id=student.id,
+                    score_percent=int(scores[assessment_index]),
+                    absent=False,
+                )
+            )
+
+    demo_topic = _get_or_create_demo_topic(demo_class.id, db)
+    _sync_demo_note_files(demo_class.id, demo_topic.id, db)
+
+    db.commit()
+    db.refresh(demo_class)
+    _get_or_create_active_student_access_link(demo_class.id, db)
+    return demo_class
 
 
 def _backfill_class_access_details(db: Session) -> None:
@@ -2754,6 +3031,14 @@ def create_class(
     return c
 
 
+@app.post("/classes/demo", response_model=schemas.ClassOut)
+def create_demo_class(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    return _seed_demo_class(db, user)
+
+
 @app.post("/whiteboard/save")
 async def save_whiteboard(
     class_id: int = Form(...),
@@ -2798,6 +3083,81 @@ async def save_whiteboard(
         "links": [f"/posts/{post.id}/attachments/0"],
         "createdAt": getattr(post, "created_at", None),
     }
+
+
+@app.post("/whiteboards/{whiteboard_id}/link-note", response_model=schemas.NoteOut)
+def link_whiteboard_note(
+    whiteboard_id: int,
+    payload: schemas.WhiteboardNoteLinkPayload,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    get_owned_class_or_404(payload.class_id, db, user)
+
+    whiteboard = (
+        db.query(models.WhiteboardStateModel)
+        .filter(
+            models.WhiteboardStateModel.id == whiteboard_id,
+            models.WhiteboardStateModel.owner_user_id == user.id,
+            models.WhiteboardStateModel.class_id == payload.class_id,
+        )
+        .first()
+    )
+    if not whiteboard:
+        raise HTTPException(status_code=404, detail="Whiteboard not found")
+
+    post = (
+        db.query(PostModel)
+        .filter(
+            PostModel.id == payload.post_id,
+            PostModel.class_id == payload.class_id,
+        )
+        .first()
+    )
+    if not post:
+        raise HTTPException(status_code=404, detail="Saved whiteboard post not found")
+
+    attachment_path, attachment_name = _post_attachment_path_or_404(post, 0)
+    whiteboard.preview_image_path = str(attachment_path)
+
+    topic = _get_or_create_saved_whiteboards_topic(payload.class_id, db)
+
+    note = (
+        db.query(models.Note)
+        .filter(
+            models.Note.class_id == payload.class_id,
+            models.Note.whiteboard_state_id == whiteboard_id,
+        )
+        .first()
+    )
+    if not note:
+        note = models.Note(
+            class_id=payload.class_id,
+            topic_id=topic.id,
+            filename=_safe_whiteboard_note_filename(whiteboard.title, Path(attachment_name).suffix),
+            stored_path=str(attachment_path),
+            whiteboard_state_id=whiteboard_id,
+        )
+        db.add(note)
+    else:
+        note.topic_id = topic.id
+        note.filename = _safe_whiteboard_note_filename(whiteboard.title, Path(attachment_name).suffix)
+        note.stored_path = str(attachment_path)
+        note.whiteboard_state_id = whiteboard_id
+
+    db.commit()
+    db.refresh(note)
+
+    return schemas.NoteOut(
+        id=note.id,
+        class_id=note.class_id,
+        topic_id=note.topic_id,
+        filename=note.filename,
+        file_url=f"/notes/{note.id}/download",
+        whiteboard_state_id=note.whiteboard_state_id,
+        uploaded_at=note.uploaded_at,
+        topic_name=strip_prefix(topic.name),
+    )
 
 
 @app.post("/whiteboards", response_model=schemas.WhiteboardStateOut)
@@ -3223,6 +3583,7 @@ def list_notes(
                 topic_id=note.topic_id,
                 filename=note.filename,
                 file_url=f"/notes/{note.id}/download",
+                whiteboard_state_id=note.whiteboard_state_id,
                 uploaded_at=note.uploaded_at,
                 topic_name=strip_prefix(topic.name) if topic else "Unsorted",
             )
@@ -3270,6 +3631,7 @@ def upload_note(
         topic_id=n.topic_id,
         filename=n.filename,
         file_url=f"/notes/{n.id}/download",
+        whiteboard_state_id=n.whiteboard_state_id,
         uploaded_at=n.uploaded_at,
         topic_name=strip_prefix(topic.name),
     )

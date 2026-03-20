@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "./api";
 
 const API_BASE = "/api";
@@ -20,6 +20,7 @@ type NoteItem = {
   topic_id: number;
   filename: string;
   file_url: string;
+  whiteboard_state_id?: number | null;
   uploaded_at: string;
   topic_name: string;
 };
@@ -37,6 +38,8 @@ function formatKindLabel(kind: "notes" | "exam") {
 type WhiteboardDraftState = {
   boardTitle: string;
   canvasHeight: number;
+  boardWidth?: number | null;
+  boardDpr?: number | null;
   placedImages: Array<{
     id: string;
     src: string;
@@ -686,8 +689,14 @@ function formatDec(n: number): string {
 
 export default function WhiteBoardPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams();
   const classId = useMemo(() => Number(id), [id]);
+  const requestedWhiteboardId = useMemo(() => {
+    const raw = new URLSearchParams(location.search).get("whiteboardId");
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [location.search]);
   const draftKey = useMemo(
     () => (Number.isFinite(classId) && classId > 0 ? `elume_whiteboard_draft_v1__${classId}` : null),
     [classId]
@@ -695,14 +704,27 @@ export default function WhiteBoardPage() {
 
   // Scroll container
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const boardSurfaceRef = useRef<HTMLDivElement | null>(null);
   const viewportRedrawRafRef = useRef<number | null>(null);
   const canvasMetricsRef = useRef<{ width: number; height: number; ratio: number } | null>(null);
+  const lockedBoardWidthRef = useRef<number | null>(null);
+  const lockedBoardDprRef = useRef<number | null>(null);
+  const autoOpenedWhiteboardRef = useRef<number | null>(null);
+  const pendingPageSeparatorRedrawRef = useRef(false);
+  const [lockedBoardWidth, setLockedBoardWidth] = useState<number | null>(null);
+  const [showHorizontalScrollHint, setShowHorizontalScrollHint] = useState(false);
+  const syncTimeoutRef = useRef<number | null>(null);
+  const syncRafRef = useRef<number | null>(null);
+  const pendingForceRedrawRef = useRef(false);
+  const horizontalScrollHintTimerRef = useRef<number | null>(null);
 
   // ✅ Unsaved-changes guard
   const dirtyRef = useRef(false);
   const [isDirty, setIsDirty] = useState(false);
 
   const markDirty = () => {
+    lockBoardWidthIfNeeded();
+    lockBoardDprIfNeeded();
     if (!dirtyRef.current) {
       dirtyRef.current = true;
       setIsDirty(true);
@@ -974,6 +996,70 @@ export default function WhiteBoardPage() {
     });
   }
 
+  function getBoardWidthCss() {
+    return (
+      lockedBoardWidthRef.current ??
+      boardSurfaceRef.current?.clientWidth ??
+      canvasMetricsRef.current?.width ??
+      containerRef.current?.clientWidth ??
+      0
+    );
+  }
+
+  const boardWidthCss =
+    lockedBoardWidth ??
+    canvasMetricsRef.current?.width ??
+    boardSurfaceRef.current?.clientWidth ??
+    containerRef.current?.clientWidth ??
+    undefined;
+
+  function lockBoardWidthIfNeeded() {
+    if (lockedBoardWidthRef.current) return lockedBoardWidthRef.current;
+    const width = containerRef.current?.clientWidth ?? canvasMetricsRef.current?.width ?? 0;
+    if (width >= 20) {
+      lockedBoardWidthRef.current = width;
+      setLockedBoardWidth(width);
+    }
+    return lockedBoardWidthRef.current;
+  }
+
+  function lockBoardDprIfNeeded() {
+    if (lockedBoardDprRef.current) return lockedBoardDprRef.current;
+    const dpr = getBoardDpr();
+    if (dpr > 0) lockedBoardDprRef.current = dpr;
+    return lockedBoardDprRef.current;
+  }
+
+  function stabilizeBoardGeometryIfNeeded() {
+    lockBoardWidthIfNeeded();
+    lockBoardDprIfNeeded();
+  }
+
+  function isBoardGeometryLocked() {
+    return Boolean(lockedBoardWidthRef.current && lockedBoardDprRef.current);
+  }
+
+  function scheduleCanvasSync(forceRedraw = false, delay = 120) {
+    pendingForceRedrawRef.current = pendingForceRedrawRef.current || forceRedraw;
+    if (syncTimeoutRef.current != null) {
+      window.clearTimeout(syncTimeoutRef.current);
+    }
+    syncTimeoutRef.current = window.setTimeout(() => {
+      syncTimeoutRef.current = null;
+      if (syncRafRef.current != null) {
+        cancelAnimationFrame(syncRafRef.current);
+      }
+      syncRafRef.current = requestAnimationFrame(() => {
+        syncRafRef.current = null;
+        syncCanvasSize();
+        if (pendingForceRedrawRef.current) {
+          pendingForceRedrawRef.current = false;
+          forceBoardRedraw();
+        }
+      });
+    }, delay);
+  }
+
   function serializeWhiteboardState(): WhiteboardDraftState | null {
     const bgCanvas = bgCanvasRef.current;
     const inkCanvas = inkCanvasRef.current;
@@ -981,6 +1067,8 @@ export default function WhiteBoardPage() {
     return {
       boardTitle,
       canvasHeight,
+      boardWidth: lockedBoardWidthRef.current ?? getBoardWidthCss(),
+      boardDpr: lockedBoardDprRef.current ?? getBoardDpr(),
       placedImages,
       tool,
       penColor,
@@ -1024,6 +1112,13 @@ export default function WhiteBoardPage() {
   }
 
   function restoreWhiteboardState(draft: WhiteboardDraftState) {
+    if (typeof draft.boardWidth === "number" && draft.boardWidth > 0) {
+      lockedBoardWidthRef.current = draft.boardWidth;
+      setLockedBoardWidth(draft.boardWidth);
+    }
+    if (typeof draft.boardDpr === "number" && draft.boardDpr > 0) {
+      lockedBoardDprRef.current = draft.boardDpr;
+    }
     setBoardTitle(draft.boardTitle || "Class Whiteboard");
     setTitleDraft(draft.boardTitle || "Class Whiteboard");
     setCanvasHeight(Math.max(PAGE_HEIGHT, draft.canvasHeight || PAGE_HEIGHT));
@@ -1051,8 +1146,10 @@ export default function WhiteBoardPage() {
 
     requestAnimationFrame(() => {
       requestAnimationFrame(async () => {
-        const container = containerRef.current;
-        const width = container?.clientWidth ?? 0;
+        lockBoardWidthIfNeeded();
+        lockBoardDprIfNeeded();
+        const width = getBoardWidthCss();
+        if (width < 20) return;
         const height = Math.max(PAGE_HEIGHT, draft.canvasHeight || PAGE_HEIGHT);
         await drawDataUrlToCanvas(draft.bgDataUrl, bgCtxRef.current, width, height);
         await drawDataUrlToCanvas(draft.inkDataUrl, inkCtxRef.current, width, height);
@@ -1244,13 +1341,8 @@ export default function WhiteBoardPage() {
 
   // ✅ One DPR rule for the whole whiteboard (performance + consistent coordinates)
   function getBoardDpr() {
-    const dpr = window.devicePixelRatio || 1;
-    const w = containerRef.current?.clientWidth ?? window.innerWidth;
-
-    // ✅ Large interactive whiteboards: reduce pixel load hard
-    const cap = w >= 1600 ? 1.0 : 1.5;
-
-    return Math.min(dpr, cap);
+    if (lockedBoardDprRef.current) return lockedBoardDprRef.current;
+    return 1.0;
   }
 
   /* ---------- Canvas sizing ---------- */
@@ -1263,21 +1355,15 @@ export default function WhiteBoardPage() {
     if (!container || !bgCanvas || !previewCanvas || !inkCanvas || !imgCanvas)
       return;
 
+    const widthCss = getBoardWidthCss();
     const ratio = getBoardDpr();
-    const width = container.clientWidth;
-    const widthCss = container.clientWidth;
+    const width = widthCss;
     const heightCss = canvasHeight;
 
     // ✅ During fullscreen/tablet transitions the container can momentarily be 0px.
     // If we resize the imgCanvas to 0, it wipes snips and redraw() can't paint.
     if (widthCss < 20 || heightCss < 20) {
-      window.setTimeout(() => {
-        const c = containerRef.current;
-        if (c && c.clientWidth >= 20) {
-          syncCanvasSize();
-          forceBoardRedraw();
-        }
-      }, 80);
+      scheduleCanvasSync(true, 80);
       return;
     }
 
@@ -1292,6 +1378,11 @@ export default function WhiteBoardPage() {
       return;
     }
     canvasMetricsRef.current = nextMetrics;
+    const heightOnlyGrowth =
+      !!prevMetrics &&
+      prevMetrics.width === nextMetrics.width &&
+      prevMetrics.ratio === nextMetrics.ratio &&
+      nextMetrics.height > prevMetrics.height;
 
     // Overlay canvas (grid/axes layer)
     const overlayCanvas = overlayCanvasRef.current;
@@ -1382,25 +1473,35 @@ export default function WhiteBoardPage() {
     imgCtx.clearRect(0, 0, widthCss, heightCss);
 
 
+    const restoreWidth = prevMetrics ? prevMetrics.width : width;
+    const restoreHeight = prevMetrics ? Math.min(prevMetrics.height, canvasHeight) : canvasHeight;
+
     // redraw old content (best-effort)
     try {
-      bgCtx.drawImage(oldBg, 0, 0, width, canvasHeight);
-      inkCtx.drawImage(oldInk, 0, 0, width, canvasHeight);
+      bgCtx.drawImage(oldBg, 0, 0, restoreWidth, restoreHeight);
+      inkCtx.drawImage(oldInk, 0, 0, restoreWidth, restoreHeight);
     } catch { }
 
     // always clear preview
     previewCtx.clearRect(0, 0, width, canvasHeight);
 
     // ✅ Resizing clears canvases → redraw snips + overlays
-    void redrawImages();
-
-    if (gridApplied) drawGridOverlay();
-    else if (axesApplied) drawAxesOverlay();
+    if (!heightOnlyGrowth) {
+      void redrawImages();
+      if (gridApplied) drawGridOverlay();
+      else if (axesApplied) drawAxesOverlay();
+    } else {
+      scheduleViewportRedraw();
+    }
   };
 
   useEffect(() => {
     syncCanvasSize();
-    forceBoardRedraw();
+    if (pendingPageSeparatorRedrawRef.current) {
+      pendingPageSeparatorRedrawRef.current = false;
+      drawPageSeparators();
+    }
+    scheduleViewportRedraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasHeight]);
 
@@ -1457,6 +1558,7 @@ export default function WhiteBoardPage() {
 
   useEffect(() => {
     if (!draftKey) return;
+    if (requestedWhiteboardId) return;
     try {
       const raw = localStorage.getItem(draftKey);
       if (!raw) return;
@@ -1465,7 +1567,7 @@ export default function WhiteBoardPage() {
     } catch {
       clearDraftFromLocalStorage();
     }
-  }, [draftKey]);
+  }, [draftKey, requestedWhiteboardId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1478,6 +1580,13 @@ export default function WhiteBoardPage() {
     if (!showTitleModal || entryMode !== "recent") return;
     void loadRecentWhiteboards();
   }, [showTitleModal, entryMode, classId]);
+
+  useEffect(() => {
+    if (!classId || !requestedWhiteboardId) return;
+    if (autoOpenedWhiteboardRef.current === requestedWhiteboardId) return;
+    autoOpenedWhiteboardRef.current = requestedWhiteboardId;
+    void openRecentWhiteboard(requestedWhiteboardId);
+  }, [classId, requestedWhiteboardId]);
 
   // ✅ Prevent horizontal swipe gestures from triggering browser Back/Forward
   useEffect(() => {
@@ -1517,26 +1626,94 @@ export default function WhiteBoardPage() {
 
 
   useEffect(() => {
-    const onResize = () => syncCanvasSize();
+    const onResize = () => {
+      if (isBoardGeometryLocked()) {
+        scheduleViewportRedraw();
+        return;
+      }
+      scheduleCanvasSync(true);
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    const updateHint = () => {
+      const container = containerRef.current;
+      if (!container || !lockedBoardWidth) {
+        setShowHorizontalScrollHint(false);
+        return;
+      }
+
+      const shouldShow =
+        lockedBoardWidth - container.clientWidth > 24 && container.scrollLeft <= 8;
+
+      setShowHorizontalScrollHint(shouldShow);
+
+      if (horizontalScrollHintTimerRef.current != null) {
+        window.clearTimeout(horizontalScrollHintTimerRef.current);
+        horizontalScrollHintTimerRef.current = null;
+      }
+
+      if (shouldShow) {
+        horizontalScrollHintTimerRef.current = window.setTimeout(() => {
+          setShowHorizontalScrollHint(false);
+          horizontalScrollHintTimerRef.current = null;
+        }, 4200);
+      }
+    };
+
+    updateHint();
+    window.addEventListener("resize", updateHint);
+    return () => {
+      window.removeEventListener("resize", updateHint);
+      if (horizontalScrollHintTimerRef.current != null) {
+        window.clearTimeout(horizontalScrollHintTimerRef.current);
+        horizontalScrollHintTimerRef.current = null;
+      }
+    };
+  }, [lockedBoardWidth, isFullscreen]);
+
+  useEffect(() => {
     return () => {
       if (viewportRedrawRafRef.current != null) {
         cancelAnimationFrame(viewportRedrawRafRef.current);
+      }
+      if (syncTimeoutRef.current != null) {
+        window.clearTimeout(syncTimeoutRef.current);
+      }
+      if (syncRafRef.current != null) {
+        cancelAnimationFrame(syncRafRef.current);
+      }
+      if (horizontalScrollHintTimerRef.current != null) {
+        window.clearTimeout(horizontalScrollHintTimerRef.current);
       }
     };
   }, []);
 
   /* ---------- Helpers ---------- */
+  function getBoardViewportRect() {
+    return (
+      boardSurfaceRef.current?.getBoundingClientRect() ??
+      inkCanvasRef.current?.getBoundingClientRect() ??
+      containerRef.current?.getBoundingClientRect() ??
+      null
+    );
+  }
+
+  function getBoardCoordsFromClient(clientX: number, clientY: number) {
+    const rect = getBoardViewportRect();
+    const width = getBoardWidthCss();
+    if (!rect) return { x: 0, y: 0 };
+    return {
+      x: Math.max(0, Math.min(width || 0, clientX - rect.left)),
+      y: Math.max(0, Math.min(canvasHeight, clientY - rect.top)),
+    };
+  }
+
   function getLocalXY(e: React.PointerEvent<HTMLCanvasElement>) {
-    const canvas = inkCanvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    return getBoardCoordsFromClient(e.clientX, e.clientY);
   }
 
   function pushBgUndo() {
@@ -1545,8 +1722,9 @@ export default function WhiteBoardPage() {
     if (!bgCanvas || !bgCtx) return;
 
     // snapshot in CSS pixels (we draw in CSS px because ctx scaled by ratio)
-    const w = Math.floor(bgCanvas.width / (window.devicePixelRatio || 1));
-    const h = Math.floor(bgCanvas.height / (window.devicePixelRatio || 1));
+    const ratio = canvasMetricsRef.current?.ratio ?? getBoardDpr();
+    const w = Math.floor(bgCanvas.width / ratio);
+    const h = Math.floor(bgCanvas.height / ratio);
     const img = bgCtx.getImageData(0, 0, w, h);
 
     setBgUndoStack((s) => [...s.slice(-4), img]); // keep last 5
@@ -1596,7 +1774,7 @@ export default function WhiteBoardPage() {
     const ctx = imgCanvas.getContext("2d");
     if (!ctx) return;
 
-    const widthCss = container.clientWidth;
+    const widthCss = getBoardWidthCss();
     const pad = 400;
 
     const y0 = Math.max(0, container.scrollTop - pad);
@@ -1668,16 +1846,11 @@ export default function WhiteBoardPage() {
     bgCtx.font = "28px system-ui, -apple-system, Segoe UI, Roboto, Arial";
     bgCtx.fillText(text, x, y);
     bgCtx.restore();
+    markDirty();
   }
   /* ---------- Ink drawing + Hand tool ---------- */
   function getBoardPoint(e: React.PointerEvent) {
-    const container = containerRef.current;
-    if (!container) return { x: 0, y: 0 };
-    const r = container.getBoundingClientRect();
-    return {
-      x: e.clientX - r.left + container.scrollLeft,
-      y: e.clientY - r.top + container.scrollTop,
-    };
+    return getBoardCoordsFromClient(e.clientX, e.clientY);
   }
 
   function findTopImageAt(x: number, y: number) {
@@ -1956,7 +2129,7 @@ export default function WhiteBoardPage() {
     if (tool === "line") {
       lineStartRef.current = { x, y };
       if (previewCtx) {
-        previewCtx.clearRect(0, 0, container.clientWidth, canvasHeight);
+        previewCtx.clearRect(0, 0, getBoardWidthCss(), canvasHeight);
         previewCtx.globalCompositeOperation = "source-over";
         previewCtx.strokeStyle = penColor;
         previewCtx.lineWidth = penSize;
@@ -2018,7 +2191,7 @@ export default function WhiteBoardPage() {
       const start = lineStartRef.current;
       if (!start || !previewCtx) return;
 
-      previewCtx.clearRect(0, 0, container.clientWidth, canvasHeight);
+      previewCtx.clearRect(0, 0, getBoardWidthCss(), canvasHeight);
       previewCtx.beginPath();
       previewCtx.moveTo(start.x, start.y);
       previewCtx.lineTo(x, y);
@@ -2081,7 +2254,7 @@ export default function WhiteBoardPage() {
       lineStartRef.current = null;
 
       if (previewCtx) {
-        previewCtx.clearRect(0, 0, container.clientWidth, canvasHeight);
+        previewCtx.clearRect(0, 0, getBoardWidthCss(), canvasHeight);
       }
     }
 
@@ -2180,12 +2353,21 @@ export default function WhiteBoardPage() {
   const onScroll = () => {
     const el = containerRef.current;
     if (!el) return;
+    if (el.scrollLeft > 8 && showHorizontalScrollHint) {
+      setShowHorizontalScrollHint(false);
+      if (horizontalScrollHintTimerRef.current != null) {
+        window.clearTimeout(horizontalScrollHintTimerRef.current);
+        horizontalScrollHintTimerRef.current = null;
+      }
+    }
     scheduleViewportRedraw();
   };
 
   function addPage() {
+    lockBoardWidthIfNeeded();
+    lockBoardDprIfNeeded();
+    pendingPageSeparatorRedrawRef.current = true;
     setCanvasHeight((h) => Math.min(h + PAGE_HEIGHT, 30000));
-    setTimeout(() => drawPageSeparators(), 0);
   }
 
   function drawPageSeparators() {
@@ -2193,14 +2375,12 @@ export default function WhiteBoardPage() {
     const container = containerRef.current;
     if (!bgCtx || !container) return;
 
-    pushBgUndo();
-
     bgCtx.save();
     bgCtx.globalCompositeOperation = "source-over";
     bgCtx.strokeStyle = "rgba(15,23,42,0.12)";
     bgCtx.lineWidth = 1;
 
-    const width = container.clientWidth;
+    const width = getBoardWidthCss();
     for (let y = PAGE_HEIGHT; y < canvasHeight; y += PAGE_HEIGHT) {
       bgCtx.beginPath();
       bgCtx.moveTo(0, y);
@@ -2264,14 +2444,15 @@ export default function WhiteBoardPage() {
       if (!outCtx) throw new Error("Could not create export canvas");
 
       // Match live board coordinate system
-      const scaleX = out.width / container.clientWidth;
+      const boardWidth = getBoardWidthCss();
+      const scaleX = out.width / boardWidth;
       const scaleY = out.height / canvasHeight;
 
       outCtx.save();
       outCtx.scale(scaleX, scaleY);
 
       // 1) Background
-      outCtx.drawImage(bg, 0, 0, container.clientWidth, canvasHeight);
+      outCtx.drawImage(bg, 0, 0, boardWidth, canvasHeight);
 
       // 2) Placed images (PDF inserts + snips)
       for (const p of placedImages) {
@@ -2285,7 +2466,7 @@ export default function WhiteBoardPage() {
 
       // 3) Grid / XY overlays
       if (gridApplied) {
-        const fullW = container.clientWidth;
+        const fullW = boardWidth;
         const top = gridTop ?? 0;
         const viewH = container.clientHeight;
 
@@ -2321,7 +2502,7 @@ export default function WhiteBoardPage() {
 
         outCtx.restore();
       } else if (axesApplied) {
-        const fullW = container.clientWidth;
+        const fullW = boardWidth;
         const viewH = container.clientHeight;
         const top = axesTop ?? 0;
 
@@ -2400,7 +2581,7 @@ export default function WhiteBoardPage() {
       }
 
       // 4) Ink
-      outCtx.drawImage(ink, 0, 0, container.clientWidth, canvasHeight);
+      outCtx.drawImage(ink, 0, 0, boardWidth, canvasHeight);
 
       outCtx.restore();
 
@@ -2420,10 +2601,11 @@ export default function WhiteBoardPage() {
       form.append("image", blob, "whiteboard.png");
       form.append("file", blob, "whiteboard.png");
 
-      await apiFetch(`${API_BASE}/whiteboard/save`, {
+      const saveRes = await apiFetch(`${API_BASE}/whiteboard/save`, {
         method: "POST",
         body: form,
       });
+      const savedPostId = Number(saveRes?.id);
 
       try {
         const editableState = serializeWhiteboardState();
@@ -2443,6 +2625,19 @@ export default function WhiteBoardPage() {
           const nextId = Number(whiteboardRes?.id);
           if (Number.isFinite(nextId) && nextId > 0) {
             setCurrentWhiteboardId(nextId);
+
+            if (Number.isFinite(savedPostId) && savedPostId > 0) {
+              await apiFetch(`${API_BASE}/whiteboards/${nextId}/link-note`, {
+                method: "POST",
+                body: JSON.stringify({
+                  class_id: classId,
+                  post_id: savedPostId,
+                }),
+                headers: {
+                  "Content-Type": "application/json",
+                },
+              });
+            }
           }
         }
       } catch (e) {
@@ -2553,6 +2748,8 @@ export default function WhiteBoardPage() {
     try {
       setLastInsertInfo(null);
       pushBgUndo();
+      lockBoardWidthIfNeeded();
+      lockBoardDprIfNeeded();
 
       const pdfjsLib = await loadPdfJs();
       const pdfUrl = await getAuthenticatedPdfUrl(importedPdf.item.file_url);
@@ -2560,7 +2757,7 @@ export default function WhiteBoardPage() {
       const pdf = await loadingTask.promise;
       const page = await pdf.getPage(1);
 
-      const width = container.clientWidth;
+      const width = getBoardWidthCss();
       const viewport0 = page.getViewport({ scale: 1.0 });
       const fitScale = (width / viewport0.width) * pdfInsertScale;
       const dpr = getBoardDpr();// cap to avoid huge memory use
@@ -2823,6 +3020,8 @@ export default function WhiteBoardPage() {
     const src = pdfCanvasRef.current;
     const container = containerRef.current;
     if (!src || !container) return;
+    lockBoardWidthIfNeeded();
+    lockBoardDprIfNeeded();
 
     const min = 12;
     if (clipRect.w < min || clipRect.h < min) {
@@ -2861,7 +3060,7 @@ export default function WhiteBoardPage() {
     const y = Math.max(0, container.scrollTop + 20);
     const x = 20;
 
-    const maxW = Math.max(200, container.clientWidth - 60);
+    const maxW = Math.max(200, getBoardWidthCss() - 60);
     let w = crop.width;
     let h = crop.height;
     if (w > maxW) {
@@ -2899,7 +3098,7 @@ export default function WhiteBoardPage() {
     const y0 = Math.max(0, Math.floor(container.scrollTop - pad));
     const h = Math.floor(container.clientHeight + pad * 2);
 
-    ctx.clearRect(0, y0, container.clientWidth, h);
+    ctx.clearRect(0, y0, getBoardWidthCss(), h);
   }
 
   function drawGridOverlay() {
@@ -2909,8 +3108,9 @@ export default function WhiteBoardPage() {
 
     clearOverlay();
 
-    const width = gridMode === "half" ? Math.floor(container.clientWidth / 2) : container.clientWidth;
-    const left = gridMode === "half" ? Math.floor(container.clientWidth / 2) : 0;
+    const boardWidth = getBoardWidthCss();
+    const width = gridMode === "half" ? Math.floor(boardWidth / 2) : boardWidth;
+    const left = gridMode === "half" ? Math.floor(boardWidth / 2) : 0;
 
     const viewH = container.clientHeight;
     const top = gridTop ?? container.scrollTop;
@@ -2953,7 +3153,7 @@ export default function WhiteBoardPage() {
 
     clearOverlay();
 
-    const fullW = container.clientWidth;
+    const fullW = getBoardWidthCss();
     const viewH = container.clientHeight;
     const top = axesTop ?? container.scrollTop;
 
@@ -3095,6 +3295,7 @@ export default function WhiteBoardPage() {
   async function toggleFullscreen() {
     const el = fsRootRef.current;
     if (!el) return;
+    if (dirtyRef.current) stabilizeBoardGeometryIfNeeded();
 
     try {
       if (!document.fullscreenElement) {
@@ -3110,13 +3311,11 @@ export default function WhiteBoardPage() {
   useEffect(() => {
     const onFsChange = () => {
       setIsFullscreen(Boolean(document.fullscreenElement));
-
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          syncCanvasSize();
-          forceBoardRedraw();
-        });
-      });
+      if (isBoardGeometryLocked()) {
+        scheduleViewportRedraw();
+        return;
+      }
+      scheduleCanvasSync(true, 140);
     };
 
     document.addEventListener("fullscreenchange", onFsChange);
@@ -3129,10 +3328,11 @@ export default function WhiteBoardPage() {
     if (!vv) return;
 
     const onVV = () => {
-      setTimeout(() => {
-        syncCanvasSize();
-        forceBoardRedraw();
-      }, 120);
+      if (isBoardGeometryLocked()) {
+        scheduleViewportRedraw();
+        return;
+      }
+      scheduleCanvasSync(true, 140);
     };
 
     vv.addEventListener("resize", onVV);
@@ -3218,7 +3418,14 @@ export default function WhiteBoardPage() {
             <button className={pill} type="button" onClick={toggleFullscreen}>
               {isFullscreen ? "Exit full screen" : "Full screen"}
             </button>
-            <button className={pill} type="button" onClick={() => setShowImportModal(true)}>
+            <button
+              className={pill}
+              type="button"
+              onClick={() => {
+                stabilizeBoardGeometryIfNeeded();
+                setShowImportModal(true);
+              }}
+            >
               Import PDF
             </button>
             <button
@@ -3308,7 +3515,14 @@ export default function WhiteBoardPage() {
               <button type="button" className={pill} onClick={() => setShowCalc((s) => !s)}>
                 Calculator
               </button>
-              <button type="button" className={pill} onClick={() => setShowPdfPanel((v) => !v)}>
+              <button
+                type="button"
+                className={pill}
+                onClick={() => {
+                  stabilizeBoardGeometryIfNeeded();
+                  setShowPdfPanel((v) => !v);
+                }}
+              >
                 {showPdfPanel ? "Hide PDF" : "Show PDF"}
               </button>
               <button type="button" className={pill} onClick={() => clearInk()}>
@@ -3335,39 +3549,48 @@ export default function WhiteBoardPage() {
                 onPointerUp={tool === "hand" ? onHandUp : undefined}
                 onPointerCancel={tool === "hand" ? onHandUp : undefined}
 
-                className="h-[78vh] overflow-y-scroll overflow-x-hidden overscroll-contain overscroll-x-none touch-pan-y rounded-2xl border border-slate-200 bg-white relative"
+                className="h-[78vh] overflow-y-scroll overflow-x-auto overscroll-contain overscroll-x-none touch-pan-y rounded-2xl border border-slate-200 bg-white relative"
               >
+                <div
+                  ref={boardSurfaceRef}
+                  className="relative"
+                  style={{ width: boardWidthCss ?? "100%", height: canvasHeight }}
+                >
+                  <canvas ref={bgCanvasRef} className="absolute left-0 top-0 z-0 pointer-events-none" />
 
-                <canvas ref={bgCanvasRef} className="absolute left-0 top-0 pointer-events-none" />
+                  <canvas ref={overlayCanvasRef} className="absolute left-0 top-0 z-[5] pointer-events-none" />
 
-                <canvas ref={overlayCanvasRef} className="absolute left-0 top-0 pointer-events-none" />
-
-                <canvas
-                  ref={imgCanvasRef}
-                  className={`absolute left-0 top-0 ${tool === "hand" ? "touch-none" : "pointer-events-none"}`}
-                  style={{ touchAction: tool === "hand" ? "none" : "auto" }}
-                  onPointerDown={onImgPointerDown}
-                  onPointerMove={onImgPointerMove}
-                  onPointerUp={onImgPointerUp}
-                  onPointerCancel={onImgPointerUp}
-                  onPointerLeave={onImgPointerUp}
-                />
+                  <canvas
+                    ref={imgCanvasRef}
+                    className={`absolute left-0 top-0 z-10 ${tool === "hand" ? "touch-none" : "pointer-events-none"}`}
+                    style={{ touchAction: tool === "hand" ? "none" : "auto" }}
+                    onPointerDown={onImgPointerDown}
+                    onPointerMove={onImgPointerMove}
+                    onPointerUp={onImgPointerUp}
+                    onPointerCancel={onImgPointerUp}
+                    onPointerLeave={onImgPointerUp}
+                  />
 
 
-                <canvas
-                  ref={inkCanvasRef}
-                  className={`absolute left-0 top-0 ${tool === "hand" ? "pointer-events-none" : "touch-none"}`}
-                  onPointerDown={beginStroke}
-                  onPointerMove={drawStroke}
-                  onPointerUp={endStroke}
-                  onPointerCancel={endStroke}
-                  onPointerLeave={endStroke}
-                  style={{ cursor: tool === "hand" ? "grab" : "crosshair" }}
-                />
+                  <canvas
+                    ref={inkCanvasRef}
+                    className={`absolute left-0 top-0 z-20 ${tool === "hand" ? "pointer-events-none" : "touch-none"}`}
+                    onPointerDown={beginStroke}
+                    onPointerMove={drawStroke}
+                    onPointerUp={endStroke}
+                    onPointerCancel={endStroke}
+                    onPointerLeave={endStroke}
+                    style={{ cursor: tool === "hand" ? "grab" : "crosshair" }}
+                  />
 
-                <canvas ref={previewCanvasRef} className="absolute left-0 top-0 pointer-events-none" />
+                  <canvas ref={previewCanvasRef} className="absolute left-0 top-0 z-30 pointer-events-none" />
 
-                <div style={{ height: canvasHeight }} />
+                  {showHorizontalScrollHint && (
+                    <div className="pointer-events-none absolute right-4 top-4 z-40 rounded-full border border-slate-200/90 bg-white/92 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm backdrop-blur">
+                      Scroll to view full board
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="mt-3 flex items-center gap-2">
@@ -3400,6 +3623,7 @@ export default function WhiteBoardPage() {
                         type="button"
                         className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-xs hover:bg-slate-50"
                         onClick={() => {
+                          stabilizeBoardGeometryIfNeeded();
                           setClipRect(null);
                           setShowPdfPanel(false);
                         }}
@@ -3882,6 +4106,7 @@ export default function WhiteBoardPage() {
                           onClick={() => {
                             setImportedPdf({ kind, item });
                             setShowImportModal(false);
+                            stabilizeBoardGeometryIfNeeded();
                             setShowPdfPanel(true);
                           }}
                         >

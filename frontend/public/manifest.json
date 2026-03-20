@@ -3,12 +3,12 @@
   "name": "Elume",
   "icons": [
     {
-      "src": "logo192.png",
+      "src": "/ELogo2-192.png",
       "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "logo512.png",
+      "src": "/ELogo2-512.png",
       "type": "image/png",
       "sizes": "512x512"
     }
