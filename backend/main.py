@@ -974,6 +974,9 @@ def admin_list_users(
             "id": u.id,
             "email": u.email,
             "created_at": u.created_at.isoformat() if getattr(u, "created_at", None) else None,
+            "subscription_status": (u.subscription_status or "inactive"),
+            "billing_interval": u.billing_interval,
+            "current_period_end": u.current_period_end.isoformat() if getattr(u, "current_period_end", None) else None,
         }
         for u in users
     ]

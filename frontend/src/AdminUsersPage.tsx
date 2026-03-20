@@ -6,7 +6,31 @@ type UserRow = {
   id: number;
   email: string;
   created_at?: string | null;
+  subscription_status?: string | null;
+  billing_interval?: string | null;
+  current_period_end?: string | null;
 };
+
+function statusPill(statusRaw?: string | null) {
+  const status = (statusRaw || "inactive").trim().toLowerCase();
+
+  if (status === "active") {
+    return { label: "Active", className: "border-emerald-200 bg-emerald-50 text-emerald-800" };
+  }
+  if (status === "trialing") {
+    return { label: "Trialing", className: "border-cyan-200 bg-cyan-50 text-cyan-800" };
+  }
+  if (status === "pending") {
+    return { label: "Pending", className: "border-amber-200 bg-amber-50 text-amber-800" };
+  }
+  if (status === "canceled" || status === "cancelled") {
+    return { label: "Canceled", className: "border-slate-300 bg-slate-100 text-slate-700" };
+  }
+  if (status === "past_due" || status === "unpaid") {
+    return { label: "Past due", className: "border-rose-200 bg-rose-50 text-rose-800" };
+  }
+  return { label: "Inactive", className: "border-slate-200 bg-slate-50 text-slate-700" };
+}
 
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
@@ -74,7 +98,7 @@ export default function AdminUsersPage() {
         }),
       });
 
-      setToast("User created ✓");
+      setToast("User created ?");
       setNewEmail("");
       setNewPassword("");
       await loadUsers();
@@ -100,7 +124,7 @@ export default function AdminUsersPage() {
         }),
       });
 
-      setToast("Password reset ✓");
+      setToast("Password reset ?");
       setResetEmail("");
       setResetPassword("");
     } catch (e: any) {
@@ -149,10 +173,10 @@ export default function AdminUsersPage() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-2xl font-extrabold tracking-tight text-slate-900">
-                Super Admin — User Management
+                Super Admin - User Management
               </div>
               <div className="text-sm text-slate-600">
-                Create teacher accounts and reset passwords without SSH.
+                Create teacher accounts, reset passwords, and review billing status.
               </div>
             </div>
 
@@ -273,26 +297,52 @@ export default function AdminUsersPage() {
                 <tr className="text-left text-xs font-bold uppercase tracking-wide text-slate-500">
                   <th className="px-3 py-2">ID</th>
                   <th className="px-3 py-2">Email</th>
+                  <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Created</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => (
-                  <tr
-                    key={u.id}
-                    className="rounded-2xl border-2 border-slate-200 bg-slate-50 text-sm text-slate-800"
-                  >
-                    <td className="px-3 py-3 font-semibold">{u.id}</td>
-                    <td className="px-3 py-3 font-semibold">{u.email}</td>
-                    <td className="px-3 py-3 text-slate-600">
-                      {u.created_at ? new Date(u.created_at).toLocaleString() : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {users.map((u) => {
+                  const pill = statusPill(u.subscription_status);
+                  const interval = (u.billing_interval || "").trim().toLowerCase();
+                  const periodEnd = u.current_period_end ? new Date(u.current_period_end) : null;
+                  const periodLabel =
+                    periodEnd && !Number.isNaN(periodEnd.getTime())
+                      ? periodEnd.toLocaleDateString()
+                      : null;
+
+                  return (
+                    <tr
+                      key={u.id}
+                      className="rounded-2xl border-2 border-slate-200 bg-slate-50 text-sm text-slate-800"
+                    >
+                      <td className="px-3 py-3 font-semibold">{u.id}</td>
+                      <td className="px-3 py-3 font-semibold">{u.email}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-col gap-1">
+                          <span
+                            className={`inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-xs font-black uppercase tracking-[0.14em] ${pill.className}`}
+                          >
+                            {pill.label}
+                          </span>
+                          {interval ? (
+                            <div className="text-[11px] font-semibold capitalize text-slate-500">
+                              {interval}
+                              {periodLabel ? ` � until ${periodLabel}` : ""}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">
+                        {u.created_at ? new Date(u.created_at).toLocaleString() : "�"}
+                      </td>
+                    </tr>
+                  );
+                })}
 
                 {!loading && users.length === 0 && (
                   <tr>
-                    <td colSpan={3} className="px-3 py-6 text-center text-sm text-slate-500">
+                    <td colSpan={4} className="px-3 py-6 text-center text-sm text-slate-500">
                       No users found.
                     </td>
                   </tr>
