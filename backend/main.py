@@ -415,6 +415,7 @@ def get_db():
 def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
     email = (payload.email or "").strip().lower()
     password = (payload.password or "").strip()
+    logger.info("auth_register started for %s", email)
 
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Valid email required")
@@ -429,7 +430,9 @@ def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
     try:
         db.add(user)
         db.flush()
+        logger.info("auth_register seeding demo class for %s (user_id=%s)", email, user.id)
         _seed_demo_class(db, user)
+        logger.info("auth_register demo class seeded for %s (user_id=%s)", email, user.id)
         db.refresh(user)
     except HTTPException:
         db.rollback()
@@ -1044,9 +1047,18 @@ def admin_create_user(
         email=email,
         password_hash=PWD_CONTEXT.hash(password),
     )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    try:
+        db.add(new_user)
+        db.flush()
+        _seed_demo_class(db, new_user)
+        db.refresh(new_user)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to provision demo class during admin user creation for %s", email)
+        raise HTTPException(status_code=500, detail="Failed to finish user setup")
 
     return {
         "message": "User created",
@@ -1563,6 +1575,7 @@ def _sync_demo_note_files(class_id: int, topic_id: int, db: Session) -> None:
 
         source_path = source_dir / filename
         if not source_path.exists():
+            logger.warning("Missing demo PDF: %s", source_path)
             raise HTTPException(status_code=500, detail=f"Missing demo resource: {filename}")
 
         disk_name = f"demo_{uuid.uuid4().hex}_{Path(filename).name}"
@@ -1597,10 +1610,103 @@ def _get_or_create_demo_topic(class_id: int, db: Session) -> models.Topic:
     return topic
 
 
+def _ensure_demo_students(class_id: int, db: Session) -> list[StudentModel]:
+    students = db.query(StudentModel).filter(StudentModel.class_id == class_id).all()
+    students_by_name = {student.first_name: student for student in students}
+
+    for full_name in DEMO_STUDENT_NAMES:
+        student = students_by_name.get(full_name)
+        if student:
+            if not student.active:
+                student.active = True
+                db.add(student)
+            continue
+
+        student = StudentModel(
+            class_id=class_id,
+            first_name=full_name,
+            active=True,
+        )
+        db.add(student)
+        students.append(student)
+
+    db.flush()
+    return students
+
+
+def _ensure_demo_assessments(class_id: int, now: datetime, db: Session) -> list[ClassAssessmentModel]:
+    assessments = db.query(ClassAssessmentModel).filter(ClassAssessmentModel.class_id == class_id).all()
+    assessments_by_title = {assessment.title: assessment for assessment in assessments}
+
+    for idx, title in enumerate(DEMO_ASSESSMENT_TITLES):
+        assessment = assessments_by_title.get(title)
+        if assessment:
+            continue
+
+        assessment = ClassAssessmentModel(
+            class_id=class_id,
+            title=title,
+            assessment_date=now - timedelta(days=(len(DEMO_ASSESSMENT_TITLES) - idx) * 7),
+        )
+        db.add(assessment)
+        assessments.append(assessment)
+
+    db.flush()
+    return assessments
+
+
+def _ensure_demo_results(
+    class_id: int,
+    students: list[StudentModel],
+    assessments: list[ClassAssessmentModel],
+    db: Session,
+) -> None:
+    student_by_name = {student.first_name: student for student in students}
+    assessment_by_title = {assessment.title: assessment for assessment in assessments}
+
+    assessment_ids = [assessment.id for assessment in assessments if assessment.id is not None]
+    existing_results = (
+        db.query(AssessmentResultModel)
+        .join(ClassAssessmentModel, AssessmentResultModel.assessment_id == ClassAssessmentModel.id)
+        .filter(
+            ClassAssessmentModel.class_id == class_id,
+            AssessmentResultModel.assessment_id.in_(assessment_ids) if assessment_ids else False,
+        )
+        .all()
+    )
+    existing_pairs = {(result.assessment_id, result.student_id) for result in existing_results}
+
+    for assessment_index, title in enumerate(DEMO_ASSESSMENT_TITLES):
+        assessment = assessment_by_title.get(title)
+        if not assessment:
+            continue
+
+        for student_name, scores in DEMO_RESULTS_BY_STUDENT.items():
+            student = student_by_name.get(student_name)
+            if not student:
+                continue
+
+            pair = (assessment.id, student.id)
+            if pair in existing_pairs:
+                continue
+
+            db.add(
+                AssessmentResultModel(
+                    assessment_id=assessment.id,
+                    student_id=student.id,
+                    score_percent=int(scores[assessment_index]),
+                    absent=False,
+                )
+            )
+
+
 def _seed_demo_class(db: Session, user: models.UserModel) -> ClassModel:
     existing = _find_existing_demo_class_for_user(db, user)
     if existing:
         _ensure_class_access_details(existing, db)
+        students = _ensure_demo_students(existing.id, db)
+        assessments = _ensure_demo_assessments(existing.id, datetime.utcnow(), db)
+        _ensure_demo_results(existing.id, students, assessments, db)
         demo_topic = _get_or_create_demo_topic(existing.id, db)
         _sync_demo_note_files(existing.id, demo_topic.id, db)
         db.commit()
@@ -1619,42 +1725,9 @@ def _seed_demo_class(db: Session, user: models.UserModel) -> ClassModel:
     db.add(demo_class)
     db.flush()
 
-    students: list[StudentModel] = []
-    for full_name in DEMO_STUDENT_NAMES:
-        student = StudentModel(
-            class_id=demo_class.id,
-            first_name=full_name,
-            active=True,
-        )
-        db.add(student)
-        students.append(student)
-    db.flush()
-
-    assessments: list[ClassAssessmentModel] = []
-    for idx, title in enumerate(DEMO_ASSESSMENT_TITLES):
-        assessment = ClassAssessmentModel(
-            class_id=demo_class.id,
-            title=title,
-            assessment_date=now - timedelta(days=(len(DEMO_ASSESSMENT_TITLES) - idx) * 7),
-        )
-        db.add(assessment)
-        assessments.append(assessment)
-    db.flush()
-
-    student_by_name = {student.first_name: student for student in students}
-    for assessment_index, assessment in enumerate(assessments):
-        for student_name, scores in DEMO_RESULTS_BY_STUDENT.items():
-            student = student_by_name.get(student_name)
-            if not student:
-                continue
-            db.add(
-                AssessmentResultModel(
-                    assessment_id=assessment.id,
-                    student_id=student.id,
-                    score_percent=int(scores[assessment_index]),
-                    absent=False,
-                )
-            )
+    students = _ensure_demo_students(demo_class.id, db)
+    assessments = _ensure_demo_assessments(demo_class.id, now, db)
+    _ensure_demo_results(demo_class.id, students, assessments, db)
 
     demo_topic = _get_or_create_demo_topic(demo_class.id, db)
     _sync_demo_note_files(demo_class.id, demo_topic.id, db)
