@@ -477,23 +477,24 @@ function Dashboard() {
       <div className="space-y-3">
         {daySchedule.slots.map((slot) => {
           const entry = daySchedule.entries?.[slot.id];
+          const visual = timetableTileVisual(slot, entry);
           const hasClass = !!entry?.classLabel?.trim();
           const hasDuty = !!entry?.dutyNote?.trim();
 
           return (
             <div
               key={`${day}_${slot.id}`}
-              className={`rounded-2xl border p-3 ${timetableCardClass(slot, hasClass || hasDuty)}`}
+              className={`rounded-2xl border p-3 ${visual.tile}`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="text-sm font-extrabold">{slot.label}</div>
-                  <div className="text-xs opacity-80">
+                  <div className={`text-xs font-semibold ${visual.caption}`}>
                     {slot.start}–{slot.end}
                   </div>
                 </div>
 
-                <div className="text-right text-xs opacity-80">
+                <div className={`text-right text-xs font-semibold ${visual.caption}`}>
                   {fmtDayLong(day)}
                 </div>
               </div>
@@ -503,7 +504,7 @@ function Dashboard() {
                   <>
                     <div className="text-base font-extrabold">{entry.classLabel}</div>
                     {entry.room && (
-                      <div className="mt-1 text-sm">Room: {entry.room}</div>
+                      <div className={`mt-1 text-sm font-semibold ${visual.caption}`}>Room: {entry.room}</div>
                     )}
                   </>
                 ) : hasDuty ? (

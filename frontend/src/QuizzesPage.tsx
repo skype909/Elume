@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
+import { BackToClassButton, ClassPageActionBar } from "./ClassPageActions";
 
 /** ---------------- Types ---------------- */
 type MCQQuestion = {
@@ -672,6 +673,10 @@ export default function QuizzesPage() {
   return (
     <div className="min-h-screen bg-emerald-100 p-6">
       <div className="mx-auto max-w-7xl px-4 py-6">
+        <ClassPageActionBar>
+          <BackToClassButton classId={classId} />
+        </ClassPageActionBar>
+
         {/* Header */}
         <div className={`${card} p-5 flex items-center justify-between gap-4`}>
           <div className="flex items-center gap-3">
@@ -687,10 +692,6 @@ export default function QuizzesPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button className={pill} type="button" onClick={() => navigate(`/class/${classId}`)}>
-              Back to Class
-            </button>
-
             <button className={pill} type="button" onClick={openGenerateModal} title="Generate from Notes/Exam PDFs">
               <span className="inline-flex items-center gap-2">
                 <SparkIcon /> Generate from PDF

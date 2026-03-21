@@ -1,19 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import ConfirmModal from "./Components/ConfirmModal";
-import elumeLogo from "./assets/elume-logo.png";
 import { useNavigate } from "react-router-dom";
 import kahootLogo from "./assets/kahoot-logo.jpg";
 import blooketLogo from "./assets/blooket-logo.png";
 import googleFormsLogo from "./assets/googleforms-logo.png";
 import canvaLogo from "./assets/canva-logo.jpeg";
 import QRCode from "react-qr-code";
-import ELogo from "./assets/ELogo.png";
 import ELogo2 from "./assets/ELogo2.png";
 import { Settings, Timer, Bell, Play, Pause, RotateCcw } from "lucide-react";
 import { apiFetch, openProtectedFileInNewTab } from "./api";
-
-
 
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
@@ -61,8 +57,6 @@ type Post = {
   author: string;
   content: string;
   createdAt?: string;
-
-  // UI-only for now:
   links?: string[];
   files?: { name: string; size: number; url?: string; path?: string }[];
 };
@@ -72,7 +66,7 @@ type CalendarEvent = {
   class_id: number;
   title: string;
   description?: string;
-  event_date: string; // "YYYY-MM-DD"
+  event_date: string;
   event_type: string;
 };
 
@@ -90,25 +84,17 @@ type ClassAccessDetails = {
   class_pin: string;
 };
 
-
 const API_BASE = "/api";
 
-function getJwt(): string | null {
-  return localStorage.getItem("elume_token");
-}
-
-/** ✅ Defensive: backend/DB may return links as a JSON string or a comma-separated string */
 function normalizeLinks(v: any): string[] {
   if (Array.isArray(v)) return v.filter(Boolean).map(String);
   if (typeof v === "string") {
     const s = v.trim();
     if (!s) return [];
-    // Try JSON list first
     try {
       const parsed = JSON.parse(s);
       if (Array.isArray(parsed)) return parsed.filter(Boolean).map(String);
-    } catch { }
-    // Fallback: comma/newline separated
+    } catch {}
     const parts = s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
     return parts.length ? parts : [s];
   }
@@ -127,7 +113,6 @@ async function openProtectedAttachmentInNewTab(link: string) {
   await openProtectedFileInNewTab(resolveFileUrl(link));
 }
 
-/** ✅ Ensure a post always has correct shapes for rendering */
 function normalizePost(p: any): Post {
   return {
     id: Number(p?.id),
@@ -137,16 +122,21 @@ function normalizePost(p: any): Post {
       typeof p?.createdAt === "string"
         ? p.createdAt
         : typeof p?.created_at === "string"
-          ? p.created_at
-          : undefined,
+        ? p.created_at
+        : undefined,
     links: normalizeLinks(p?.links),
     files: Array.isArray(p?.files)
       ? p.files.map((f: any) => ({
-        name: typeof f?.name === "string" ? f.name : "Attachment",
-        size: typeof f?.size === "number" ? f.size : 0,
-        url: typeof f?.url === "string" ? f.url : undefined,
-        path: typeof f?.path === "string" ? f.path : typeof f?.file_url === "string" ? f.file_url : undefined,
-      }))
+          name: typeof f?.name === "string" ? f.name : "Attachment",
+          size: typeof f?.size === "number" ? f.size : 0,
+          url: typeof f?.url === "string" ? f.url : undefined,
+          path:
+            typeof f?.path === "string"
+              ? f.path
+              : typeof f?.file_url === "string"
+              ? f.file_url
+              : undefined,
+        }))
       : [],
   };
 }
@@ -180,7 +170,6 @@ function formatPostStamp(ts?: string) {
   return `${day} ${month} ${h}:${m}${ampm}`;
 }
 
-
 function formatPrettyDate(d: Date) {
   const day = ordinal(d.getDate());
   const month = d.toLocaleString("en-GB", { month: "long" });
@@ -188,10 +177,6 @@ function formatPrettyDate(d: Date) {
   return `${day} ${month} ${year}`;
 }
 
-/**
- * UI-only fallback: makes the feed look like real dated posts
- * If backend doesn't send dates yet, we "stage" them by index.
- */
 function uiPostDateLabel(p: { createdAt?: string }, index: number) {
   if (p.createdAt) {
     const parsed = new Date(p.createdAt);
@@ -200,7 +185,7 @@ function uiPostDateLabel(p: { createdAt?: string }, index: number) {
 
   const base = new Date();
   base.setHours(12, 0, 0, 0);
-  base.setDate(base.getDate() - Math.min(index, 14)); // spread first 15 posts over last 2 weeks
+  base.setDate(base.getDate() - Math.min(index, 14));
   return formatPrettyDate(base);
 }
 
@@ -211,23 +196,16 @@ type PostComposerProps = {
   btnPrimary: string;
   posting: boolean;
   chip: string;
-
   author: string;
   setAuthor: (v: string) => void;
-
   content: string;
   setContent: (v: string) => void;
-
   submitPost: () => void;
-
-  // links (UI-only)
   links: string[];
   linkDraft: string;
   setLinkDraft: (v: string) => void;
   addLink: () => void;
   removeLink: (i: number) => void;
-
-  // files (UI-only)
   files: File[];
   onPickFiles: (fl: FileList | null) => void;
   removeFile: (i: number) => void;
@@ -270,8 +248,6 @@ function PostComposer({
             placeholder="Author"
           />
           <div className="md:col-span-3 flex items-center justify-end gap-2">
-
-            {/* Hidden file picker */}
             <input
               id="postFilePicker"
               type="file"
@@ -299,7 +275,6 @@ function PostComposer({
           placeholder="Write an announcement..."
         />
 
-        {/* Add a link */}
         <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center">
           <input
             className="flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
@@ -312,7 +287,6 @@ function PostComposer({
           </button>
         </div>
 
-        {/* Show chosen links */}
         {links.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
             {links.map((l, i) => (
@@ -412,18 +386,13 @@ export default function ClassPage() {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(true);
 
-
-  const [activeTab, setActiveTab] = useState<"announce" | "notes" | "whiteboard">(
-    "announce"
-  );
+  const [activeTab, setActiveTab] = useState<"announce" | "whiteboard">("announce");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [postToDelete, setPostToDelete] = useState<number | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [bellOpen, setBellOpen] = useState(false);
-  // UI-only: mock "group" like your PDF
   const [groupLabel, setGroupLabel] = useState("1E");
   const navigate = useNavigate();
-
 
   useEffect(() => {
     if (!validClassId) {
@@ -494,14 +463,12 @@ export default function ClassPage() {
     setClassPin(data.class_pin);
   }
 
-  // --- fetch class ---
   useEffect(() => {
     if (!validClassId) {
       setLoadingClass(false);
       setClassInfo(null);
       return;
     }
-
 
     const controller = new AbortController();
     setLoadingClass(true);
@@ -530,18 +497,10 @@ export default function ClassPage() {
   useEffect(() => {
     if (!validClassId) return;
 
-    const jwt = getJwt();
-    if (!jwt) {
-      setStudentToken(null);
-      setStudentUrl(null);
-      return;
-    }
-
     const controller = new AbortController();
 
     (async () => {
       try {
-        // Try GET first (if your backend supports it)
         let data: any;
         try {
           data = await apiFetch(`${API_BASE}/student-access/${classId}`, {
@@ -559,8 +518,6 @@ export default function ClassPage() {
         if (!tok) throw new Error("No token in response");
 
         setStudentToken(tok);
-
-        // HashRouter route -> /#/s/<token>
         setStudentUrl(`${window.location.origin}/#/s/${tok}`);
       } catch (e: any) {
         if (e?.name === "AbortError") return;
@@ -573,8 +530,6 @@ export default function ClassPage() {
     return () => controller.abort();
   }, [classId, validClassId]);
 
-
-  // Header Colour
   useEffect(() => {
     try {
       const raw = localStorage.getItem(metaKeyForUser());
@@ -590,7 +545,6 @@ export default function ClassPage() {
         setTeacherName(adminTeacherName);
         setAuthor(adminTeacherName);
       } else if (typeof entry?.teacher === "string" && entry.teacher.trim()) {
-        // fallback for any older saved class data
         setTeacherName(entry.teacher);
         setAuthor(entry.teacher);
       }
@@ -606,10 +560,7 @@ export default function ClassPage() {
       if (typeof entry?.room === "string" && entry.room.trim()) {
         setRoomLabel(entry.room);
       }
-
-    } catch {
-      // fail silently
-    }
+    } catch {}
   }, [classId]);
 
   useEffect(() => {
@@ -629,7 +580,6 @@ export default function ClassPage() {
       window.removeEventListener("focus", refreshTeacher);
     };
   }, []);
-
 
   useEffect(() => {
     if (!classInfo) return;
@@ -666,11 +616,12 @@ export default function ClassPage() {
     }
   }
 
-  // Random Name Generator (right panel)
   const [nameGenOpen, setNameGenOpen] = useState(false);
   const [nameResult, setNameResult] = useState<string | null>(null);
   const [namePicking, setNamePicking] = useState(false);
-
+  const [teamGenOpen, setTeamGenOpen] = useState(false);
+  const [teamSize, setTeamSize] = useState<2 | 3 | 4>(2);
+  const [generatedTeams, setGeneratedTeams] = useState<Array<{ label: string; students: string[] }>>([]);
 
   const studentNames = useMemo(() => {
     const names = students
@@ -678,12 +629,38 @@ export default function ClassPage() {
       .map((s) => (s.first_name || "").trim())
       .filter(Boolean);
 
-    // de-dupe while preserving order
     return Array.from(new Set(names));
   }, [students]);
 
   const nameCount = studentNames.length;
   const nameValid = nameCount >= 1;
+  const teamLabels = useMemo(
+    () => ["Red Team", "Blue Team", "Green Team", "Yellow Team", "Purple Team", "Orange Team", "Pink Team", "Teal Team"],
+    []
+  );
+
+  function generateTeams(size: 2 | 3 | 4) {
+    if (!studentNames.length) {
+      setGeneratedTeams([]);
+      return;
+    }
+
+    const shuffled = studentNames.slice();
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    const teams: Array<{ label: string; students: string[] }> = [];
+    for (let i = 0; i < shuffled.length; i += size) {
+      teams.push({
+        label: teamLabels[teams.length % teamLabels.length],
+        students: shuffled.slice(i, i + size),
+      });
+    }
+
+    setGeneratedTeams(teams);
+  }
 
   function pickRandomName() {
     if (!nameValid || namePicking) return;
@@ -708,12 +685,6 @@ export default function ClassPage() {
     }, 90);
   }
 
-
-  // --- fetch calendar events (for bell alerts) ---
-  // --- fetch calendar events (GLOBAL: same calendar across all ClassPages) ---
-  // --- fetch calendar events (GLOBAL, with safe fallback to per-class endpoint) ---
-  // --- fetch calendar events (for bell alerts) ---
-  // Canonical behaviour: backend returns (global + this class) when class_id is provided
   useEffect(() => {
     const controller = new AbortController();
 
@@ -740,22 +711,6 @@ export default function ClassPage() {
     return () => controller.abort();
   }, [classId, validClassId]);
 
-
-
-  // --- fetch posts ---
-  async function fetchPosts() {
-    try {
-      const data = await apiFetch(`${API_BASE}/classes/${classId}/posts`);
-      const arr = Array.isArray(data) ? data : [];
-      setPosts(arr.map(normalizePost));
-    } catch (e: any) {
-      setError(e.message || "Failed to load posts");
-      setPosts([]);
-    } finally {
-      setLoadingPosts(false);
-    }
-  }
-
   useEffect(() => {
     if (!validClassId) {
       setLoadingPosts(false);
@@ -781,7 +736,6 @@ export default function ClassPage() {
 
     return () => controller.abort();
   }, [classId, validClassId]);
-
 
   function submitPost() {
     if (!validClassId) return;
@@ -827,7 +781,6 @@ export default function ClassPage() {
         method: "DELETE",
       });
 
-      // remove from UI immediately
       setPosts((prev) => prev.filter((p) => p.id !== postId));
     } catch (e: any) {
       setError(e?.message || "Failed to delete post");
@@ -838,6 +791,7 @@ export default function ClassPage() {
     setPostToDelete(postId);
     setConfirmOpen(true);
   }
+
   function clampInt(n: number, min: number, max: number) {
     if (Number.isNaN(n)) return min;
     return Math.max(min, Math.min(max, Math.trunc(n)));
@@ -882,7 +836,6 @@ export default function ClassPage() {
     const t = window.setInterval(() => {
       setTimerRemaining((prev) => {
         if (prev <= 1) {
-          // hit zero
           setTimerRunning(false);
           setTimerFinished(true);
           return 0;
@@ -893,7 +846,6 @@ export default function ClassPage() {
 
     return () => window.clearInterval(t);
   }, [timerRunning]);
-
 
   function addLink() {
     const v = linkDraft.trim();
@@ -920,7 +872,6 @@ export default function ClassPage() {
   const pageSubtitle =
     loadingClass ? "Please wait" : classInfo ? classInfo.subject : "Class details not found";
 
-  // Live clock (updates every 30s so minutes stay accurate, no seconds shown)
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -937,7 +888,6 @@ export default function ClassPage() {
     hour12: true,
   });
 
-  // IMPORTANT: keep using `today` below for calendar logic, but base it on `now`
   const today = now;
   function toYMD(d: Date) {
     const y = d.getFullYear();
@@ -955,13 +905,13 @@ export default function ClassPage() {
   tomorrow.setDate(today.getDate() + 1);
   const tomorrowYMD = toYMD(tomorrow);
 
-
-  // Calendar events already come back as: (global + this class)
   const getEventDate = (e: any) => String(e?.event_date ?? e?.eventDate ?? e?.date ?? "");
 
-  const classEvents = calendarEvents;
+   const classEvents = Array.isArray(calendarEvents)
+    ? calendarEvents.filter((e) => Number(e?.class_id) === classId)
+    : [];
 
-  const start = new Date(today);
+  const start = new Date();
   start.setHours(0, 0, 0, 0);
 
   const end3 = new Date(start);
@@ -970,49 +920,56 @@ export default function ClassPage() {
   const end7 = new Date(start);
   end7.setDate(start.getDate() + 7);
 
-  const eventsToday = classEvents.filter((e: any) =>
-    normYMD(getEventDate(e)) === todayYMD
-  );
+  function eventStart(e: any) {
+    const raw = String(e?.event_date ?? e?.eventDate ?? e?.date ?? "");
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
 
-  const eventsNext3 = classEvents.filter((e: any) => {
-    const d = new Date(normYMD(getEventDate(e)) + "T00:00:00");
-    return d > start && d <= end3;
+  const eventsToday = classEvents.filter((e) => {
+    const d = eventStart(e);
+    return d && normYMD(d.toISOString()) === todayYMD;
+  });
+
+  const eventsNext3 = classEvents.filter((e) => {
+    const d = eventStart(e);
+    return d && d > start && d <= end3;
   });
 
   const next7 = classEvents
-    .filter((e: any) => {
-      const d = new Date(normYMD(getEventDate(e)) + "T00:00:00");
-      return d >= start && d < end7;
+    .filter((e) => {
+      const d = eventStart(e);
+      return d && d >= start && d < end7;
     })
     .slice()
-    .sort((a: any, b: any) =>
-      normYMD(getEventDate(a)).localeCompare(normYMD(getEventDate(b)))
-    );
+    .sort((a, b) => {
+      const da = eventStart(a)?.getTime() ?? 0;
+      const db = eventStart(b)?.getTime() ?? 0;
+      return da - db;
+    });
 
   const bellMode: "none" | "soon" | "today" | "both" =
     eventsToday.length && eventsNext3.length
       ? "both"
       : eventsToday.length
-        ? "today"
-        : eventsNext3.length
-          ? "soon"
-          : "none";
+      ? "today"
+      : eventsNext3.length
+      ? "soon"
+      : "none";
 
   const bellColor =
     bellMode === "both"
       ? "ring-4 ring-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.65)]"
       : bellMode === "today"
-        ? "ring-4 ring-red-400 shadow-[0_0_18px_rgba(248,113,113,0.65)]"
-        : bellMode === "soon"
-          ? "ring-4 ring-yellow-300 shadow-[0_0_18px_rgba(253,224,71,0.75)]"
-          : "";
+      ? "ring-4 ring-red-400 shadow-[0_0_18px_rgba(248,113,113,0.65)]"
+      : bellMode === "soon"
+      ? "ring-4 ring-yellow-300 shadow-[0_0_18px_rgba(253,224,71,0.75)]"
+      : "";
 
-
-  // ---------- Tailwind "design tokens" ----------
   const card =
-    "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)]";
+    "rounded-[28px] border border-slate-200/90 bg-white/95 shadow-[0_8px_28px_rgba(15,23,42,0.06)] backdrop-blur";
   const cardPad = "p-4 md:p-5";
-  const soft = "bg-slate-50";
+  const soft = "bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(241,245,249,0.92))]";
   const btn =
     "rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm hover:bg-slate-50 active:translate-y-[1px] active:shadow-none";
   const btnPrimary =
@@ -1022,8 +979,7 @@ export default function ClassPage() {
   const chip =
     "inline-flex items-center gap-2 rounded-full border-2 border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700";
 
-  // ---------- tiny icons ----------
-  const Icon = ({ name }: { name: "class" | "board" | "book" | "admin" | "spark" }) => {
+  const Icon = ({ name }: { name: "class" | "board" | "book" | "admin" | "spark" | "quiz" | "collab" }) => {
     const common = "h-4 w-4";
     switch (name) {
       case "class":
@@ -1049,18 +1005,6 @@ export default function ClassPage() {
             <path d="M8 20h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </svg>
         );
-      case "book":
-        return (
-          <svg className={common} viewBox="0 0 24 24" fill="none">
-            <path
-              d="M6 4h10a2 2 0 0 1 2 2v14H8a2 2 0 0 0-2 2V4Z"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinejoin="round"
-            />
-            <path d="M6 18h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-        );
       case "admin":
         return (
           <svg className={common} viewBox="0 0 24 24" fill="none">
@@ -1068,6 +1012,30 @@ export default function ClassPage() {
               d="M12 3l8 4v6c0 5-3.5 8-8 8s-8-3-8-8V7l8-4Z"
               stroke="currentColor"
               strokeWidth="2"
+              strokeLinejoin="round"
+            />
+          </svg>
+        );
+      case "quiz":
+        return (
+          <svg className={common} viewBox="0 0 24 24" fill="none">
+            <path
+              d="M9 10h6M9 14h3M7 4h10a2 2 0 0 1 2 2v12l-3-2-3 2-3-2-3 2V6a2 2 0 0 1 2-2Z"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        );
+      case "collab":
+        return (
+          <svg className={common} viewBox="0 0 24 24" fill="none">
+            <path
+              d="M8 12a3 3 0 1 0-0.01 0ZM16 8a3 3 0 1 0-0.01 0ZM17 16a3 3 0 1 0-0.01 0ZM10.5 10.5l3-1.5M10.5 13.5l4 1.5"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
               strokeLinejoin="round"
             />
           </svg>
@@ -1092,7 +1060,6 @@ export default function ClassPage() {
       ? "text-slate-900"
       : "text-white";
 
-  // ---------- UI blocks ----------
   const LeftSidebar = () => (
     <aside className="col-span-12 md:col-span-3 lg:col-span-2">
       <div className={`${card} ${cardPad}`}>
@@ -1109,11 +1076,7 @@ export default function ClassPage() {
               title="Back to Dashboard"
             >
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-sm overflow-hidden">
-                <img
-                  src={ELogo2}
-                  alt="ELume Logo"
-                  className="h-14 w-14 object-contain"
-                />
+                <img src={ELogo2} alt="ELume Logo" className="h-14 w-14 object-contain" />
               </div>
             </div>
 
@@ -1127,22 +1090,24 @@ export default function ClassPage() {
 
         <nav className="space-y-2">
           {[
-            { label: "Dashboard", to: `/` },
-            { label: "Whiteboard", to: `/whiteboard/${classId}` },
-            { label: "Collaborate", to: `/class/${classId}/collaboration` },
-            { label: "eBooks", to: null },
-            { label: "Class Admin", to: `/class/${classId}/admin` },
+            { label: "Dashboard", to: `/`, variant: "default" },
+            { label: "Whiteboard", to: `/whiteboard/${classId}`, variant: "feature", external: true },
+            { label: "Collaboration", to: `/class/${classId}/collaboration`, variant: "feature" },
+            { label: "Live Quiz", to: `/class/${classId}/live-quiz`, variant: "feature" },
+            { label: "Class Admin", to: `/class/${classId}/admin`, variant: "default" },
           ].map((item) => {
             const className =
               item.label === "Dashboard"
                 ? "block w-full rounded-2xl border-2 border-emerald-600 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100"
+                : item.variant === "feature"
+                ? "block w-full rounded-2xl border border-slate-200 bg-[linear-gradient(135deg,rgba(255,255,255,1),rgba(240,253,250,1))] px-4 py-3 text-left text-sm font-semibold text-slate-900 shadow-sm hover:-translate-y-[1px] hover:shadow-md"
                 : "block w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-3 text-left text-sm hover:bg-slate-50";
 
-            if (item.label === "Whiteboard") {
+            if (item.external) {
               return (
                 <a
                   key={item.label}
-                  href={`${window.location.origin}/#/whiteboard/${classId}`}
+                  href={`${window.location.origin}/#${item.to}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className={className}
@@ -1156,13 +1121,7 @@ export default function ClassPage() {
               <button
                 key={item.label}
                 type="button"
-                onClick={() => {
-                  if (!item.to) {
-                    alert("Coming soon 🙂");
-                    return;
-                  }
-                  navigate(item.to);
-                }}
+                onClick={() => navigate(item.to)}
                 className={className}
               >
                 {item.label}
@@ -1220,17 +1179,20 @@ export default function ClassPage() {
   const ClassHeader = () => {
     const classLabel = classInfo?.name || `Class ${id ?? ""}`;
     return (
-      <div className={`relative rounded-3xl border-2 border-slate-200 ${classColour} p-4 md:p-5 shadow-[0_2px_0_rgba(15,23,42,0.06)] ${textClass}`}>
+      <div
+        className={`relative rounded-[30px] border border-slate-200 ${classColour} p-4 md:p-5 shadow-[0_10px_32px_rgba(15,23,42,0.08)] ${textClass}`}
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="inline-block rounded-2xl bg-white/10 px-5 py-3 backdrop-blur-sm shadow-[0_8px_24px_rgba(0,0,0,0.25)]">
-              <div className="text-3xl font-extrabold tracking-tight drop-shadow-md">
+            <div className="inline-block rounded-[26px] bg-white/10 px-5 py-3 backdrop-blur-sm shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
+              <div className="text-4xl font-black tracking-tight drop-shadow-md md:text-5xl">
                 {classLabel}
               </div>
-              <div className="mt-1 text-lg font-semibold tracking-tight drop-shadow-sm">
+              <div className="mt-1.5 text-xl font-bold tracking-tight drop-shadow-sm md:text-2xl">
                 {pageSubtitle}
               </div>
             </div>
+
             <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-700">
               <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2">
                 <span className="font-extrabold">Teacher:</span> {teacherName}
@@ -1239,6 +1201,7 @@ export default function ClassPage() {
               <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2">
                 <span className="font-extrabold">Group:</span> {groupLabel}
               </div>
+
               <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2 flex items-center gap-2">
                 <span>
                   <span className="font-extrabold">Room:</span> {roomLabel}
@@ -1247,32 +1210,93 @@ export default function ClassPage() {
             </div>
           </div>
 
-          {/* Date badge */}
-          {/* Date badge + Bell */}
-          <div className="relative rounded-3xl border-2 border-slate-200 bg-white p-3 text-center shadow-[0_2px_0_rgba(15,23,42,0.06)] text-slate-900">
-            <div className="text-sm text-slate-600 font-semibold">{dayName}</div>
-            <div className="text-4xl font-extrabold leading-tight">{dayNumber}</div>
-            <div className="text-sm text-slate-600 font-semibold">{monthName}</div>
-            <div className="text-xs text-slate-700 tracking-tight">
-              <span className="font-semibold">{timeNow.split(" ")[0]}</span>
-              <span className="text-[0.6rem] align-top ml-0.5 opacity-70">
-                {timeNow.split(" ")[1]}
-              </span>
+          <div className="flex shrink-0 flex-col items-end gap-3">
+            <button
+              type="button"
+              onClick={() => setShowClassSettings(true)}
+              className="grid h-10 w-10 place-items-center rounded-2xl border-2 border-slate-200 bg-white/85 text-slate-700 shadow-sm backdrop-blur hover:bg-white"
+              title="Class settings"
+            >
+              <Settings size={16} />
+            </button>
+
+            <div className="rounded-3xl border-2 border-slate-200 bg-white p-3 text-center shadow-[0_2px_0_rgba(15,23,42,0.06)] text-slate-900">
+              <div className="text-sm text-slate-600 font-semibold">{dayName}</div>
+              <div className="text-4xl font-extrabold leading-tight">{dayNumber}</div>
+              <div className="text-sm text-slate-600 font-semibold">{monthName}</div>
+              <div className="text-xs text-slate-700 tracking-tight">
+                <span className="font-semibold">{timeNow.split(" ")[0]}</span>
+                <span className="text-[0.6rem] align-top ml-0.5 opacity-70">
+                  {timeNow.split(" ")[1]}
+                </span>
+              </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowClassSettings(true)}
-            className="absolute bottom-4 right-4 grid h-5 w- place-items-center rounded-2xl border-2 border-slate-200 bg-white/80 text-slate-700 shadow-sm backdrop-blur hover:bg-white"
-            title="Class settings"
-          >
-            <Settings size={16} />
-          </button>
-
         </div>
       </div>
     );
   };
+
+  const LiveTeachingStrip = () => (
+    <div className="mt-4 rounded-[28px] border border-emerald-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,253,245,0.98))] p-4 shadow-[0_10px_28px_rgba(16,185,129,0.06)]">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800">
+            Live Teaching Tools
+          </div>
+          <div className="mt-2 text-sm text-slate-600">
+            Jump into your main lesson modes quickly.
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        {[
+          {
+            title: "Whiteboard",
+            subtitle: "Open full teaching board",
+            icon: "🖍️",
+            className:
+              "border-cyan-200 bg-[linear-gradient(135deg,rgba(239,246,255,1),rgba(236,254,255,1))]",
+            onClick: () => window.open(`${window.location.origin}/#/whiteboard/${classId}`, "_blank", "noopener,noreferrer"),
+          },
+          {
+            title: "Collaboration",
+            subtitle: "Live student breakout board",
+            icon: "🤝",
+            className:
+              "border-violet-200 bg-[linear-gradient(135deg,rgba(245,243,255,1),rgba(237,233,254,0.95))]",
+            onClick: () => navigate(`/class/${classId}/collaboration`),
+          },
+          {
+            title: "Live Quiz",
+            subtitle: "Run saved quiz or poll",
+            icon: "🧠",
+            className:
+              "border-amber-200 bg-[linear-gradient(135deg,rgba(255,251,235,1),rgba(254,249,195,0.7))]",
+            onClick: () => navigate(`/class/${classId}/live-quiz`),
+          },
+        ].map((item) => (
+          <button
+            key={item.title}
+            type="button"
+            onClick={item.onClick}
+            className={`rounded-[26px] border p-4 text-left shadow-sm transition hover:-translate-y-[2px] hover:shadow-md ${item.className}`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-extrabold text-slate-900">{item.title}</div>
+                <div className="mt-1 text-sm text-slate-600">{item.subtitle}</div>
+              </div>
+              <div className="grid h-11 w-11 place-items-center rounded-2xl border border-white/80 bg-white/80 text-xl shadow-sm">
+                {item.icon}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 
   const Feed = () => {
     return (
@@ -1293,7 +1317,6 @@ export default function ClassPage() {
               key={p.id}
               className={`${card} ${cardPad} transition-all duration-200 hover:-translate-y-[2px] hover:shadow-lg hover:border-emerald-200`}
             >
-              {/* Header */}
               <div className="flex items-center gap-2">
                 <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
                   {formatPostStamp(p.createdAt)}
@@ -1318,7 +1341,6 @@ export default function ClassPage() {
                 </button>
               </div>
 
-              {/* Content */}
               {editingPostId === p.id ? (
                 <div className="mt-4 grid gap-3">
                   <textarea
@@ -1376,8 +1398,7 @@ export default function ClassPage() {
                 </div>
               )}
 
-              {/* Attachments ✅ SAFE because p.links is always an array after normalise */}
-              {(p.links?.length || p.files?.length) && (
+              {(Boolean(p.links?.length) || Boolean(p.files?.length)) && (
                 <div className="mt-5 flex flex-wrap gap-2">
                   {p.files?.map((f, i) => (
                     <button
@@ -1418,8 +1439,6 @@ export default function ClassPage() {
                       📎 Click here
                     </button>
                   ))}
-
-
                 </div>
               )}
             </article>
@@ -1428,13 +1447,9 @@ export default function ClassPage() {
     );
   };
 
-
-
   const RightPanel = () => (
     <aside className="col-span-12 md:col-span-3 lg:col-span-3">
       <div className={`${card} ${cardPad}`}>
-
-        {/* Resources */}
         <div className="flex items-center justify-between">
           <div className="text-lg font-extrabold tracking-tight">Resources</div>
           <div className="grid h-10 w-10 place-items-center rounded-2xl border-2 border-slate-200 bg-slate-50">
@@ -1469,13 +1484,15 @@ export default function ClassPage() {
           ))}
         </div>
 
-        {/* Classroom Tools */}
-        <div className="mt-6 rounded-3xl border-2 border-amber-300 bg-amber-50 p-4 shadow-md">
+        <div className="mt-6 rounded-[28px] border border-amber-200 bg-[linear-gradient(180deg,rgba(255,251,235,0.95),rgba(255,255,255,0.96))] p-4 shadow-sm">
           <div className="flex items-center gap-2">
             <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
               🎯
             </span>
-            <div className="text-lg font-extrabold tracking-tight">Classroom Tools</div>
+            <div>
+              <div className="text-lg font-extrabold tracking-tight">Quick Classroom Tools</div>
+              <div className="text-xs text-slate-500">Fast in-lesson helpers</div>
+            </div>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-3">
@@ -1532,13 +1549,18 @@ export default function ClassPage() {
                   <button
                     type="button"
                     className={toolTile}
-                    onClick={() => navigate(`/class/${classId}/live-quiz`)}
+                    onClick={() => {
+                      setTeamGenOpen(true);
+                      if (!generatedTeams.length && studentNames.length) {
+                        generateTeams(teamSize);
+                      }
+                    }}
                   >
-                    <div className={toolIcon}>🧠</div>
+                    <div className={toolIcon}>👥</div>
                     <div className={toolLabel}>
-                      Live
+                      Team
                       <br />
-                      Quiz
+                      Generator
                     </div>
                   </button>
                 </>
@@ -1547,8 +1569,7 @@ export default function ClassPage() {
           </div>
         </div>
 
-        {/* Generate Links */}
-        <div className={`mt-6 rounded-3xl border-2 border-slate-200 ${soft} p-4`}>
+        <div className={`mt-6 rounded-[28px] border border-slate-200 ${soft} p-4`}>
           <div className="flex items-center gap-2">
             <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
               <Icon name="spark" />
@@ -1579,14 +1600,12 @@ export default function ClassPage() {
             ))}
           </div>
         </div>
-
       </div>
     </aside>
   );
 
-
   return (
-    <div className="min-h-screen bg-emerald-100 p-6">
+    <div className="min-h-screen bg-[linear-gradient(180deg,#dff5e8_0%,#edf9f1_45%,#f7fbff_100%)] p-6">
       <div className="mx-auto max-w-7xl px-4 py-6">
         {error && (
           <div className="mb-4 rounded-3xl border-2 border-red-200 bg-red-50 p-3 text-sm text-red-800">
@@ -1599,11 +1618,9 @@ export default function ClassPage() {
 
           <main className="col-span-12 md:col-span-6 lg:col-span-7">
             <ClassHeader />
+            <LiveTeachingStrip />
 
-            {/* Action row */}
             <div className="mt-4 flex items-center gap-3">
-
-              {/* Left side buttons */}
               <div className="flex flex-wrap gap-3">
                 <button
                   onClick={() => setActiveTab("announce")}
@@ -1618,18 +1635,6 @@ export default function ClassPage() {
                 </button>
 
                 <button
-                  onClick={() => setActiveTab("notes")}
-                  className={
-                    activeTab === "notes"
-                      ? "rounded-full border-2 border-emerald-600 bg-emerald-50 px-5 py-2 text-sm font-semibold"
-                      : "rounded-full border-2 border-slate-200 bg-white px-5 py-2 text-sm hover:bg-slate-50"
-                  }
-                  type="button"
-                >
-                  Notes
-                </button>
-
-                <button
                   type="button"
                   onClick={() => navigate(`/class/${classId}/calendar`)}
                   className="rounded-full border-2 border-slate-200 bg-white px-5 py-2 text-sm hover:bg-slate-50"
@@ -1637,8 +1642,6 @@ export default function ClassPage() {
                   Calendar
                 </button>
               </div>
-
-              {/* 🔔 Bell aligned right */}
 
               <div
                 className="ml-auto relative"
@@ -1664,7 +1667,6 @@ export default function ClassPage() {
                     />
                   </svg>
 
-                  {/* Indicators */}
                   {bellMode === "today" && (
                     <span className="absolute -bottom-1 left-1/2 h-1.5 w-6 -translate-x-1/2 rounded-full bg-red-500" />
                   )}
@@ -1681,8 +1683,6 @@ export default function ClassPage() {
                   )}
                 </button>
 
-
-                {/* Hover preview */}
                 {bellOpen && (
                   <div className="absolute right-0 mt-2 w-80 rounded-2xl border-2 border-slate-200 bg-white p-3 text-left shadow-xl z-50">
                     <div className="text-sm font-semibold text-slate-800">Next 7 days</div>
@@ -1708,7 +1708,6 @@ export default function ClassPage() {
                 )}
               </div>
             </div>
-
 
             {activeTab === "announce" && (
               <>
@@ -1738,21 +1737,20 @@ export default function ClassPage() {
               </>
             )}
 
-            {activeTab === "notes" && (
-              <div className={`${card} ${cardPad} mt-4 text-sm text-slate-700`}>
-                Notes panel coming soon ✏️
-              </div>
-            )}
-
             {activeTab === "whiteboard" && (
               <div className={`${card} ${cardPad} mt-4 text-sm text-slate-700`}>
                 Whiteboard coming soon 🧠
               </div>
             )}
           </main>
+
           {timerOpen && (
             <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-              <div className={`w-full max-w-lg rounded-3xl border-2 bg-white p-5 shadow-xl ${timerFinished ? "border-red-300" : "border-slate-200"}`}>
+              <div
+                className={`w-full max-w-lg rounded-3xl border-2 bg-white p-5 shadow-xl ${
+                  timerFinished ? "border-red-300" : "border-slate-200"
+                }`}
+              >
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-lg font-extrabold text-slate-900">
                     {timerFinished ? <Bell size={18} className="text-red-600" /> : <Timer size={18} />}
@@ -1772,7 +1770,6 @@ export default function ClassPage() {
                   </button>
                 </div>
 
-                {/* BIG countdown display */}
                 <div
                   className={[
                     "mt-4 rounded-3xl border-2 p-6 text-center",
@@ -1787,7 +1784,6 @@ export default function ClassPage() {
                   </div>
                 </div>
 
-                {/* Setup controls */}
                 {!timerRunning && !timerFinished && (
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     <label className="text-sm font-semibold text-slate-700">
@@ -1841,7 +1837,6 @@ export default function ClassPage() {
                   </div>
                 )}
 
-                {/* Running controls */}
                 {timerRunning && (
                   <div className="mt-4 flex items-center justify-end gap-2">
                     <button
@@ -1869,7 +1864,6 @@ export default function ClassPage() {
                   </div>
                 )}
 
-                {/* Finished controls */}
                 {timerFinished && (
                   <div className="mt-4 flex items-center justify-end gap-2">
                     <button
@@ -1984,6 +1978,125 @@ export default function ClassPage() {
             </div>
           )}
 
+          {teamGenOpen && (
+            <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+              <div className="flex w-full max-w-2xl max-h-[90vh] flex-col overflow-hidden rounded-3xl border-2 border-slate-200 bg-white shadow-xl">
+                <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+                  <div>
+                    <div className="text-lg font-extrabold text-slate-900">Team Generator</div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      Builds quick random groups from active students in Class Admin.
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setTeamGenOpen(false)}
+                    className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+                  <div className="rounded-3xl border-2 border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-5 shadow-sm">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
+                          Group size
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {loadingStudents
+                            ? "Loading students..."
+                            : `${nameCount} active student${nameCount === 1 ? "" : "s"} available`}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          { value: 2 as const, label: "Pairs" },
+                          { value: 3 as const, label: "3s" },
+                          { value: 4 as const, label: "4s" },
+                        ]).map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setTeamSize(opt.value)}
+                            className={
+                              teamSize === opt.value
+                                ? "rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                                : "rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                            }
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {!loadingStudents && !nameValid && (
+                    <div className="mt-4 rounded-2xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      No active students found. Add students in Class Admin.
+                    </div>
+                  )}
+
+                  {generatedTeams.length > 0 && (
+                    <div className="mt-5 grid gap-3 md:grid-cols-2">
+                      {generatedTeams.map((team) => (
+                        <div
+                          key={team.label}
+                          className="rounded-3xl border-2 border-slate-200 bg-slate-50 px-4 py-4 shadow-sm"
+                        >
+                          <div className="text-base font-extrabold tracking-tight text-slate-900">
+                            {team.label}
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            {team.students.map((student) => (
+                              <div
+                                key={`${team.label}-${student}`}
+                                className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
+                              >
+                                {student}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {nameValid && (
+                    <div className="mt-3 text-[11px] text-slate-500">
+                      Final groups may be slightly uneven when class sizes do not divide evenly.
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-slate-200 px-5 py-4">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="flex-1 rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                      onClick={() => generateTeams(teamSize)}
+                      disabled={!nameValid || loadingStudents}
+                    >
+                      Generate Teams
+                    </button>
+
+                    <button
+                      type="button"
+                      className={pill}
+                      onClick={() => generateTeams(teamSize)}
+                      disabled={!nameValid || loadingStudents}
+                    >
+                      Shuffle Again
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {showClassSettings && (
             <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-3 sm:p-4">
@@ -2142,7 +2255,7 @@ export default function ClassPage() {
                           };
 
                           localStorage.setItem(metaKeyForUser(), JSON.stringify(meta));
-                        } catch { }
+                        } catch {}
 
                         const t = editTeacher.trim() || "Mr Fitzgerald";
                         setTeacherName(t);
@@ -2161,7 +2274,6 @@ export default function ClassPage() {
               </div>
             </div>
           )}
-
 
           <RightPanel />
 

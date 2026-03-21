@@ -38,10 +38,6 @@ function toISODate(value: string): string {
 
 const todayISO = new Date().toISOString().slice(0, 10);
 
-function isTodayISO(iso: string) {
-  return iso === todayISO;
-}
-
 function toLocalTimeHHMM(value?: string | null): string {
   if (!value) return "";
   const d = new Date(value);
@@ -88,6 +84,12 @@ export default function CalendarPage() {
   const [filterMode, setFilterMode] = useState<FilterMode>(hasRouteClass ? "class" : "all");
   const [filterClassId, setFilterClassId] = useState<number>(hasRouteClass ? routeClassId : 1);
 
+  // calendar month view
+  const [visibleMonth, setVisibleMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+
   // create/edit modal
   const [showModal, setShowModal] = useState(false);
   const [editingEventId, setEditingEventId] = useState<number | null>(null);
@@ -109,7 +111,7 @@ export default function CalendarPage() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPreview, setAiPreview] = useState<AIParseResponse | null>(null);
 
-  // --------- load classes (for filter dropdown) ---------
+  // --------- load classes ---------
   useEffect(() => {
     apiFetch("/classes")
       .then((data) => setClasses(Array.isArray(data) ? data : []))
@@ -122,8 +124,7 @@ export default function CalendarPage() {
       setFilterMode("class");
       setFilterClassId(routeClassId);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeClassId]);
+  }, [hasRouteClass, routeClassId]);
 
   // --------- fetch events ---------
   async function refresh() {
@@ -132,7 +133,10 @@ export default function CalendarPage() {
 
     try {
       let url = `/calendar-events`;
-      if (filterMode === "global") {
+
+      if (hasRouteClass) {
+        url += `?class_id=${routeClassId}`;
+      } else if (filterMode === "global") {
         url += `?global_only=true`;
       } else if (filterMode === "class") {
         url += `?class_id=${filterClassId}`;
@@ -150,8 +154,7 @@ export default function CalendarPage() {
 
   useEffect(() => {
     refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterMode, filterClassId]);
+  }, [filterMode, filterClassId, hasRouteClass, routeClassId]);
 
   // --------- derived maps ---------
   const eventsByDay = useMemo(() => {
@@ -183,7 +186,16 @@ export default function CalendarPage() {
     return c.subject ? `${c.name} • ${c.subject}` : c.name;
   }
 
-  const year = new Date().getFullYear();
+  const visibleYear = visibleMonth.getFullYear();
+  const visibleMonthIndex = visibleMonth.getMonth();
+  const daysInMonth = new Date(visibleYear, visibleMonthIndex + 1, 0).getDate();
+  const firstDay = new Date(visibleYear, visibleMonthIndex, 1).getDay();
+  const offset = (firstDay + 6) % 7;
+
+  const monthLabel = visibleMonth.toLocaleString("en-IE", {
+    month: "long",
+    year: "numeric",
+  });
 
   // --------- modal helpers ---------
   function resetDraft() {
@@ -191,12 +203,12 @@ export default function CalendarPage() {
     setDraftDesc("");
     setDraftType("general");
     setDraftAllDay(false);
-    const todayISO = new Date().toISOString().slice(0, 10);
-    setDraftDate(todayISO);
+    const localTodayISO = new Date().toISOString().slice(0, 10);
+    setDraftDate(localTodayISO);
     setDraftTime("09:30");
     setDraftEndTime("");
-    setDraftScope("global");
-    setDraftClassId(classes?.[0]?.id ?? 1);
+    setDraftScope(hasRouteClass ? "class" : "global");
+    setDraftClassId(hasRouteClass ? routeClassId : classes?.[0]?.id ?? 1);
   }
 
   function openCreate(prefillISO?: string) {
@@ -225,12 +237,15 @@ export default function CalendarPage() {
     const endHHMM = toLocalTimeHHMM(ev.end_date) || "";
     setDraftEndTime(endHHMM);
 
+    setDraftScope(ev.class_id ? "class" : "global");
+    setDraftClassId(ev.class_id ?? (hasRouteClass ? routeClassId : classes?.[0]?.id ?? 1));
+
     setShowModal(true);
   }
 
   function currentTargetClassId(): number | null {
-    if (filterMode === "class") return filterClassId;
     if (hasRouteClass) return routeClassId;
+    if (filterMode === "class") return filterClassId;
     return null;
   }
 
@@ -300,7 +315,6 @@ export default function CalendarPage() {
     }
   }
 
-  // Bin delete from the quick list (doesn't require switching to Edit mode)
   async function deleteEventById(eventId: number) {
     const ok = window.confirm("Delete this event? This cannot be undone.");
     if (!ok) return;
@@ -309,7 +323,6 @@ export default function CalendarPage() {
       setErr(null);
       await apiFetch(`/calendar-events/${eventId}`, { method: "DELETE" });
 
-      // If we were editing this same event, reset edit state
       if (editingEventId === eventId) {
         setEditingEventId(null);
         resetDraft();
@@ -321,7 +334,7 @@ export default function CalendarPage() {
     }
   }
 
-  // --------- AI parsing (draft only) ---------
+  // --------- AI parsing ---------
   async function runAIParse() {
     const text = aiText.trim();
     if (!text) return;
@@ -371,92 +384,124 @@ export default function CalendarPage() {
 
   return (
     <div className="min-h-screen bg-[#dff3df]">
-      <div className="mx-auto max-w-6xl px-4 pt-6 pb-10">
+      <div className="mx-auto max-w-6xl px-4 pb-10 pt-6">
         {/* Top bar */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => (hasRouteClass ? navigate(`/class/${routeClassId}`) : navigate(`/`))}
-            className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+            className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
             type="button"
           >
             ← Back
           </button>
 
           <div className="flex-1">
-            <div className="text-2xl font-semibold">{pageTitle}</div>
+            <div className="text-2xl font-semibold text-slate-900">{pageTitle}</div>
             <div className="text-sm text-slate-600">
-              {filterMode === "all" && "Showing: All events"}
-              {filterMode === "global" && "Showing: Global only"}
-              {filterMode === "class" && `Showing: Global + Class ${filterClassId}`}
+              {hasRouteClass
+                ? "Showing events linked to this class only"
+                : filterMode === "all"
+                  ? "Showing: All events"
+                  : filterMode === "global"
+                    ? "Showing: Global only"
+                    : `Showing: Class ${filterClassId}`}
             </div>
           </div>
 
-          <button
-            onClick={() => openCreate()}
-            className="rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm font-semibold hover:bg-emerald-700"
-            type="button"
-          >
-            + New Event
-          </button>
+          {!hasRouteClass && (
+            <button
+              onClick={() => openCreate()}
+              className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+              type="button"
+            >
+              + New Event
+            </button>
+          )}
         </div>
 
         {/* Controls */}
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border-2 border-slate-200 bg-white p-4">
-            <div className="text-sm font-semibold mb-2">View</div>
+          {!hasRouteClass ? (
+            <div className="rounded-2xl border-2 border-slate-200 bg-white p-4">
+              <div className="mb-2 text-sm font-semibold">View</div>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                className={`rounded-full border-2 px-4 py-2 text-sm ${filterMode === "all"
-                  ? "border-emerald-700 bg-emerald-50"
-                  : "border-slate-200 bg-white"
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className={`rounded-full border-2 px-4 py-2 text-sm ${
+                    filterMode === "all"
+                      ? "border-emerald-700 bg-emerald-50"
+                      : "border-slate-200 bg-white"
                   }`}
-                type="button"
-                onClick={() => setFilterMode("all")}
-              >
-                All
-              </button>
-
-              <button
-                className={`rounded-full border-2 px-4 py-2 text-sm ${filterMode === "global"
-                  ? "border-emerald-700 bg-emerald-50"
-                  : "border-slate-200 bg-white"
-                  }`}
-                type="button"
-                onClick={() => setFilterMode("global")}
-              >
-                Global only
-              </button>
-
-              <button
-                className={`rounded-full border-2 px-4 py-2 text-sm ${filterMode === "class"
-                  ? "border-emerald-700 bg-emerald-50"
-                  : "border-slate-200 bg-white"
-                  }`}
-                type="button"
-                onClick={() => setFilterMode("class")}
-              >
-                Class + Global
-              </button>
-            </div>
-
-            {filterMode === "class" && (
-              <div className="mt-3">
-                <label className="text-xs font-semibold text-slate-600">Class</label>
-                <select
-                  value={filterClassId}
-                  onChange={(e) => setFilterClassId(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                  type="button"
+                  onClick={() => setFilterMode("all")}
                 >
-                  {classes.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.subject ? `${c.name} • ${c.subject}` : c.name}
-                    </option>
-                  ))}
-                </select>
+                  All
+                </button>
+
+                <button
+                  className={`rounded-full border-2 px-4 py-2 text-sm ${
+                    filterMode === "global"
+                      ? "border-emerald-700 bg-emerald-50"
+                      : "border-slate-200 bg-white"
+                  }`}
+                  type="button"
+                  onClick={() => setFilterMode("global")}
+                >
+                  Global only
+                </button>
+
+                <button
+                  className={`rounded-full border-2 px-4 py-2 text-sm ${
+                    filterMode === "class"
+                      ? "border-emerald-700 bg-emerald-50"
+                      : "border-slate-200 bg-white"
+                  }`}
+                  type="button"
+                  onClick={() => setFilterMode("class")}
+                >
+                  Class
+                </button>
               </div>
-            )}
-          </div>
+
+              {filterMode === "class" && (
+                <div className="mt-3">
+                  <label className="text-xs font-semibold text-slate-600">Class</label>
+                  <select
+                    value={filterClassId}
+                    onChange={(e) => setFilterClassId(Number(e.target.value))}
+                    className="mt-1 w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                  >
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.subject ? `${c.name} • ${c.subject}` : c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-[28px] border border-emerald-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,253,245,0.98))] p-4 shadow-sm">
+              <div className="flex h-full flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800">
+                    Class Calendar
+                  </div>
+                  <div className="mt-2 text-sm text-slate-600">
+                    Showing events linked to this class only.
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => openCreate()}
+                  className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+                  type="button"
+                >
+                  + New Event
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* AI Assistant */}
           <div className="rounded-2xl border-2 border-slate-200 bg-white p-4 md:col-span-2">
@@ -492,7 +537,7 @@ export default function CalendarPage() {
                   <div className="text-sm font-semibold">Draft preview</div>
                   <button
                     type="button"
-                    className="mt-3 rounded-xl bg-emerald-600 px-4 py-2 text-white font-semibold hover:bg-emerald-700"
+                    className="mt-3 rounded-xl bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-700"
                     onClick={createFromPreview}
                   >
                     Create event
@@ -501,7 +546,7 @@ export default function CalendarPage() {
 
                 <div className="mt-2 text-sm">
                   <div className="font-semibold">{aiPreview.draft.title}</div>
-                  <div className="text-xs text-slate-700 mt-1">
+                  <div className="mt-1 text-xs text-slate-700">
                     {toISODate(aiPreview.draft.event_date)}
                     {aiPreview.draft.all_day
                       ? " • All day"
@@ -532,96 +577,146 @@ export default function CalendarPage() {
         )}
         {loading && <div className="mt-4 text-sm text-slate-600">Loading…</div>}
 
-        {/* Year grid */}
-        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-          {Array.from({ length: 12 }).map((_, monthIndex) => {
-            const monthDate = new Date(year, monthIndex, 1);
-            const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-            const firstDay = new Date(year, monthIndex, 1).getDay(); // 0=Sun
-            const offset = (firstDay + 6) % 7; // make Monday=0
-
-            return (
-              <div key={monthIndex} className="rounded-2xl border-2 border-slate-200 bg-white p-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-semibold text-sm">
-                    {monthDate.toLocaleString("en-IE", { month: "long" })}
-                  </h2>
-                  <span className="text-xs text-slate-500">{year}</span>
-                </div>
-
-                <div className="mt-2 grid grid-cols-7 text-center text-[10px] text-slate-500">
-                  {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => (
-                    <div key={d} className="py-1">
-                      {d}
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-7 gap-1">
-                  {Array.from({ length: offset }).map((__, i) => (
-                    <div key={`pad_${i}`} />
-                  ))}
-
-                  {Array.from({ length: daysInMonth }).map((__, dayIndex) => {
-                    const day = dayIndex + 1;
-                    const dateISO = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-                    const dayEvents = eventsByDay.get(dateISO) || [];
-                    const isToday = dateISO === todayISO;
-
-                    return (
-                      <button
-                        key={dateISO}
-                        type="button"
-                        onClick={() => openCreate(dateISO)}
-                        className={`group relative rounded-lg border border-slate-200 p-2 text-left hover:bg-slate-50 h-[80px] overflow-hidden ${isToday ? "bg-emerald-50 ring-4 ring-emerald-200" : ""
-                          }`}
-                        title="Click to add event"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-slate-700">{day}</span>
-                          {dayEvents.length > 0 && (
-                            <span className="flex items-center gap-1">
-                              {dayEvents.slice(0, 3).map((e) => (
-                                <span
-                                  key={e.id}
-                                  className={`h-1.5 w-1.5 rounded-full ${typeDotClass(e.event_type)}`}
-                                  title={e.class_id ? `${e.title} — ${classLabel(e.class_id)}` : e.title}
-                                  onClick={(ev) => {
-                                    ev.stopPropagation();
-                                    openEdit(e);
-                                  }}
-                                />
-                              ))}
-                            </span>
-                          )}
-                        </div>
-
-                        {dayEvents.length > 0 && (
-                          <div className="mt-1">
-                            <div className="text-[10px] text-slate-700 font-medium">
-                              {dayEvents[0].title}
-                            </div>
-
-                            {dayEvents[0].class_id && (
-                              <div className="text-[10px] text-slate-500">
-                                {classLabel(dayEvents[0].class_id)}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
+        {/* Month view */}
+        <div className="mt-6 rounded-[32px] border border-slate-200 bg-white/95 p-4 shadow-[0_10px_32px_rgba(15,23,42,0.06)] backdrop-blur md:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
+                Month View
               </div>
-            );
-          })}
+              <div className="mt-1 text-2xl font-black tracking-tight text-slate-900">
+                {monthLabel}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setVisibleMonth(
+                    (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
+                  )
+                }
+                className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+              >
+                ← Previous
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setVisibleMonth(
+                    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+                  )
+                }
+                className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+              >
+                Today
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setVisibleMonth(
+                    (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
+                  )
+                }
+                className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-5 hidden grid-cols-7 gap-3 text-center text-xs font-bold uppercase tracking-[0.12em] text-slate-500 lg:grid">
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+              <div key={d} className="py-2">
+                {d}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
+            {Array.from({ length: offset }).map((__, i) => (
+              <div
+                key={`pad_${i}`}
+                className="hidden min-h-[170px] rounded-[24px] border border-dashed border-slate-200 bg-slate-50/60 lg:block"
+              />
+            ))}
+
+            {Array.from({ length: daysInMonth }).map((__, dayIndex) => {
+              const day = dayIndex + 1;
+              const dateISO = `${visibleYear}-${String(visibleMonthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              const dayEvents = eventsByDay.get(dateISO) || [];
+              const isToday = dateISO === todayISO;
+
+              return (
+                <button
+                  key={dateISO}
+                  type="button"
+                  onClick={() => openCreate(dateISO)}
+                  className={`min-h-[170px] rounded-[24px] border p-4 text-left shadow-sm transition hover:-translate-y-[1px] hover:shadow-md ${
+                    isToday
+                      ? "border-emerald-300 bg-emerald-50/80 ring-2 ring-emerald-200"
+                      : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-black text-slate-900">{day}</span>
+
+                    {dayEvents.length > 0 && (
+                      <span className="flex items-center gap-1.5">
+                        {dayEvents.slice(0, 3).map((e) => (
+                          <span
+                            key={e.id}
+                            className={`h-2 w-2 rounded-full ${typeDotClass(e.event_type)}`}
+                            title={e.class_id ? `${e.title} — ${classLabel(e.class_id)}` : e.title}
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              openEdit(e);
+                            }}
+                          />
+                        ))}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    {dayEvents.slice(0, 3).map((e) => (
+                      <div
+                        key={e.id}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          openEdit(e);
+                        }}
+                      >
+                        <div className="line-clamp-2 text-xs font-bold text-slate-900">
+                          {e.title}
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          {e.all_day ? "All day" : toLocalTimeHHMM(e.event_date)}
+                          {e.class_id ? ` • ${classLabel(e.class_id)}` : ""}
+                        </div>
+                      </div>
+                    ))}
+
+                    {dayEvents.length === 0 && (
+                      <div className="pt-8 text-sm font-medium text-slate-400">
+                        Click to add…
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
       {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold">{editingEventId ? "Edit Event" : "Create Event"}</h2>
@@ -634,23 +729,30 @@ export default function CalendarPage() {
               </button>
             </div>
 
-            <div className="grid gap-2 md:grid-cols-2">
+            <div className="mt-4 grid gap-2 md:grid-cols-2">
               <div>
-                <div className="text-xs font-semibold text-slate-600 mb-1">Event visibility</div>
+                <div className="mb-1 text-xs font-semibold text-slate-600">Event visibility</div>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => setDraftScope("global")}
-                    className={`rounded-full border-2 px-4 py-2 text-sm ${draftScope === "global" ? "border-emerald-700 bg-emerald-50" : "border-slate-200 bg-white"
-                      }`}
+                    disabled={hasRouteClass}
+                    className={`rounded-full border-2 px-4 py-2 text-sm ${
+                      draftScope === "global"
+                        ? "border-emerald-700 bg-emerald-50"
+                        : "border-slate-200 bg-white"
+                    } ${hasRouteClass ? "cursor-not-allowed opacity-50" : ""}`}
                   >
                     Global
                   </button>
                   <button
                     type="button"
                     onClick={() => setDraftScope("class")}
-                    className={`rounded-full border-2 px-4 py-2 text-sm ${draftScope === "class" ? "border-emerald-700 bg-emerald-50" : "border-slate-200 bg-white"
-                      }`}
+                    className={`rounded-full border-2 px-4 py-2 text-sm ${
+                      draftScope === "class"
+                        ? "border-emerald-700 bg-emerald-50"
+                        : "border-slate-200 bg-white"
+                    }`}
                   >
                     Class
                   </button>
@@ -659,11 +761,14 @@ export default function CalendarPage() {
 
               {draftScope === "class" && (
                 <div>
-                  <div className="text-xs font-semibold text-slate-600 mb-1">Class</div>
+                  <div className="mb-1 text-xs font-semibold text-slate-600">Class</div>
                   <select
                     value={draftClassId}
                     onChange={(e) => setDraftClassId(Number(e.target.value))}
-                    className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                    disabled={hasRouteClass}
+                    className={`w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm ${
+                      hasRouteClass ? "cursor-not-allowed opacity-70" : ""
+                    }`}
                   >
                     {classes.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -693,7 +798,7 @@ export default function CalendarPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <div className="text-xs font-semibold text-slate-600 mb-1">Date</div>
+                  <div className="mb-1 text-xs font-semibold text-slate-600">Date</div>
                   <input
                     type="date"
                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
@@ -703,7 +808,7 @@ export default function CalendarPage() {
                 </div>
 
                 <div>
-                  <div className="text-xs font-semibold text-slate-600 mb-1">Type</div>
+                  <div className="mb-1 text-xs font-semibold text-slate-600">Type</div>
                   <select
                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                     value={draftType}
@@ -717,7 +822,7 @@ export default function CalendarPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -784,10 +889,9 @@ export default function CalendarPage() {
                 </div>
               </div>
 
-              {/* quick list for this date */}
               {draftDate && (eventsByDay.get(draftDate) || []).length > 0 && (
                 <div className="mt-2 rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
-                  <div className="text-xs font-semibold text-slate-700 mb-2">
+                  <div className="mb-2 text-xs font-semibold text-slate-700">
                     Events on {draftDate}
                   </div>
 
@@ -812,7 +916,6 @@ export default function CalendarPage() {
                           </div>
                         </div>
 
-                        {/* Right side: time + bin */}
                         <div className="flex items-center gap-2">
                           <div className="text-xs text-slate-500">
                             {e.all_day ? "All day" : toLocalTimeHHMM(e.event_date)}
@@ -821,7 +924,7 @@ export default function CalendarPage() {
                           <button
                             type="button"
                             onClick={(ev) => {
-                              ev.stopPropagation(); // don't open edit
+                              ev.stopPropagation();
                               deleteEventById(e.id);
                             }}
                             className="rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50"

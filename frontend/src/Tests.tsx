@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, openProtectedFileInNewTab } from "./api";
+import { BackToClassButton, ClassPageActionBar } from "./ClassPageActions";
 
 const API_BASE = "/api";
 
@@ -522,6 +523,10 @@ export default function TestsPage() {
   return (
     <div className="min-h-screen bg-[#dff3df] px-4 py-6 md:px-6">
       <div className="mx-auto max-w-7xl">
+        <ClassPageActionBar>
+          <BackToClassButton classId={classId} />
+        </ClassPageActionBar>
+
         {err && (
           <div className="mb-4 rounded-3xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
             {err}
@@ -554,13 +559,7 @@ export default function TestsPage() {
                   All Categories
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => navigate(`/class/${classId}`)}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Back to Class
-                </button>
+                <span />
               )}
 
               <button

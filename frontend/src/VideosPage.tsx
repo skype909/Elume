@@ -1,6 +1,7 @@
 // VideosPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { BackToClassButton, ClassPageActionBar } from "./ClassPageActions";
 
 type VideoItem = {
   id: string;          // YouTube video id
@@ -222,6 +223,10 @@ export default function VideosPage() {
   return (
     <div className="min-h-screen bg-emerald-100 p-6">
       <div className="mx-auto max-w-7xl px-4 py-6">
+        <ClassPageActionBar>
+          <BackToClassButton classId={classId} />
+        </ClassPageActionBar>
+
         {/* Header */}
         <div className={`${card} p-5 flex items-center justify-between gap-4`}>
           <div className="flex items-center gap-3">
@@ -239,15 +244,6 @@ export default function VideosPage() {
 
           {/* Top-right actions */}
           <div className="flex items-center gap-2">
-            <button
-              className={pill}
-              type="button"
-              onClick={() => navigate(`/class/${classId}`)}
-              title="Back to class"
-            >
-              Back to Class
-            </button>
-
             <button className={btnPrimary} type="button" onClick={openAdd}>
               + Add Video
             </button>

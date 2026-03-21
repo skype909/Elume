@@ -840,6 +840,7 @@ export default function CollaborationPage() {
                                     >
                                         ← Back
                                     </button>
+
                                 </div>
                             </div>
 

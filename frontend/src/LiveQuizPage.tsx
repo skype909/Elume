@@ -728,6 +728,7 @@ export default function LiveQuizPage() {
                 >
                   ← Back to class
                 </button>
+
               </div>
             </div>
 
