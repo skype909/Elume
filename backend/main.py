@@ -1379,6 +1379,9 @@ def ensure_columns():
         if "color" not in col_names:
             conn.execute(text("ALTER TABLE classes ADD COLUMN color TEXT"))
             conn.commit()
+        if "preferred_exam_subject" not in col_names:
+            conn.execute(text("ALTER TABLE classes ADD COLUMN preferred_exam_subject TEXT"))
+            conn.commit()
 
         conn.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS ix_classes_class_code ON classes (class_code)")
@@ -2766,6 +2769,76 @@ BASE_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = BASE_DIR / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 LEGACY_PUBLIC_UPLOAD_DIRS = {"notes", "tests", "posts", "whiteboards"}
+EXAM_LIBRARY_DIR = Path(os.getenv("ELUME_EXAM_LIBRARY_DIR") or "/var/lib/elume/exam-library")
+EXAM_LIBRARY_MANIFEST = EXAM_LIBRARY_DIR / "manifest.json"
+
+
+def _read_exam_library_manifest() -> list[schemas.ExamLibraryItemOut]:
+    if not EXAM_LIBRARY_MANIFEST.exists():
+        return []
+
+    try:
+        raw = json.loads(EXAM_LIBRARY_MANIFEST.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Failed to read exam library manifest: %s", EXAM_LIBRARY_MANIFEST)
+        return []
+
+    items = raw.get("items") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return []
+
+    out: list[schemas.ExamLibraryItemOut] = []
+    seen_ids: set[str] = set()
+
+    for entry in items:
+        if not isinstance(entry, dict):
+            continue
+
+        item_id = str(entry.get("id") or "").strip()
+        cycle = str(entry.get("cycle") or "").strip()
+        subject = str(entry.get("subject") or "").strip()
+        level = str(entry.get("level") or "").strip()
+        year = str(entry.get("year") or "").strip()
+        title = str(entry.get("title") or "").strip()
+        rel_path = str(entry.get("path") or "").strip().replace("\\", "/")
+
+        if not item_id or item_id in seen_ids:
+            continue
+        if not cycle or not subject or not level or not year or not title or not rel_path:
+            continue
+
+        full_path = (EXAM_LIBRARY_DIR / rel_path).resolve()
+        try:
+            full_path.relative_to(EXAM_LIBRARY_DIR.resolve())
+        except Exception:
+            continue
+
+        if not full_path.exists() or not full_path.is_file():
+            continue
+
+        seen_ids.add(item_id)
+        out.append(
+            schemas.ExamLibraryItemOut(
+                id=item_id,
+                cycle=cycle,
+                subject=subject,
+                level=level,
+                year=year,
+                title=title,
+                path=rel_path,
+                file_url=f"/exam-library/items/{item_id}/download",
+            )
+        )
+
+    out.sort(key=lambda item: (item.subject.lower(), item.cycle.lower(), item.level.lower(), item.year.lower(), item.title.lower()))
+    return out
+
+
+def _find_exam_library_item_or_404(item_id: str) -> schemas.ExamLibraryItemOut:
+    for item in _read_exam_library_manifest():
+        if item.id == item_id:
+            return item
+    raise HTTPException(status_code=404, detail="Exam library item not found")
 
 
 def _rel_upload_url(stored_path: str) -> str:
@@ -3095,6 +3168,7 @@ def create_class(
         name=new_class.name,
         subject=new_class.subject,
         color=(new_class.color or "").strip() or None,
+        preferred_exam_subject=(new_class.preferred_exam_subject or "").strip() or None,
         class_code=_rand_class_code(db),
         class_pin=_rand_class_pin(),
     )
@@ -3348,6 +3422,49 @@ def get_class(
 ):
     return get_owned_class_or_404(class_id, db, user)
 
+
+@app.get("/exam-library/items", response_model=List[schemas.ExamLibraryItemOut])
+def list_exam_library_items(
+    subject: Optional[str] = None,
+    cycle: Optional[str] = None,
+    level: Optional[str] = None,
+    user: models.UserModel = Depends(get_current_user),
+):
+    del user  # authenticated teacher access only
+
+    def _matches(value: str, expected: Optional[str]) -> bool:
+        if not expected:
+            return True
+        return value.strip().lower() == expected.strip().lower()
+
+    items = [
+        item
+        for item in _read_exam_library_manifest()
+        if _matches(item.subject, subject) and _matches(item.cycle, cycle) and _matches(item.level, level)
+    ]
+    return items
+
+
+@app.get("/exam-library/items/{item_id}", response_model=schemas.ExamLibraryItemOut)
+def get_exam_library_item(
+    item_id: str,
+    user: models.UserModel = Depends(get_current_user),
+):
+    del user
+    return _find_exam_library_item_or_404(item_id)
+
+
+@app.get("/exam-library/items/{item_id}/download")
+def download_exam_library_item(
+    item_id: str,
+    user: models.UserModel = Depends(get_current_user),
+):
+    del user
+    item = _find_exam_library_item_or_404(item_id)
+    full_path = (EXAM_LIBRARY_DIR / item.path).resolve()
+    filename = Path(item.path).name
+    return FileResponse(path=full_path, filename=filename, media_type="application/pdf")
+
 @app.put("/classes/{class_id}")
 def update_class(
     class_id: int,
@@ -3365,6 +3482,9 @@ def update_class(
 
     if "color" in payload and isinstance(payload["color"], str):
         cls.color = payload["color"].strip() or None
+
+    if "preferred_exam_subject" in payload and isinstance(payload["preferred_exam_subject"], str):
+        cls.preferred_exam_subject = payload["preferred_exam_subject"].strip() or None
 
     db.commit()
     db.refresh(cls)

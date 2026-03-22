@@ -9,6 +9,7 @@ class ClassCreate(BaseModel):
     name: str
     subject: str
     color: Optional[str] = None
+    preferred_exam_subject: Optional[str] = None
 
 
 class PostCreate(BaseModel):
@@ -43,8 +44,20 @@ class ClassOut(BaseModel):
     name: str
     subject: str
     color: Optional[str] = None
+    preferred_exam_subject: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ExamLibraryItemOut(BaseModel):
+    id: str
+    cycle: str
+    subject: str
+    level: str
+    year: str
+    title: str
+    path: str
+    file_url: str
 
 
 class ClassAccessOut(BaseModel):

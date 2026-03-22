@@ -1,6 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "./api";
+import {
+  EXAM_LIBRARY_CYCLES,
+  EXAM_LIBRARY_SUBJECTS,
+  type ExamLibraryItem,
+  type ExamLibrarySubject,
+  examLibraryLevelOptions,
+  normalizeExamLibrarySubject,
+} from "./examLibrary";
 
 const API_BASE = "/api";
 
@@ -25,14 +33,27 @@ type NoteItem = {
   topic_name: string;
 };
 
+type SharedExamImportItem = {
+  id: string;
+  filename: string;
+  file_url: string;
+  topic_name: string;
+  cycle: string;
+  subject: string;
+  level: string;
+  year: string;
+};
+
 const PEN_COLORS = ["#111827", "#ef4444", "#3b82f6", "#22c55e", "#a855f7"];
 const PEN_SIZES = [2, 6, 12];
 const ERASER_SIZES = [10, 24, 40];
 const VISIBLE_RESIZE_HANDLE_SIZE = 14;
 const RESIZE_HIT_SIZE = 28;
 
-function formatKindLabel(kind: "notes" | "exam") {
-  return kind === "notes" ? "Notes" : "Exam Papers";
+function formatKindLabel(kind: "notes" | "exam" | "exam-library") {
+  if (kind === "notes") return "Notes";
+  if (kind === "exam") return "Exam Papers";
+  return "Exam Library";
 }
 
 type WhiteboardDraftState = {
@@ -856,7 +877,15 @@ export default function WhiteBoardPage() {
   const [importLoading, setImportLoading] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importList, setImportList] = useState<Array<{ kind: "notes" | "exam"; item: NoteItem }>>([]);
-  const [importedPdf, setImportedPdf] = useState<{ kind: "notes" | "exam"; item: NoteItem } | null>(null);
+  const [importSource, setImportSource] = useState<"class" | "exam-library">("class");
+  const [examLibraryItems, setExamLibraryItems] = useState<ExamLibraryItem[]>([]);
+  const [examLibraryLoading, setExamLibraryLoading] = useState(false);
+  const [examLibraryError, setExamLibraryError] = useState<string | null>(null);
+  const [preferredExamSubject, setPreferredExamSubject] = useState<ExamLibrarySubject>("Maths");
+  const [examLibrarySubject, setExamLibrarySubject] = useState<ExamLibrarySubject>("Maths");
+  const [examLibraryCycle, setExamLibraryCycle] = useState<string>(EXAM_LIBRARY_CYCLES[1]);
+  const [examLibraryLevel, setExamLibraryLevel] = useState<string>(examLibraryLevelOptions(EXAM_LIBRARY_CYCLES[1])[0]);
+  const [importedPdf, setImportedPdf] = useState<{ kind: "notes" | "exam" | "exam-library"; item: NoteItem | SharedExamImportItem } | null>(null);
   const [showPdfPanel, setShowPdfPanel] = useState(true);
 
   // Insert PDF as image controls
@@ -964,6 +993,7 @@ export default function WhiteBoardPage() {
       .then((data) => {
         const name = String(data?.name || "").trim();
         const subject = String(data?.subject || "").trim();
+        const preferred = normalizeExamLibrarySubject(data?.preferred_exam_subject ?? subject);
 
         // If name already includes the subject, don't duplicate it
         const label =
@@ -972,9 +1002,13 @@ export default function WhiteBoardPage() {
             : name;
 
         setClassLabel(label);
+        setPreferredExamSubject(preferred);
+        setExamLibrarySubject(preferred);
       })
       .catch(() => {
         setClassLabel("");
+        setPreferredExamSubject("Maths");
+        setExamLibrarySubject("Maths");
       });
   }, [classId]);
 
@@ -2678,10 +2712,42 @@ export default function WhiteBoardPage() {
     }
   }
 
+  async function loadExamLibraryList() {
+    setExamLibraryLoading(true);
+    setExamLibraryError(null);
+
+    try {
+      const params = new URLSearchParams();
+      if (examLibrarySubject) params.set("subject", examLibrarySubject);
+      if (examLibraryCycle) params.set("cycle", examLibraryCycle);
+      if (examLibraryLevel) params.set("level", examLibraryLevel);
+
+      const items = (await apiFetch(`${API_BASE}/exam-library/items?${params.toString()}`)) as ExamLibraryItem[];
+      setExamLibraryItems(Array.isArray(items) ? items : []);
+    } catch (e: any) {
+      setExamLibraryError(e?.message ?? "Could not load exam library");
+    } finally {
+      setExamLibraryLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (showImportModal && importList.length === 0 && !importLoading) loadImportList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showImportModal]);
+
+  useEffect(() => {
+    const allowed = examLibraryLevelOptions(examLibraryCycle);
+    if (!allowed.includes(examLibraryLevel)) {
+      setExamLibraryLevel(allowed[0]);
+    }
+  }, [examLibraryCycle, examLibraryLevel]);
+
+  useEffect(() => {
+    if (!showImportModal || importSource !== "exam-library") return;
+    void loadExamLibraryList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showImportModal, importSource, examLibrarySubject, examLibraryCycle, examLibraryLevel]);
 
   useEffect(() => {
     if (!importedPdf || !showPdfPanel) return;
@@ -4076,49 +4142,174 @@ export default function WhiteBoardPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-xl font-semibold">Import a PDF</div>
-                    <div className="mt-1 text-sm text-slate-600">Choose a PDF from Notes or Exam Papers to view and optionally insert onto the board.</div>
+                    <div className="mt-1 text-sm text-slate-600">Choose a class PDF or a shared exam paper, then use the existing PDF viewer and snip tools.</div>
                   </div>
                   <button type="button" className={pill} onClick={() => setShowImportModal(false)}>
                     Close
                   </button>
                 </div>
 
-                <div className="mt-4">
-                  <button type="button" className={pill} onClick={() => loadImportList()} disabled={importLoading}>
-                    {importLoading ? "Loading…" : "Refresh list"}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className={importSource === "class" ? pillOn : pill}
+                    onClick={() => setImportSource("class")}
+                  >
+                    Class PDFs
+                  </button>
+                  <button
+                    type="button"
+                    className={importSource === "exam-library" ? pillOn : pill}
+                    onClick={() => setImportSource("exam-library")}
+                  >
+                    Exam Library
                   </button>
                 </div>
 
-                {importError && <div className="mt-3 rounded-xl border-2 border-red-200 bg-white p-3 text-sm text-red-700">{importError}</div>}
-
-                <div className="mt-4 max-h-[50vh] overflow-y-auto rounded-2xl border-2 border-slate-200">
-                  {importLoading ? (
-                    <div className="p-4 text-sm text-slate-600">Loading…</div>
-                  ) : importList.length === 0 ? (
-                    <div className="p-4 text-sm text-slate-600">No PDFs found yet. Upload some Notes/Exam PDFs first.</div>
-                  ) : (
-                    <div className="divide-y divide-slate-200">
-                      {importList.map(({ kind, item }) => (
-                        <button
-                          key={`${kind}-${item.id}`}
-                          type="button"
-                          className="w-full text-left p-3 hover:bg-slate-50"
-                          onClick={() => {
-                            setImportedPdf({ kind, item });
-                            setShowImportModal(false);
-                            stabilizeBoardGeometryIfNeeded();
-                            setShowPdfPanel(true);
-                          }}
-                        >
-                          <div className="text-sm font-semibold text-slate-800">
-                            {formatKindLabel(kind)} • {item.topic_name}
-                          </div>
-                          <div className="text-xs text-slate-600 truncate">{item.filename}</div>
-                        </button>
-                      ))}
+                {importSource === "class" ? (
+                  <>
+                    <div className="mt-4">
+                      <button type="button" className={pill} onClick={() => loadImportList()} disabled={importLoading}>
+                        {importLoading ? "Loading…" : "Refresh list"}
+                      </button>
                     </div>
-                  )}
-                </div>
+
+                    {importError && <div className="mt-3 rounded-xl border-2 border-red-200 bg-white p-3 text-sm text-red-700">{importError}</div>}
+
+                    <div className="mt-4 max-h-[50vh] overflow-y-auto rounded-2xl border-2 border-slate-200">
+                      {importLoading ? (
+                        <div className="p-4 text-sm text-slate-600">Loading…</div>
+                      ) : importList.length === 0 ? (
+                        <div className="p-4 text-sm text-slate-600">No PDFs found yet. Upload some Notes/Exam PDFs first.</div>
+                      ) : (
+                        <div className="divide-y divide-slate-200">
+                          {importList.map(({ kind, item }) => (
+                            <button
+                              key={`${kind}-${item.id}`}
+                              type="button"
+                              className="w-full text-left p-3 hover:bg-slate-50"
+                              onClick={() => {
+                                setImportedPdf({ kind, item });
+                                setShowImportModal(false);
+                                stabilizeBoardGeometryIfNeeded();
+                                setShowPdfPanel(true);
+                              }}
+                            >
+                              <div className="text-sm font-semibold text-slate-800">
+                                {formatKindLabel(kind)} • {item.topic_name}
+                              </div>
+                              <div className="text-xs text-slate-600 truncate">{item.filename}</div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      <div>
+                        <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">Subject</label>
+                        <select
+                          className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                          value={examLibrarySubject}
+                          onChange={(e) => setExamLibrarySubject(normalizeExamLibrarySubject(e.target.value))}
+                        >
+                          {EXAM_LIBRARY_SUBJECTS.map((subject) => (
+                            <option key={subject} value={subject}>
+                              {subject}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          Defaulted from this class: {preferredExamSubject}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">Cycle</label>
+                        <select
+                          className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                          value={examLibraryCycle}
+                          onChange={(e) => setExamLibraryCycle(e.target.value)}
+                        >
+                          {EXAM_LIBRARY_CYCLES.map((cycle) => (
+                            <option key={cycle} value={cycle}>
+                              {cycle}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">Level</label>
+                        <select
+                          className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                          value={examLibraryLevel}
+                          onChange={(e) => setExamLibraryLevel(e.target.value)}
+                        >
+                          {examLibraryLevelOptions(examLibraryCycle).map((level) => (
+                            <option key={level} value={level}>
+                              {level}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <button type="button" className={pill} onClick={() => loadExamLibraryList()} disabled={examLibraryLoading}>
+                        {examLibraryLoading ? "Loading…" : "Refresh library"}
+                      </button>
+                    </div>
+
+                    {examLibraryError && <div className="mt-3 rounded-xl border-2 border-red-200 bg-white p-3 text-sm text-red-700">{examLibraryError}</div>}
+
+                    <div className="mt-4 max-h-[50vh] overflow-y-auto rounded-2xl border-2 border-slate-200">
+                      {examLibraryLoading ? (
+                        <div className="p-4 text-sm text-slate-600">Loading…</div>
+                      ) : examLibraryItems.length === 0 ? (
+                        <div className="p-4 text-sm text-slate-600">No shared exam papers match these filters yet.</div>
+                      ) : (
+                        <div className="divide-y divide-slate-200">
+                          {examLibraryItems.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className="w-full text-left p-3 hover:bg-slate-50"
+                              onClick={() => {
+                                setImportedPdf({
+                                  kind: "exam-library",
+                                  item: {
+                                    id: item.id,
+                                    filename: item.title,
+                                    file_url: item.file_url,
+                                    topic_name: `${item.subject} • ${item.cycle} • ${item.level} • ${item.year}`,
+                                    cycle: item.cycle,
+                                    subject: item.subject,
+                                    level: item.level,
+                                    year: item.year,
+                                  },
+                                });
+                                setShowImportModal(false);
+                                stabilizeBoardGeometryIfNeeded();
+                                setShowPdfPanel(true);
+                              }}
+                            >
+                              <div className="text-sm font-semibold text-slate-800">
+                                {formatKindLabel("exam-library")} • {item.subject}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-600 truncate">{item.title}</div>
+                              <div className="mt-1 text-[11px] text-slate-500">
+                                {item.cycle} • {item.level} • {item.year}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
