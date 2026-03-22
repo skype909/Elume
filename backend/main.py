@@ -1376,6 +1376,9 @@ def ensure_columns():
         if "class_pin" not in col_names:
             conn.execute(text("ALTER TABLE classes ADD COLUMN class_pin TEXT"))
             conn.commit()
+        if "color" not in col_names:
+            conn.execute(text("ALTER TABLE classes ADD COLUMN color TEXT"))
+            conn.commit()
 
         conn.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS ix_classes_class_code ON classes (class_code)")
@@ -3091,6 +3094,7 @@ def create_class(
         owner_user_id=user.id,
         name=new_class.name,
         subject=new_class.subject,
+        color=(new_class.color or "").strip() or None,
         class_code=_rand_class_code(db),
         class_pin=_rand_class_pin(),
     )
@@ -3358,6 +3362,9 @@ def update_class(
 
     if "subject" in payload and isinstance(payload["subject"], str):
         cls.subject = payload["subject"].strip() or cls.subject
+
+    if "color" in payload and isinstance(payload["color"], str):
+        cls.color = payload["color"].strip() or None
 
     db.commit()
     db.refresh(cls)

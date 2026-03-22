@@ -76,6 +76,7 @@ class ClassModel(Base):
 
     name = Column(String, nullable=False)
     subject = Column(String, nullable=False)
+    color = Column(String, nullable=True)
     class_code = Column(String, unique=True, index=True, nullable=True)
     class_pin = Column(String, nullable=True)
 

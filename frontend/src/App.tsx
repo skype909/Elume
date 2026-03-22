@@ -42,16 +42,18 @@ type ClassItem = {
   id: number;
   name: string;
   subject: string;
+  color?: string | null;
 };
 
 const API_BASE = "/api";
 
-// local-only metadata (color + order)
+// local-only metadata (order only; older payloads may still include color during migration)
 type ClassMeta = {
-  color: string;
   order: number;
+  color?: string;
 };
 type MetaStore = Record<string, ClassMeta>;
+type LegacyColorStore = Record<string, string>;
 
 type DayKey = "Mon" | "Tue" | "Wed" | "Thu" | "Fri";
 type SlotKind = "period" | "break" | "lunch";
@@ -132,19 +134,22 @@ function loadTeacherTimetableLocal(): StoredAdminState | null {
 
 // 12 bright classroom colours
 const COLOURS: { name: string; bg: string; ring: string }[] = [
-  { name: "Black", bg: "bg-black", ring: "ring-slate-300" },
-  { name: "Dark Green", bg: "bg-green-800", ring: "ring-green-300" },
-  { name: "Navy", bg: "bg-blue-900", ring: "ring-blue-300" },
-  { name: "Maroon", bg: "bg-rose-800", ring: "ring-rose-300" },
-  { name: "Red", bg: "bg-red-500", ring: "ring-red-200" },
-  { name: "Gold", bg: "bg-yellow-400", ring: "ring-yellow-200" },
-  { name: "Lime", bg: "bg-lime-400", ring: "ring-lime-200" },
-  { name: "Deep Sky", bg: "bg-sky-400", ring: "ring-sky-200" },
+  { name: "Emerald", bg: "bg-emerald-500", ring: "ring-emerald-200" },
+  { name: "Teal", bg: "bg-teal-500", ring: "ring-teal-200" },
+  { name: "Cyan", bg: "bg-cyan-500", ring: "ring-cyan-200" },
+  { name: "Sky", bg: "bg-sky-500", ring: "ring-sky-200" },
+  { name: "Blue", bg: "bg-blue-500", ring: "ring-blue-200" },
+  { name: "Indigo", bg: "bg-indigo-500", ring: "ring-indigo-200" },
+  { name: "Violet", bg: "bg-violet-500", ring: "ring-violet-200" },
   { name: "Fuchsia", bg: "bg-fuchsia-500", ring: "ring-fuchsia-200" },
-  { name: "Dark Orange", bg: "bg-orange-700", ring: "ring-orange-300" },
+  { name: "Rose", bg: "bg-rose-500", ring: "ring-rose-200" },
+  { name: "Red", bg: "bg-red-500", ring: "ring-red-200" },
+  { name: "Orange", bg: "bg-orange-500", ring: "ring-orange-200" },
+  { name: "Amber", bg: "bg-amber-400", ring: "ring-amber-200" },
 ];
 
 const DEFAULT_BG = COLOURS[0]?.bg ?? "bg-emerald-500";
+const COLOUR_BG_SET = new Set(COLOURS.map((c) => c.bg));
 
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
@@ -200,20 +205,86 @@ function metaKeyForUser() {
 }
 
 
-function loadMeta(): MetaStore {
+function isKnownClassColour(value: string | null | undefined): value is string {
+  return typeof value === "string" && COLOUR_BG_SET.has(value);
+}
+
+function loadMeta(): { meta: MetaStore; legacyColors: LegacyColorStore } {
   try {
     const raw = localStorage.getItem(metaKeyForUser());
-    if (!raw) return {};
+    if (!raw) return { meta: {}, legacyColors: {} };
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as MetaStore;
+    if (!parsed || typeof parsed !== "object") return { meta: {}, legacyColors: {} };
+
+    const meta: MetaStore = {};
+    const legacyColors: LegacyColorStore = {};
+
+    Object.entries(parsed as Record<string, any>).forEach(([key, value]) => {
+      if (!value || typeof value !== "object") return;
+
+      if (typeof value.order === "number" && Number.isFinite(value.order)) {
+        meta[key] = { order: Math.trunc(value.order) };
+      }
+
+      if (isKnownClassColour(value.color)) {
+        legacyColors[key] = value.color;
+      }
+    });
+
+    return { meta, legacyColors };
   } catch {
-    return {};
+    return { meta: {}, legacyColors: {} };
   }
 }
 
 function saveMeta(meta: MetaStore) {
-  localStorage.setItem(metaKeyForUser(), JSON.stringify(meta));
+  const orderOnly = Object.fromEntries(
+    Object.entries(meta)
+      .filter(([, value]) => typeof value?.order === "number" && Number.isFinite(value.order))
+      .map(([key, value]) => [key, { order: Math.trunc(value.order) }])
+  );
+  localStorage.setItem(metaKeyForUser(), JSON.stringify(orderOnly));
+}
+
+function normalizeClassOrderMeta(classes: ClassItem[], meta: MetaStore): { meta: MetaStore; changed: boolean } {
+  const currentIds = classes.map((c) => String(c.id));
+  const indexed = classes.map((cls, index) => {
+    const key = String(cls.id);
+    const existingOrder = meta[key]?.order;
+    return {
+      key,
+      index,
+      order: typeof existingOrder === "number" && Number.isFinite(existingOrder) ? existingOrder : null,
+    };
+  });
+
+  const ordered = [
+    ...indexed
+      .filter((item) => item.order != null)
+      .sort((a, b) => (a.order as number) - (b.order as number) || a.index - b.index || a.key.localeCompare(b.key)),
+    ...indexed.filter((item) => item.order == null).sort((a, b) => a.index - b.index || a.key.localeCompare(b.key)),
+  ];
+
+  const nextMeta: MetaStore = {};
+  let changed = Object.keys(meta).some((key) => !currentIds.includes(key));
+
+  ordered.forEach((item, index) => {
+    nextMeta[item.key] = { order: index };
+    if (meta[item.key]?.order !== index) {
+      changed = true;
+    }
+  });
+
+  return { meta: changed ? nextMeta : meta, changed };
+}
+
+function resolveClassTileColour(cls: ClassItem, legacyColors: LegacyColorStore, meta?: MetaStore) {
+  if (isKnownClassColour(cls.color)) return cls.color;
+
+  const legacyColor = legacyColors[String(cls.id)] ?? meta?.[String(cls.id)]?.color;
+  if (isKnownClassColour(legacyColor)) return legacyColor;
+
+  return COLOURS[cls.id % COLOURS.length]?.bg ?? DEFAULT_BG;
 }
 
 
@@ -305,6 +376,11 @@ function levelOptionsForStream(s: Stream, y: YearOption): LevelOption[] {
 }
 
 function Dashboard() {
+  const loadedMetaRef = useRef<{ meta: MetaStore; legacyColors: LegacyColorStore } | null>(null);
+  if (!loadedMetaRef.current) {
+    loadedMetaRef.current = loadMeta();
+  }
+
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -312,8 +388,10 @@ function Dashboard() {
 
   const navigate = useNavigate();
 
-  // layout metadata (color + order)
-  const [meta, setMeta] = useState<MetaStore>(() => loadMeta());
+  // layout metadata (order only; legacy local colours migrate to backend when needed)
+  const [meta, setMeta] = useState<MetaStore>(() => loadedMetaRef.current?.meta ?? {});
+  const legacyColourRef = useRef<LegacyColorStore>(loadedMetaRef.current?.legacyColors ?? {});
+  const migratedColourIdsRef = useRef<Set<number>>(new Set());
   const dragIdRef = useRef<number | null>(null);
 
   // header clock
@@ -402,6 +480,64 @@ function Dashboard() {
       window.removeEventListener("focus", onFocus);
     };
   }, []);
+
+  useEffect(() => {
+    if (classes.length === 0) return;
+
+    setMeta((prev) => {
+      const normalized = normalizeClassOrderMeta(classes, prev);
+      if (!normalized.changed) return prev;
+      saveMeta(normalized.meta);
+      return normalized.meta;
+    });
+  }, [classes]);
+
+  useEffect(() => {
+    const pending = classes.filter((cls) => {
+      if (isKnownClassColour(cls.color)) return false;
+      const legacyColor = legacyColourRef.current[String(cls.id)];
+      return isKnownClassColour(legacyColor) && !migratedColourIdsRef.current.has(cls.id);
+    });
+
+    if (pending.length === 0) return;
+
+    let cancelled = false;
+
+    (async () => {
+      for (const cls of pending) {
+        const legacyColor = legacyColourRef.current[String(cls.id)];
+        if (!isKnownClassColour(legacyColor)) continue;
+
+        migratedColourIdsRef.current.add(cls.id);
+
+        try {
+          const updated = (await apiFetch(`/classes/${cls.id}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              name: cls.name,
+              subject: cls.subject,
+              color: legacyColor,
+            }),
+          })) as ClassItem;
+
+          if (cancelled) return;
+
+          setClasses((prev) =>
+            prev.map((item) =>
+              item.id === cls.id ? { ...item, ...updated, color: updated?.color ?? legacyColor } : item
+            )
+          );
+          delete legacyColourRef.current[String(cls.id)];
+        } catch {
+          // Keep the local fallback in place for this session.
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [classes]);
 
   const sortedClasses = useMemo(() => {
     const copy = [...classes];
@@ -579,9 +715,8 @@ function Dashboard() {
     const hasDuty = !!entry?.dutyNote?.trim();
 
     if (hasClass) {
-      const bg = entry?.classId != null
-        ? meta[String(entry.classId)]?.color ?? COLOURS[entry.classId % COLOURS.length]?.bg ?? DEFAULT_BG
-        : DEFAULT_BG;
+      const cls = entry?.classId != null ? classes.find((item) => item.id === entry.classId) : undefined;
+      const bg = cls ? resolveClassTileColour(cls, legacyColourRef.current, meta) : DEFAULT_BG;
       return {
         tile: `border-black/70 ${bg} ${textClassForBg(bg)} shadow-[0_4px_0_rgba(15,23,42,0.18)]`,
         caption: textClassForBg(bg) === "text-white" ? "text-white/85" : "text-slate-700",
@@ -813,14 +948,14 @@ function Dashboard() {
     if (dragId === overId) return;
 
     setMeta((prev) => {
-      const next = { ...prev };
+      const next = { ...normalizeClassOrderMeta(classes, prev).meta };
       const aKey = String(dragId);
       const bKey = String(overId);
       const ao = next[aKey]?.order ?? 0;
       const bo = next[bKey]?.order ?? 0;
 
-      next[aKey] = { ...(next[aKey] ?? { color: COLOURS[0].bg, order: ao }), order: bo };
-      next[bKey] = { ...(next[bKey] ?? { color: COLOURS[1].bg, order: bo }), order: ao };
+      next[aKey] = { order: bo };
+      next[bKey] = { order: ao };
 
       saveMeta(next);
       return next;
@@ -866,7 +1001,7 @@ function Dashboard() {
     try {
       const created = (await apiFetch("/classes", {
         method: "POST",
-        body: JSON.stringify({ name, subject: subj }),
+        body: JSON.stringify({ name, subject: subj, color: pickedColour }),
       })) as ClassItem;
 
       console.log("CREATE /classes response:", created);
@@ -875,6 +1010,7 @@ function Dashboard() {
         ...created,
         name: (created as any)?.name ?? name,
         subject: (created as any)?.subject ?? subj,
+        color: isKnownClassColour((created as any)?.color) ? (created as any).color : pickedColour,
       };
 
       if (!createdFixed?.id) throw new Error("Create returned no id");
@@ -887,13 +1023,12 @@ function Dashboard() {
 
 
       setMeta((prev) => {
-        const next = { ...prev };
+        const next = { ...normalizeClassOrderMeta(arr, prev).meta };
         const minOrder = Object.values(next).reduce(
           (m, v) => Math.min(m, typeof v?.order === "number" ? v.order : 0),
           999999
         );
         next[String(createdFixed.id)] = {
-          color: pickedColour,
           order: Number.isFinite(minOrder) ? minOrder - 1 : 0,
         };
         saveMeta(next);
@@ -909,11 +1044,10 @@ function Dashboard() {
   }
 
   function openEdit(c: ClassItem) {
-    const m = meta[String(c.id)];
     setEditingId(c.id);
     setEditName(c.name || "");
     setEditSubject(c.subject || "");
-    setEditColour(m?.color ?? DEFAULT_BG);
+    setEditColour(resolveClassTileColour(c, legacyColourRef.current, meta));
     setEditOpen(true);
   }
 
@@ -935,22 +1069,17 @@ function Dashboard() {
       // 1) Save name/subject to backend
       const updated = (await apiFetch(`/classes/${editingId}`, {
         method: "PUT",
-        body: JSON.stringify({ name, subject: subj || "Subject" }),
+        body: JSON.stringify({ name, subject: subj || "Subject", color: editColour }),
       })) as ClassItem;
 
 
       // update local list
-      setClasses((prev) => prev.map((x) => (x.id === editingId ? updated : x)));
-
-      // 2) Save tile colour to local meta
-      setMeta((prev) => {
-        const next = { ...prev };
-        const key = String(editingId);
-        const existing = next[key] ?? { color: COLOURS[0].bg, order: 0 };
-        next[key] = { ...existing, color: editColour };
-        saveMeta(next);
-        return next;
-      });
+      setClasses((prev) =>
+        prev.map((x) =>
+          x.id === editingId ? { ...x, ...updated, color: updated?.color ?? editColour } : x
+        )
+      );
+      delete legacyColourRef.current[String(editingId)];
 
       setEditOpen(false);
       setEditingId(null);
@@ -1103,27 +1232,25 @@ function Dashboard() {
           </div>
 
           <div className="mt-3 text-base font-semibold text-slate-700 md:hidden">
-            Drag tiles to arrange. Colour + order save on this device.
+            Drag tiles to arrange.
           </div>
 
           {/* Desktop layout */}
-          <div className="hidden md:flex flex-wrap items-center gap-3 w-full justify-between">
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={openCreate}
-                className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-6 py-2.5 text-xl font-extrabold text-white shadow-md hover:bg-emerald-700 active:translate-y-[1px]"
-                style={{ textShadow: "0 2px 4px rgba(0,0,0,0.35)" }}
-              >
-                + Create Class
-              </button>
+          <div className="hidden w-full md:flex md:items-center md:gap-4">
+            <button
+              type="button"
+              onClick={openCreate}
+              className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-6 py-2.5 text-xl font-extrabold text-white shadow-md hover:bg-emerald-700 active:translate-y-[1px]"
+              style={{ textShadow: "0 2px 4px rgba(0,0,0,0.35)" }}
+            >
+              + Create Class
+            </button>
 
-              <div className="text-base font-semibold text-slate-700">
-                Drag tiles to arrange. Colour + order save on this device.
-              </div>
+            <div className="text-base font-semibold text-slate-700">
+              Drag tiles to arrange.
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="ml-auto flex min-w-0 items-center gap-4">
               <button
                 type="button"
                 onClick={openDesktopTimetableQuickView}
@@ -1136,7 +1263,7 @@ function Dashboard() {
                 type="button"
                 onClick={() => navigate("/planner")}
                 title="Open ELume Planner"
-                className="group min-w-0 flex-1 flex items-center gap-3 rounded-3xl border-2 border-emerald-200 bg-gradient-to-r from-white via-emerald-50 to-sky-50 px-4 py-2.5 shadow-[0_4px_14px_rgba(16,185,129,0.10)] hover:border-emerald-300 hover:from-emerald-50 hover:to-sky-100 active:translate-y-[1px] transition-all"
+                className="group flex min-w-0 w-full max-w-[420px] items-center gap-3 rounded-3xl border-2 border-emerald-200 bg-gradient-to-r from-white via-emerald-50 to-sky-50 px-4 py-2.5 shadow-[0_4px_14px_rgba(16,185,129,0.10)] hover:border-emerald-300 hover:from-emerald-50 hover:to-sky-100 active:translate-y-[1px] transition-all"
               >
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-emerald-200 bg-white shadow-sm">
                   <svg
@@ -1191,8 +1318,7 @@ function Dashboard() {
 
           {!loading &&
             sortedClasses.map((c) => {
-              const m = meta[String(c.id)];
-              const bg = m?.color ?? COLOURS[c.id % COLOURS.length].bg;
+              const bg = resolveClassTileColour(c, legacyColourRef.current, meta);
               const txt = textClassForBg(bg);
 
               return (
@@ -1547,7 +1673,7 @@ function Dashboard() {
 
                 <div className="md:col-span-2">
                   <div className="mb-2 text-sm font-bold text-slate-700">Tile colour</div>
-                  <div className="grid grid-cols-10 gap-2">
+                  <div className="grid grid-cols-6 gap-2 md:grid-cols-12">
                     {COLOURS.map((c) => {
                       const selected = pickedColour === c.bg;
                       return (
@@ -1618,7 +1744,7 @@ function Dashboard() {
 
                 <div className="md:col-span-2">
                   <div className="mb-2 text-sm font-bold text-slate-700">Tile colour</div>
-                  <div className="grid grid-cols-10 gap-2">
+                  <div className="grid grid-cols-6 gap-2 md:grid-cols-12">
                     {COLOURS.map((c) => {
                       const selected = editColour === c.bg;
                       return (
@@ -1646,7 +1772,7 @@ function Dashboard() {
               </div>
 
               <div className="mt-3 text-xs text-slate-500">
-                Note: name/subject save to the database (requires PUT endpoint). Colour saves locally.
+                Note: name, subject, and tile colour save to your account.
               </div>
             </div>
           </div>

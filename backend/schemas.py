@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 class ClassCreate(BaseModel):
     name: str
     subject: str
+    color: Optional[str] = None
 
 
 class PostCreate(BaseModel):
@@ -41,6 +42,7 @@ class ClassOut(BaseModel):
     id: int
     name: str
     subject: str
+    color: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

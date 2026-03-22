@@ -637,6 +637,28 @@ export default function TeacherPlanner() {
         );
     }
 
+    function WeekArrowButton({
+        direction,
+        onClick,
+        label,
+    }: {
+        direction: "left" | "right";
+        onClick: () => void;
+        label: string;
+    }) {
+        return (
+            <button
+                type="button"
+                onClick={onClick}
+                aria-label={label}
+                title={label}
+                className="grid h-24 w-24 shrink-0 place-items-center rounded-[22px] border border-white/85 bg-white/88 text-slate-900 shadow-[0_18px_42px_rgba(15,23,42,0.12)] backdrop-blur-xl transition hover:-translate-y-1.5 hover:bg-white hover:shadow-[0_26px_58px_rgba(15,23,42,0.18)]"
+            >
+                <span className="text-[3.25rem] font-black leading-none tracking-tight">{direction === "left" ? "←" : "→"}</span>
+            </button>
+        );
+    }
+
     function DayHeader({ d, isToday }: { d: Date; isToday?: boolean }) {
         const iso = toYMD(d);
         const evs = eventsByDay.get(iso) || [];
@@ -761,8 +783,25 @@ export default function TeacherPlanner() {
                         <WeekPreviewCard monday={prevWeekMonday} onClick={() => setWeekMonday(prevWeekMonday)} />
                     </div>
 
-                    <div className="rounded-[34px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="relative">
+                        <div className="absolute left-0 top-[20%] z-10 hidden -translate-x-[112%] lg:flex">
+                            <WeekArrowButton
+                                direction="left"
+                                label="Go to previous week"
+                                onClick={() => setWeekMonday(prevWeekMonday)}
+                            />
+                        </div>
+
+                        <div className="absolute right-0 top-[20%] z-10 hidden translate-x-[112%] justify-end lg:flex">
+                            <WeekArrowButton
+                                direction="right"
+                                label="Go to next week"
+                                onClick={() => setWeekMonday(nextWeekMonday)}
+                            />
+                        </div>
+
+                        <div className="rounded-[34px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+                            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                             <div>
                                 <div className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Planner layout</div>
                                 <div className="mt-1 text-base font-black tracking-tight text-slate-900">{settings.slotsPerDay} slots per day</div>
@@ -773,7 +812,7 @@ export default function TeacherPlanner() {
                             </div>
                         </div>
 
-                        <div className="grid gap-3 md:grid-cols-1 xl:grid-cols-5">
+                            <div className="grid gap-3 md:grid-cols-1 xl:grid-cols-5">
                             {weekDays.map((d, dayIndex) => {
                                 const isToday = toYMD(d) === todayISO;
                                 const dayKey = dayKeyFromIndex(dayIndex);
@@ -834,6 +873,7 @@ export default function TeacherPlanner() {
                                     </div>
                                 );
                             })}
+                            </div>
                         </div>
                     </div>
 
