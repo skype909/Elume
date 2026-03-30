@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# Database
+*.db
+
+# Uploads (optional - decide later)
+uploads/
+
+# OS
+.DS_Store
+Thumbs.db
+
+*.pyc.*
