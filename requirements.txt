@@ -21,3 +21,6 @@ bcrypt==3.2.2
 python-docx
 stripe==8.10.0
 psycopg2-binary==2.9.11
+python-dotenv
+email-validator
+pypdf
