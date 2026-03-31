@@ -5870,9 +5870,29 @@ def download_note(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     get_owned_class_or_404(note.class_id, db, user)
-    if not note.stored_path or not os.path.exists(note.stored_path):
+
+    resolved_path: Optional[Path] = None
+    if note.stored_path:
+        direct_path = Path(note.stored_path)
+        if direct_path.exists():
+            resolved_path = direct_path
+        else:
+            normalized = str(note.stored_path).replace("\\", "/")
+            marker = "uploads/"
+            marker_index = normalized.lower().find(marker)
+            if marker_index != -1:
+                rel_suffix = normalized[marker_index + len(marker):].lstrip("/")
+                fallback_path = (UPLOADS_DIR / Path(rel_suffix)).resolve()
+                try:
+                    fallback_path.relative_to(UPLOADS_DIR.resolve())
+                except ValueError:
+                    fallback_path = None
+                if fallback_path and fallback_path.exists():
+                    resolved_path = fallback_path
+
+    if not resolved_path:
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(path=note.stored_path, filename=note.filename)
+    return FileResponse(path=str(resolved_path), filename=note.filename)
 
 
 @app.get("/student/{token}/notes/{note_id}/download")
@@ -8098,10 +8118,29 @@ def generate_quiz(
         raise HTTPException(status_code=404, detail="Note not found")
     get_owned_class_or_404(note.class_id, db, user)
 
-    if not os.path.exists(note.stored_path):
+    resolved_path: Optional[Path] = None
+    if note.stored_path:
+        direct_path = Path(note.stored_path)
+        if direct_path.exists():
+            resolved_path = direct_path
+        else:
+            normalized = str(note.stored_path).replace("\\", "/")
+            marker = "uploads/"
+            marker_index = normalized.lower().find(marker)
+            if marker_index != -1:
+                rel_suffix = normalized[marker_index + len(marker):].lstrip("/")
+                fallback_path = (UPLOADS_DIR / Path(rel_suffix)).resolve()
+                try:
+                    fallback_path.relative_to(UPLOADS_DIR.resolve())
+                except ValueError:
+                    fallback_path = None
+                if fallback_path and fallback_path.exists():
+                    resolved_path = fallback_path
+
+    if not resolved_path:
         raise HTTPException(status_code=404, detail="PDF missing")
 
-    text = extract_pdf_text(note.stored_path)
+    text = extract_pdf_text(str(resolved_path))
 
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
