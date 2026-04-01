@@ -5,17 +5,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SQLITE_PATH = r"C:\Elume_backend_copy\classroom_backup.db"
+SQLITE_PATH = r"C:\Classroom Clone\backend\classroom.db"
 POSTGRES_URL = os.getenv("DATABASE_URL")
 
-# Connect to SQLite
 sqlite_conn = sqlite3.connect(SQLITE_PATH)
 sqlite_cursor = sqlite_conn.cursor()
 
-# Connect to Postgres
 pg_engine = create_engine(POSTGRES_URL)
 
-# Fetch all calendar events from SQLite
 sqlite_cursor.execute("""
 SELECT id, class_id, title, description,
        event_date, end_date, all_day,
@@ -27,16 +24,11 @@ rows = sqlite_cursor.fetchall()
 print(f"Found {len(rows)} calendar events in SQLite")
 
 with pg_engine.begin() as conn:
-    # Clear existing data
     conn.execute(text("DELETE FROM calendar_events"))
     print("Cleared existing PostgreSQL calendar events")
 
-    # Insert rows
     for row in rows:
         id_, class_id, title, description, event_date, end_date, all_day, event_type, created_at, owner_user_id = row
-
-        # Convert SQLite int → Postgres boolean
-        all_day_bool = bool(all_day)
 
         conn.execute(text("""
             INSERT INTO calendar_events (
@@ -56,7 +48,7 @@ with pg_engine.begin() as conn:
             "description": description,
             "event_date": event_date,
             "end_date": end_date,
-            "all_day": all_day_bool,
+            "all_day": bool(all_day),
             "event_type": event_type,
             "created_at": created_at,
             "owner_user_id": owner_user_id
@@ -64,7 +56,6 @@ with pg_engine.begin() as conn:
 
     print(f"Inserted {len(rows)} calendar events into PostgreSQL")
 
-    # Reset sequence
     conn.execute(text("""
         SELECT setval('calendar_events_id_seq', (SELECT MAX(id) FROM calendar_events));
     """))
