@@ -1,5 +1,7 @@
 // src/api.ts
 const TOKEN_KEY = "elume_token";
+type JsonBody = BodyInit | Record<string, unknown> | unknown[] | null;
+type ApiRequestInit = Omit<RequestInit, "body"> & { body?: JsonBody };
 
 export function getToken(): string | null {
   try {
@@ -25,7 +27,7 @@ export function clearToken() {
   }
 }
 
-export async function apiFetch(path: string, init: RequestInit = {}) {
+export async function apiFetch(path: string, init: ApiRequestInit = {}) {
   const token = getToken();
   const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
 
@@ -42,7 +44,12 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
       ? path
       : `/api${path.startsWith("/") ? "" : "/"}${path}`;
 
-  const res = await fetch(url, { ...init, headers });
+  const body: BodyInit | null | undefined =
+    init.body && !isFormData && typeof init.body !== "string"
+      ? JSON.stringify(init.body)
+      : (init.body as BodyInit | null | undefined);
+
+  const res = await fetch(url, { ...init, headers, body });
 
   const text = await res.text();
   let data: any = null;
@@ -63,20 +70,29 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   return data;
 }
 
-export async function apiFetchBlob(path: string, init: RequestInit = {}) {
+export async function apiFetchBlob(path: string, init: ApiRequestInit = {}) {
   const token = getToken();
+  const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
 
   const headers = new Headers(init.headers || {});
+  if (!headers.has("Content-Type") && init.body && !isFormData) {
+    headers.set("Content-Type", "application/json");
+  }
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
+
+  const body: BodyInit | null | undefined =
+    init.body && !isFormData && typeof init.body !== "string"
+      ? JSON.stringify(init.body)
+      : (init.body as BodyInit | null | undefined);
 
   const url =
     path.startsWith("/api")
       ? path
       : `/api${path.startsWith("/") ? "" : "/"}${path}`;
 
-  const res = await fetch(url, { ...init, headers });
+  const res = await fetch(url, { ...init, headers, body });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Request failed (${res.status})`);

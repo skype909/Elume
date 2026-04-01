@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
 import { toPng } from "html-to-image";
@@ -35,6 +35,14 @@ type TeacherProfile = {
   schoolName: string;
   schoolAddress: string;
   rollNumber: string;
+  schoolBranding?: SchoolBranding | null;
+};
+
+type SchoolBranding = {
+  logoDataUrl: string;
+  logoFilename: string;
+  logoMimeType: string;
+  updatedAt: string | null;
 };
 
 type TimetableDayConfig = {
@@ -212,6 +220,67 @@ function defaultEntry(): TimetableEntry {
   };
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Could not load image."));
+    img.src = src;
+  });
+}
+
+async function buildSchoolBrandingFromFile(file: File): Promise<SchoolBranding> {
+  const baseDataUrl = await fileToDataUrl(file);
+  const mimeType = (file.type || "").toLowerCase();
+
+  if (mimeType === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg")) {
+    return {
+      logoDataUrl: baseDataUrl,
+      logoFilename: file.name,
+      logoMimeType: mimeType || "image/svg+xml",
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  const img = await loadImage(baseDataUrl);
+  const maxDimension = 1400;
+  const scale = Math.min(1, maxDimension / Math.max(img.width || 1, img.height || 1));
+  const width = Math.max(1, Math.round((img.width || 1) * scale));
+  const height = Math.max(1, Math.round((img.height || 1) * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not prepare image.");
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.drawImage(img, 0, 0, width, height);
+
+  const preserveTransparency = mimeType === "image/png";
+  const outputMime = preserveTransparency ? "image/png" : "image/jpeg";
+  const outputDataUrl = preserveTransparency
+    ? canvas.toDataURL(outputMime)
+    : canvas.toDataURL(outputMime, 0.88);
+
+  return {
+    logoDataUrl: outputDataUrl,
+    logoFilename: file.name,
+    logoMimeType: outputMime,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 function defaultDayConfig(day: DayKey): TimetableDayConfig {
   if (day === "Fri") {
     return {
@@ -367,6 +436,7 @@ function makeDefaultState(): StoredAdminState {
     schoolName: "",
     schoolAddress: "",
     rollNumber: "",
+    schoolBranding: null,
   };
 
   const timetableConfig = defaultTimetableConfig();
@@ -497,6 +567,9 @@ export default function TeacherAdminPage() {
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [adminSectionOpen, setAdminSectionOpen] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
 
   const [setupDraft, setSetupDraft] = useState<TimetableConfig>(() =>
     structuredClone(defaultTimetableConfig())
@@ -667,6 +740,32 @@ export default function TeacherAdminPage() {
       ...state,
       profile: { ...state.profile, ...patch },
     });
+  }
+
+  function updateSchoolBranding(branding: SchoolBranding | null) {
+    updateProfile({ schoolBranding: branding });
+  }
+
+  async function handleSchoolLogoUpload(fileList: FileList | null) {
+    const file = fileList?.[0];
+    if (!file) return;
+
+    if (!/\.(png|jpe?g|webp|svg)$/i.test(file.name) && !/^image\/(png|jpeg|jpg|webp|svg\+xml)$/i.test(file.type || "")) {
+      setLogoError("Please choose a PNG, JPG, JPEG, WEBP, or SVG logo file.");
+      return;
+    }
+
+    setLogoBusy(true);
+    setLogoError(null);
+
+    try {
+      const branding = await buildSchoolBrandingFromFile(file);
+      updateSchoolBranding(branding);
+    } catch (e: any) {
+      setLogoError(e?.message || "Could not prepare the school logo.");
+    } finally {
+      setLogoBusy(false);
+    }
   }
 
   function updateAdminPin(value: string) {
@@ -1011,6 +1110,12 @@ export default function TeacherAdminPage() {
   }, [today]);
 
   const setupIncomplete = !state.timetableConfig.setupComplete;
+  const teacherDisplayShort = useMemo(() => {
+    const title = (state.profile.title || "").trim();
+    const surname = (state.profile.surname || "").trim();
+    return [title, surname].filter(Boolean).join(" ") || "Teacher";
+  }, [state.profile.surname, state.profile.title]);
+  const schoolLogo = state.profile.schoolBranding ?? null;
 
   return (
     <div className="min-h-screen bg-emerald-100 p-6 print:bg-white print:p-0">
@@ -1183,6 +1288,116 @@ export default function TeacherAdminPage() {
                 />
               </label>
             </div>
+            </div>
+          ) : null}
+
+          {adminSectionOpen ? (
+            <div className="mt-4 print-hide">
+              <div className="rounded-[28px] border border-white/70 bg-gradient-to-r from-emerald-50 via-cyan-50 to-sky-50 p-4 shadow-[0_16px_40px_rgba(15,23,42,0.06)]">
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml"
+                  className="hidden"
+                  onChange={(e) => {
+                    handleSchoolLogoUpload(e.target.files);
+                    e.currentTarget.value = "";
+                  }}
+                />
+
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div className="text-sm font-black uppercase tracking-[0.16em] text-emerald-700">
+                      School branding
+                    </div>
+                    <div className="mt-1 text-lg font-extrabold tracking-tight text-slate-900">
+                      Upload a school logo for Create Resources
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Create Resources can use no branding, the Elume logo, or your school logo. Uploading here makes the school option available later.
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={btnPrimary}
+                      onClick={() => logoInputRef.current?.click()}
+                      disabled={logoBusy}
+                    >
+                      {logoBusy ? "Preparing logo..." : "Upload school logo"}
+                    </button>
+                    {schoolLogo && (
+                      <button
+                        type="button"
+                        className={btn}
+                        onClick={() => {
+                          setLogoError(null);
+                          updateSchoolBranding(null);
+                        }}
+                      >
+                        Remove logo
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-[220px_1fr]">
+                  <div className="rounded-[24px] border border-slate-200 bg-white p-4">
+                    <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Logo preview
+                    </div>
+                    <div className="mt-3 flex h-36 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4">
+                      {schoolLogo?.logoDataUrl ? (
+                        <img
+                          src={schoolLogo.logoDataUrl}
+                          alt="School logo"
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      ) : (
+                        <div className="text-center text-xs text-slate-500">
+                          No school logo uploaded yet
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-[24px] border border-slate-200 bg-white p-4">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                          Footer identity
+                        </div>
+                        <div className="mt-2 text-sm font-semibold text-slate-900">{teacherDisplayShort}</div>
+                        <div className="mt-1 text-sm text-slate-600">{state.profile.schoolName || "School name not set yet"}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                          Logo status
+                        </div>
+                        <div className="mt-2 text-sm font-semibold text-slate-900">
+                          {schoolLogo ? "School logo ready" : "Elume logo only for now"}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          Large images are resized safely in the browser before saving.
+                        </div>
+                      </div>
+                    </div>
+
+                    {schoolLogo && (
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        {schoolLogo.logoFilename}
+                      </div>
+                    )}
+
+                    {logoError && (
+                      <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+                        {logoError}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           ) : null}
         </div>
@@ -2149,4 +2364,3 @@ function DayCell({
     </div>
   );
 }
-

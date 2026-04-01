@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import base64
 import json, os, uuid
 import hashlib
 import re
 import shutil
 import random
 import string
+import struct
+import textwrap
 import zipfile
+import zlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, List, Optional
@@ -511,6 +515,476 @@ class ExportDocxRequest(BaseModel):
     meta: dict | None = None  # optional: scope/level/template/date etc.
 
 
+def _pdf_escape(text: str) -> str:
+    safe = (text or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    return safe.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _pdf_wrap(text: str, width: int) -> list[str]:
+    clean = " ".join((text or "").split())
+    if not clean:
+        return [""]
+    return textwrap.wrap(clean, width=width) or [clean]
+
+
+LESSON_PLAN_SECTION_ORDER = [
+    "Learning Overview",
+    "Learning Intentions",
+    "Success Criteria",
+    "Lesson Flow",
+    "Activity and Application",
+    "Plenary and Closure",
+    "Resources",
+    "Differentiation",
+    "Assessment",
+    "Suggested Homework",
+]
+
+LESSON_PLAN_SECTION_DISPLAY = {
+    "Learning Overview": "Learning Overview",
+    "Learning Intentions": "Learning Intentions",
+    "Success Criteria": "Success Criteria",
+    "Lesson Flow": "Lesson Flow",
+    "Activity and Application": "Activity and Application (20-25 mins)",
+    "Plenary and Closure": "Plenary and Closure (5 mins)",
+    "Resources": "Resources",
+    "Differentiation": "Differentiation",
+    "Assessment": "Assessment",
+    "Suggested Homework": "Suggested Homework",
+}
+
+LESSON_PLAN_SUBHEADING_DISPLAY = {
+    "starter": ("Lesson Flow", "Starter (5-10 mins)"),
+    "teaching / development": ("Lesson Flow", "Teaching and Development (15-20 mins)"),
+    "teaching and development": ("Lesson Flow", "Teaching and Development (15-20 mins)"),
+    "development": ("Lesson Flow", "Teaching and Development (15-20 mins)"),
+    "activity / application": ("Activity and Application", "Activity and Application (20-25 mins)"),
+    "activity and application": ("Activity and Application", "Activity and Application (20-25 mins)"),
+    "application": ("Activity and Application", "Activity and Application (20-25 mins)"),
+    "plenary / closure": ("Plenary and Closure", "Plenary and Closure (5 mins)"),
+    "plenary and closure": ("Plenary and Closure", "Plenary and Closure (5 mins)"),
+    "closure": ("Plenary and Closure", "Plenary and Closure (5 mins)"),
+}
+
+
+def _strip_export_preamble(content: str) -> str:
+    text = (content or "").replace("\r\n", "\n").strip()
+    if "\n---\n" in text:
+        return text.split("\n---\n", 1)[1].strip()
+    lines = text.split("\n")
+    filtered: list[str] = []
+    skipping = True
+    for raw in lines:
+        line = raw.strip()
+        if skipping and (
+            not line
+            or line.startswith("ELume")
+            or line.startswith("Type:")
+            or line.startswith("Scope:")
+            or line.startswith("Level:")
+            or line.startswith("Detail:")
+            or line.startswith("Save to:")
+            or line.startswith("Created:")
+        ):
+            continue
+        skipping = False
+        filtered.append(raw)
+    return "\n".join(filtered).strip()
+
+
+def _clean_heading_text(line: str) -> str:
+    text = (line or "").strip()
+    text = re.sub(r"^#{1,6}\s*", "", text)
+    text = re.sub(r"^\d+\.\s*", "", text)
+    return text.strip(" :")
+
+
+def _clean_lesson_plan_text(value: str) -> str:
+    text = (value or "").replace("\r", " ").replace("\t", " ").strip()
+    text = text.replace("â€¢", " ").replace("•", " ")
+    text = re.sub(r"^\s*[-*?]+\s*", "", text)
+    text = re.sub(r"^\s*\d+[\.\)]\s*", "", text)
+    text = re.sub(r"^\s*[a-zA-Z][\.\)]\s*", "", text)
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"__(.*?)__", r"\1", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" :-")
+
+
+def _clean_lesson_plan_title(value: str) -> str:
+    text = _clean_lesson_plan_text(_clean_heading_text(value or ""))
+    text = re.sub(r"^(lesson\s+plan)\s*[:\-|]\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^(lesson\s+plan)\s+[·•]\s*", "", text, flags=re.IGNORECASE)
+    return text or "Lesson Plan"
+
+
+def _normalise_lesson_plan_key(value: str) -> str:
+    text = _clean_lesson_plan_text(_clean_heading_text(value or "")).lower()
+    text = text.replace("&", "and")
+    text = text.replace(" / ", "/")
+    text = re.sub(r"\s*/\s*", " / ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _is_lesson_plan_bullet(raw: str) -> bool:
+    stripped = (raw or "").lstrip()
+    return bool(
+        stripped.startswith(("- ", "* ", "• ", "? "))
+        or re.match(r"^\d+[\.\)]\s+", stripped)
+        or re.match(r"^[a-zA-Z][\.\)]\s+", stripped)
+    )
+
+
+def _lesson_plan_scope_parts(scope_label: str) -> tuple[str, str]:
+    parts = [part.strip() for part in re.split(r"\s*[•|]\s*", scope_label or "") if part.strip()]
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    label = (scope_label or "").strip()
+    return label, ""
+
+
+def _lesson_plan_duration_from_text(value: str) -> str:
+    text = _clean_lesson_plan_text(value)
+    if not text:
+        return ""
+    if re.search(r"\b(min|mins|minute|minutes|hour|hours|class|classes|lesson|lessons)\b", text, re.IGNORECASE):
+        return text
+    return ""
+
+
+def _normalise_section_name(name: str) -> str:
+    key = _normalise_lesson_plan_key(name)
+    mapping = {
+        "lesson title, class, duration, topic": "__meta__",
+        "lesson title class duration topic": "__meta__",
+        "lesson title": "__meta__",
+        "learning overview": "Learning Overview",
+        "overview": "Learning Overview",
+        "topic": "Learning Overview",
+        "prior knowledge": "Learning Overview",
+        "learning intentions": "Learning Intentions",
+        "learning intention": "Learning Intentions",
+        "learning outcomes": "Learning Intentions",
+        "learning outcome": "Learning Intentions",
+        "success criteria": "Success Criteria",
+        "success criterion": "Success Criteria",
+        "lesson flow": "Lesson Flow",
+        "activity and application": "Activity and Application",
+        "activity / application": "Activity and Application",
+        "plenary and closure": "Plenary and Closure",
+        "plenary / closure": "Plenary and Closure",
+        "resources": "Resources",
+        "differentiation": "Differentiation",
+        "assessment": "Assessment",
+        "homework": "Suggested Homework",
+        "suggested homework": "Suggested Homework",
+        "footer metadata": "__ignore__",
+        "manual notes supplied": "__ignore__",
+    }
+    return mapping.get(key, "")
+
+
+def _normalise_lesson_plan_subheading(name: str) -> tuple[str, str] | None:
+    return LESSON_PLAN_SUBHEADING_DISPLAY.get(_normalise_lesson_plan_key(name))
+
+
+def _append_lesson_plan_item(
+    sections: dict[str, list[tuple[str, str]]],
+    section_name: str,
+    item_kind: str,
+    item_text: str,
+) -> None:
+    clean_text = _clean_lesson_plan_text(item_text)
+    if not clean_text or section_name not in sections:
+        return
+    target = sections[section_name]
+    if target and target[-1] == (item_kind, clean_text):
+        return
+    if item_kind == "subheading" and any(kind == "subheading" and text == clean_text for kind, text in target):
+        return
+    target.append((item_kind, clean_text))
+
+
+def _lesson_plan_meta_line(meta: dict[str, str]) -> str:
+    parts = []
+    if meta.get("Class"):
+        parts.append(f"Class: {meta['Class']}")
+    if meta.get("Level"):
+        parts.append(f"Level: {meta['Level']}")
+    if meta.get("Duration"):
+        parts.append(f"Duration: {meta['Duration']}")
+    return " | ".join(parts)
+
+
+def _lesson_plan_footer_label(scope_label: str) -> str:
+    class_label, subject_label = _lesson_plan_scope_parts(scope_label)
+    parts = [part for part in [class_label, subject_label] if part]
+    return " | ".join(parts)
+
+
+def _decode_data_url_bytes(data_url: str) -> bytes | None:
+    raw = (data_url or "").strip()
+    if not raw.startswith("data:") or "," not in raw:
+        return None
+    header, payload = raw.split(",", 1)
+    try:
+        if ";base64" in header:
+            return base64.b64decode(payload)
+    except Exception:
+        return None
+    return None
+
+
+def _paeth_predictor(a: int, b: int, c: int) -> int:
+    p = a + b - c
+    pa = abs(p - a)
+    pb = abs(p - b)
+    pc = abs(p - c)
+    if pa <= pb and pa <= pc:
+        return a
+    if pb <= pc:
+        return b
+    return c
+
+
+def _load_footer_logo_bytes(branding_choice: str, meta: dict | None = None) -> bytes | None:
+    meta = meta or {}
+    if branding_choice == "school":
+        return _decode_data_url_bytes(str(meta.get("schoolLogoDataUrl") or ""))
+    if branding_choice != "elume":
+        return None
+
+    current_logo_path = BASE_DIR.parent / "frontend" / "src" / "assets" / "ELogo2.png"
+    try:
+        if current_logo_path.exists():
+            return current_logo_path.read_bytes()
+    except Exception:
+        return None
+    return None
+
+
+def _prepare_pdf_png_image(data: bytes | None) -> dict[str, Any] | None:
+    if not data:
+        return None
+    signature = b"\x89PNG\r\n\x1a\n"
+    if not data.startswith(signature):
+        return None
+
+    offset = len(signature)
+    width = height = bit_depth = color_type = None
+    idat_parts: list[bytes] = []
+
+    while offset + 8 <= len(data):
+        length = struct.unpack(">I", data[offset:offset + 4])[0]
+        chunk_type = data[offset + 4:offset + 8]
+        chunk_start = offset + 8
+        chunk_end = chunk_start + length
+        chunk_data = data[chunk_start:chunk_end]
+        offset = chunk_end + 4
+
+        if chunk_type == b"IHDR" and len(chunk_data) >= 13:
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk_data[:10])
+        elif chunk_type == b"IDAT":
+            idat_parts.append(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+
+    if not width or not height or bit_depth != 8 or color_type not in {2, 6} or not idat_parts:
+        return None
+
+    try:
+        decompressed = zlib.decompress(b"".join(idat_parts))
+    except Exception:
+        return None
+
+    bytes_per_pixel = 3 if color_type == 2 else 4
+    stride = width * bytes_per_pixel
+    expected = height * (stride + 1)
+    if len(decompressed) < expected:
+        return None
+
+    rgb = bytearray()
+    alpha = bytearray() if color_type == 6 else None
+    prev_row = bytearray(stride)
+    pos = 0
+
+    for _ in range(height):
+        filter_type = decompressed[pos]
+        pos += 1
+        row = bytearray(decompressed[pos:pos + stride])
+        pos += stride
+        recon = bytearray(stride)
+
+        for i in range(stride):
+            left = recon[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+            up = prev_row[i]
+            up_left = prev_row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+            value = row[i]
+            if filter_type == 0:
+                recon[i] = value
+            elif filter_type == 1:
+                recon[i] = (value + left) & 255
+            elif filter_type == 2:
+                recon[i] = (value + up) & 255
+            elif filter_type == 3:
+                recon[i] = (value + ((left + up) // 2)) & 255
+            elif filter_type == 4:
+                recon[i] = (value + _paeth_predictor(left, up, up_left)) & 255
+            else:
+                return None
+
+        prev_row = recon
+        if color_type == 2:
+            rgb.extend(recon)
+        else:
+            for i in range(0, stride, 4):
+                rgb.extend(recon[i:i + 3])
+                alpha.append(recon[i + 3])
+
+    return {
+        "width": width,
+        "height": height,
+        "rgb": zlib.compress(bytes(rgb)),
+        "alpha": zlib.compress(bytes(alpha)) if alpha is not None else None,
+    }
+
+
+def _is_lesson_plan_pdf(title: str, meta: dict | None = None) -> bool:
+    meta = meta or {}
+    output_kind = str(meta.get("outputKind") or meta.get("kind") or "").strip().lower()
+    if output_kind == "lesson_plan":
+        return True
+    return "lesson plan" in (title or "").strip().lower()
+
+
+def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None = None) -> dict:
+    body = _strip_export_preamble(content)
+    meta = meta or {}
+    sections: dict[str, list[tuple[str, str]]] = {name: [] for name in LESSON_PLAN_SECTION_ORDER}
+    top_meta = {
+        "Lesson Title": _clean_lesson_plan_title(title or ""),
+        "Class": "",
+        "Level": "",
+        "Duration": "",
+        "Topic": "",
+    }
+
+    current_section = "Learning Overview"
+    section_zero = False
+
+    for raw in body.split("\n"):
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped == "---":
+            continue
+
+        if stripped.lower().startswith("lesson plan:"):
+            candidate_title = _clean_lesson_plan_title(stripped)
+            if candidate_title:
+                top_meta["Lesson Title"] = candidate_title
+            continue
+
+        heading = _clean_heading_text(stripped)
+        normalised = _normalise_section_name(heading)
+        if normalised == "__meta__":
+            section_zero = True
+            current_section = ""
+            continue
+        if normalised == "__ignore__":
+            break
+        if normalised:
+            current_section = normalised
+            section_zero = False
+            continue
+
+        subheading = _normalise_lesson_plan_subheading(heading)
+        if subheading and (stripped.startswith("### ") or current_section in {"Lesson Flow", "Activity and Application", "Plenary and Closure"}):
+            current_section = subheading[0]
+            section_zero = False
+            if current_section == "Lesson Flow":
+                _append_lesson_plan_item(sections, current_section, "subheading", subheading[1])
+            continue
+
+        if ":" in stripped:
+            key, value = stripped.lstrip("- ").split(":", 1)
+            key_clean = _normalise_lesson_plan_key(key)
+            value_clean = _clean_lesson_plan_text(value)
+            if key_clean in {"homework", "suggested homework"}:
+                current_section = "Suggested Homework"
+                section_zero = False
+                if value_clean:
+                    _append_lesson_plan_item(sections, current_section, "bullet", value_clean)
+                continue
+            if key_clean in {"support", "extension"}:
+                current_section = "Differentiation"
+                section_zero = False
+                if value_clean:
+                    _append_lesson_plan_item(sections, current_section, "bullet", f"{key.strip().title()}: {value_clean}")
+                continue
+            if key_clean in {"lesson title", "class", "duration", "topic", "level"} and value_clean:
+                target_key = {
+                    "lesson title": "Lesson Title",
+                    "class": "Class",
+                    "duration": "Duration",
+                    "topic": "Topic",
+                    "level": "Level",
+                }[key_clean]
+                top_meta[target_key] = value_clean
+                continue
+
+        if section_zero:
+            continue
+
+        clean_text = _clean_lesson_plan_text(stripped)
+        if not clean_text:
+            continue
+
+        if clean_text.lower() in {
+            top_meta["Lesson Title"].lower(),
+            f"lesson plan: {top_meta['Lesson Title'].lower()}",
+            f"topic: {top_meta['Topic'].lower()}" if top_meta["Topic"] else "",
+        }:
+            continue
+
+        target_section = current_section or "Learning Overview"
+        item_kind = "bullet" if _is_lesson_plan_bullet(stripped) else "p"
+        _append_lesson_plan_item(sections, target_section, item_kind, clean_text)
+
+    class_from_scope, _ = _lesson_plan_scope_parts(str(meta.get("scopeLabel") or ""))
+    if not top_meta["Class"] and class_from_scope:
+        top_meta["Class"] = class_from_scope
+    if not top_meta["Level"]:
+        top_meta["Level"] = _clean_lesson_plan_text(str(meta.get("level") or ""))
+    if not top_meta["Duration"]:
+        top_meta["Duration"] = _lesson_plan_duration_from_text(str(meta.get("detail") or ""))
+    if not top_meta["Topic"]:
+        top_meta["Topic"] = top_meta["Lesson Title"]
+
+    overview_items: list[tuple[str, str]] = []
+    if top_meta["Topic"]:
+        overview_items.append(("bullet", f"Topic: {top_meta['Topic']}"))
+    for kind, text in sections["Learning Overview"]:
+        if text.lower() != f"topic: {top_meta['Topic']}".lower():
+            overview_items.append((kind, text))
+    sections["Learning Overview"] = overview_items
+
+    if not sections["Lesson Flow"]:
+        _append_lesson_plan_item(sections, "Lesson Flow", "subheading", "Starter (5-10 mins)")
+        _append_lesson_plan_item(sections, "Lesson Flow", "bullet", "Open with a short retrieval, discussion, or settling task linked to prior learning.")
+        _append_lesson_plan_item(sections, "Lesson Flow", "subheading", "Teaching and Development (15-20 mins)")
+        _append_lesson_plan_item(sections, "Lesson Flow", "bullet", "Model and explain the core learning clearly using worked examples, visuals, or teacher questioning.")
+
+    if not sections["Activity and Application"]:
+        _append_lesson_plan_item(sections, "Activity and Application", "bullet", "Students apply the new learning through a focused task with clear teacher circulation and support.")
+
+    if not sections["Plenary and Closure"]:
+        _append_lesson_plan_item(sections, "Plenary and Closure", "bullet", "Finish with a quick review, exit prompt, or check for understanding that captures the main learning.")
+
+    ordered_sections = [(name, sections[name]) for name in LESSON_PLAN_SECTION_ORDER if sections[name]]
+    return {"meta": top_meta, "sections": ordered_sections}
+
+
 def _docx_from_markdownish(title: str, content: str, teacher: str | None = None, meta: dict | None = None) -> bytes:
     """
     Very simple parser:
@@ -590,6 +1064,356 @@ def _docx_from_markdownish(title: str, content: str, teacher: str | None = None,
     return buf.getvalue()
 
 
+def _pdf_from_markdownish(title: str, content: str, teacher: str | None = None, meta: dict | None = None) -> bytes:
+    page_width = 595
+    page_height = 842
+    left = 56
+    right = 56
+    top = 54
+    bottom = 58
+
+    title = (title or "").strip() or "ELume Resource"
+    content = (content or "").replace("\r\n", "\n")
+    meta = meta or {}
+
+    teacher_short = str(meta.get("teacherDisplayNameShort") or "").strip() or teacher or ""
+    school_name = str(meta.get("schoolName") or "").strip()
+    branding_choice = str(meta.get("brandingChoice") or "").strip().lower()
+    scope_label = str(meta.get("scopeLabel") or "").strip()
+    level = str(meta.get("level") or "").strip()
+    detail = str(meta.get("detail") or "").strip()
+    created_at = str(meta.get("createdAt") or "").strip()
+    output_kind = str(meta.get("outputKind") or meta.get("kind") or "").strip()
+    school_logo_available = bool(meta.get("schoolLogoAvailable"))
+    lesson_plan_mode = _is_lesson_plan_pdf(title, meta)
+    footer_logo = _prepare_pdf_png_image(_load_footer_logo_bytes(branding_choice, meta))
+    footer_reserved_height = 74 if lesson_plan_mode else bottom
+    usable_width = page_width - left - right
+
+    pages: list[str] = []
+    ops: list[str] = []
+    page_number = 0
+    y = page_height - top
+
+    def add_text_line(
+        text_value: str,
+        x: float,
+        y_value: float,
+        font_size: int,
+        font_name: str = "F1",
+        color: tuple[float, float, float] = (0.12, 0.16, 0.22),
+    ) -> None:
+        safe = _pdf_escape(text_value)
+        r, g, b = color
+        ops.append("BT")
+        ops.append(f"{r:.3f} {g:.3f} {b:.3f} rg")
+        ops.append(f"/{font_name} {font_size} Tf")
+        ops.append(f"1 0 0 1 {x:.2f} {y_value:.2f} Tm")
+        ops.append(f"({safe}) Tj")
+        ops.append("ET")
+
+    def add_rule(y_value: float, color: tuple[float, float, float] = (0.84, 0.88, 0.92), width: float = 1.0) -> None:
+        r, g, b = color
+        ops.append(f"{r:.3f} {g:.3f} {b:.3f} RG")
+        ops.append(f"{width:.2f} w")
+        ops.append(f"{left} {y_value:.2f} m {page_width - right} {y_value:.2f} l S")
+
+    def fit_logo_to_box(
+        image: dict[str, Any] | None,
+        max_width: float,
+        max_height: float,
+    ) -> tuple[float, float]:
+        if not image:
+            return 0.0, 0.0
+        source_width = float(image["width"])
+        source_height = float(image["height"])
+        if source_width <= 0 or source_height <= 0:
+            return 0.0, 0.0
+        scale = min(max_width / source_width, max_height / source_height, 1.0)
+        return source_width * scale, source_height * scale
+
+    def trim_footer_text(text_value: str, max_chars: int) -> str:
+        clean = " ".join((text_value or "").split())
+        if len(clean) <= max_chars:
+            return clean
+        return clean[: max(0, max_chars - 1)].rstrip() + "…"
+
+    def draw_footer_logo(y_value: float, logo_right_x: float, max_width: float, max_height: float) -> None:
+        if not footer_logo:
+            return
+        logo_width, logo_height = fit_logo_to_box(footer_logo, max_width=max_width, max_height=max_height)
+        if logo_width <= 0 or logo_height <= 0:
+            return
+        logo_x = logo_right_x - logo_width
+        logo_y = y_value - (logo_height / 2.0)
+        ops.append("q")
+        ops.append(f"{logo_width:.2f} 0 0 {logo_height:.2f} {logo_x:.2f} {logo_y:.2f} cm")
+        ops.append("/Im1 Do")
+        ops.append("Q")
+
+    def add_bullet_line(
+        text_value: str,
+        indent: float = 12,
+        width_chars: int = 68,
+        font_size: int = 11,
+        line_height: float = 14,
+        color: tuple[float, float, float] = (0.14, 0.18, 0.24),
+        extra_after: float = 2.0,
+    ) -> None:
+        nonlocal y
+        wrapped = _pdf_wrap(text_value, width_chars)
+        ensure_room(line_height * len(wrapped) + extra_after)
+        first = True
+        for line in wrapped:
+            prefix = f"{chr(183)} " if first else "  "
+            add_text_line(f"{prefix}{line}", left + indent, y, font_size, color=color)
+            y -= line_height
+            first = False
+        y -= extra_after
+
+    def add_header(current_page: int) -> None:
+        nonlocal y
+        if lesson_plan_mode:
+            y = page_height - top
+            return
+        add_text_line(title, left, page_height - 34, 10, font_name="F2", color=(0.20, 0.25, 0.33))
+        if school_name:
+            add_text_line(school_name, page_width - right - 140, page_height - 34, 9, color=(0.38, 0.45, 0.55))
+        add_rule(page_height - 42, color=(0.84, 0.89, 0.94), width=0.8)
+        y = page_height - top
+
+    def finish_page() -> None:
+        nonlocal ops, y
+        footer_y = 34
+        rule_y = footer_y + (18 if lesson_plan_mode else 12)
+        add_rule(rule_y, color=(0.88, 0.91, 0.95), width=0.8)
+        if lesson_plan_mode:
+            footer_y = 28
+            footer_left = " | ".join([part for part in [teacher_short, school_name or _lesson_plan_footer_label(scope_label)] if part])
+            footer_left = trim_footer_text(footer_left, 42)
+            logo_area_width = 96.0 if footer_logo else 0.0
+            page_x = (page_width / 2) - 10
+            if footer_left:
+                add_text_line(footer_left, left, footer_y, 9, color=(0.42, 0.48, 0.56))
+            add_text_line(f"Page {page_number}", page_x, footer_y, 9, color=(0.42, 0.48, 0.56))
+            if footer_logo:
+                draw_footer_logo(footer_y + 2, page_width - right, max_width=logo_area_width, max_height=20.0)
+        else:
+            footer_left = " | ".join([part for part in [teacher_short, school_name] if part])
+            footer_left = trim_footer_text(footer_left, 48)
+            if footer_left:
+                add_text_line(footer_left, left, footer_y, 9, color=(0.42, 0.48, 0.56))
+            add_text_line(f"Page {page_number}", (page_width / 2) - 14, footer_y, 9, color=(0.42, 0.48, 0.56))
+            if footer_logo:
+                draw_footer_logo(footer_y, page_width - right, max_width=58.0, max_height=15.0)
+        pages.append("\n".join(ops))
+        ops = []
+        y = page_height - top
+
+    def start_page() -> None:
+        nonlocal page_number
+        page_number += 1
+        add_header(page_number)
+
+    def ensure_room(height_needed: float) -> None:
+        nonlocal y
+        if y - height_needed < footer_reserved_height + 22:
+            finish_page()
+            start_page()
+
+    def draw_wrapped(
+        text_value: str,
+        x: float,
+        font_size: int,
+        width_chars: int,
+        line_height: float,
+        font_name: str = "F1",
+        color: tuple[float, float, float] = (0.12, 0.16, 0.22),
+        extra_after: float = 0.0,
+    ) -> None:
+        nonlocal y
+        wrapped = _pdf_wrap(text_value, width_chars)
+        ensure_room(line_height * len(wrapped) + extra_after)
+        for line in wrapped:
+            add_text_line(line, x, y, font_size, font_name=font_name, color=color)
+            y -= line_height
+        y -= extra_after
+
+    start_page()
+
+    if lesson_plan_mode:
+        parsed = _parse_lesson_plan_pdf_content(title, content, meta=meta)
+        lesson_meta = parsed["meta"]
+        sections = parsed["sections"]
+        display_title = f"Lesson Plan: {lesson_meta.get('Lesson Title') or _clean_lesson_plan_title(title)}"
+        meta_line = _lesson_plan_meta_line(lesson_meta)
+
+        draw_wrapped(display_title, left, 22, 34, 24, font_name="F2", color=(0.08, 0.14, 0.22), extra_after=4)
+        if meta_line:
+            draw_wrapped(meta_line, left, 10, 78, 13, color=(0.38, 0.45, 0.55), extra_after=6)
+        add_rule(y, color=(0.83, 0.89, 0.95), width=1.0)
+        y -= 18
+
+        for section_name, items in sections:
+            ensure_room(34)
+            draw_wrapped(
+                LESSON_PLAN_SECTION_DISPLAY.get(section_name, section_name),
+                left,
+                15,
+                54,
+                18,
+                font_name="F2",
+                color=(0.10, 0.30, 0.37),
+                extra_after=3,
+            )
+            for item_kind, item_text in items:
+                if item_kind == "subheading":
+                    draw_wrapped(item_text, left, 12, 66, 15, font_name="F2", color=(0.17, 0.23, 0.31), extra_after=1)
+                    continue
+                if item_kind == "bullet":
+                    add_bullet_line(item_text, indent=12, width_chars=68, font_size=11, line_height=14, extra_after=2)
+                    continue
+                draw_wrapped(item_text, left, 11, 78, 14, color=(0.14, 0.18, 0.24), extra_after=3)
+            y -= 10
+    else:
+        body = _strip_export_preamble(content)
+        blocks: list[tuple[str, str]] = [("title", title)]
+        sub = [part for part in [scope_label, level, detail, created_at] if part]
+        if sub:
+            blocks.append(("sub", " • ".join(sub)))
+        blocks.append(("spacer", ""))
+
+        for raw in body.split("\n"):
+            line = raw.rstrip()
+            if not line.strip():
+                blocks.append(("spacer", ""))
+                continue
+            if line == "---":
+                blocks.append(("rule", ""))
+                continue
+            if line.startswith("### "):
+                blocks.append(("h3", _clean_heading_text(line)))
+                continue
+            if line.startswith("## "):
+                blocks.append(("h2", _clean_heading_text(line)))
+                continue
+            if line.startswith("# "):
+                blocks.append(("h1", _clean_heading_text(line)))
+                continue
+            if line.lstrip().startswith("- "):
+                blocks.append(("bullet", line.lstrip()[2:].strip()))
+                continue
+            blocks.append(("p", line))
+
+        for kind, value in blocks:
+            if kind == "spacer":
+                y -= 10
+                continue
+            if kind == "rule":
+                ensure_room(16)
+                add_rule(y, color=(0.86, 0.90, 0.94), width=0.9)
+                y -= 12
+                continue
+            if kind == "title":
+                draw_wrapped(value, left, 20, 40, 22, font_name="F2", color=(0.08, 0.14, 0.22), extra_after=5)
+                continue
+            if kind == "sub":
+                draw_wrapped(value, left, 10, 76, 13, color=(0.38, 0.45, 0.55), extra_after=4)
+                continue
+            if kind == "h1":
+                draw_wrapped(value, left, 17, 46, 20, font_name="F2", color=(0.10, 0.32, 0.38), extra_after=2)
+                continue
+            if kind == "h2":
+                draw_wrapped(value, left, 15, 54, 18, font_name="F2", color=(0.10, 0.32, 0.38), extra_after=1)
+                continue
+            if kind == "h3":
+                draw_wrapped(value, left, 12, 64, 15, font_name="F2", color=(0.17, 0.23, 0.31))
+                continue
+            if kind == "bullet":
+                add_bullet_line(value, indent=10, width_chars=70, font_size=11, line_height=14, extra_after=2)
+                continue
+            draw_wrapped(value, left, 11, 80, 14, color=(0.14, 0.18, 0.24), extra_after=1)
+
+    if ops or not pages:
+        finish_page()
+
+    objects: list[bytes] = []
+
+    def add_obj(data: bytes) -> int:
+        objects.append(data)
+        return len(objects)
+
+    font_regular = add_obj(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    font_bold = add_obj(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+    footer_logo_ref: int | None = None
+
+    if footer_logo:
+        alpha_ref: int | None = None
+        if footer_logo.get("alpha"):
+            alpha_stream = footer_logo["alpha"]
+            alpha_ref = add_obj(
+                (
+                    f"<< /Type /XObject /Subtype /Image /Width {footer_logo['width']} /Height {footer_logo['height']} "
+                    f"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length {len(alpha_stream)} >>\nstream\n"
+                ).encode("ascii")
+                + alpha_stream
+                + b"\nendstream"
+            )
+
+        rgb_stream = footer_logo["rgb"]
+        image_dict = (
+            f"<< /Type /XObject /Subtype /Image /Width {footer_logo['width']} /Height {footer_logo['height']} "
+            f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {len(rgb_stream)} "
+        )
+        if alpha_ref is not None:
+            image_dict += f"/SMask {alpha_ref} 0 R "
+        image_dict += ">>\nstream\n"
+        footer_logo_ref = add_obj(image_dict.encode("ascii") + rgb_stream + b"\nendstream")
+
+    page_ids: list[int] = []
+
+    for page_ops in pages:
+        stream = page_ops.encode("latin-1", errors="replace")
+        content_obj = add_obj(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+        xobject_part = f"/XObject << /Im1 {footer_logo_ref} 0 R >> " if footer_logo_ref is not None else ""
+        page_obj = add_obj(
+            (
+                f"<< /Type /Page /Parent PAGES_REF 0 R /MediaBox [0 0 {page_width} {page_height}] "
+                f"/Resources << /Font << /F1 {font_regular} 0 R /F2 {font_bold} 0 R >> {xobject_part}>> /Contents {content_obj} 0 R >>"
+            ).encode("ascii")
+        )
+        page_ids.append(page_obj)
+
+    kids = " ".join(f"{pid} 0 R" for pid in page_ids)
+    pages_obj_num = add_obj(f"<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>".encode("ascii"))
+
+    for pid in page_ids:
+        objects[pid - 1] = objects[pid - 1].replace(b"PAGES_REF", str(pages_obj_num).encode("ascii"))
+
+    catalog_obj = add_obj(f"<< /Type /Catalog /Pages {pages_obj_num} 0 R >>".encode("ascii"))
+
+    buf = BytesIO()
+    buf.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for idx, obj in enumerate(objects, start=1):
+        offsets.append(buf.tell())
+        buf.write(f"{idx} 0 obj\n".encode("ascii"))
+        buf.write(obj)
+        buf.write(b"\nendobj\n")
+    xref_pos = buf.tell()
+    buf.write(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    buf.write(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        buf.write(f"{offset:010d} 00000 n \n".encode("ascii"))
+    buf.write(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root {catalog_obj} 0 R >>\n"
+            f"startxref\n{xref_pos}\n%%EOF"
+        ).encode("ascii")
+    )
+    return buf.getvalue()
+
+
 @app.post("/exports/docx")
 def export_docx(payload: ExportDocxRequest):
     title = (payload.title or "").strip() or "ELume Resource"
@@ -606,6 +1430,26 @@ def export_docx(payload: ExportDocxRequest):
     return StreamingResponse(
         BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/exports/pdf")
+def export_pdf(payload: ExportDocxRequest):
+    title = (payload.title or "").strip() or "ELume Resource"
+    content = payload.content or ""
+    teacher = (payload.teacher or "").strip() or None
+
+    data = _pdf_from_markdownish(title, content, teacher=teacher, meta=payload.meta or {})
+
+    filename_safe = re.sub(r"[^a-zA-Z0-9_\- ]+", "", title).strip().replace(" ", "_")
+    if not filename_safe:
+        filename_safe = "ELume_Resource"
+    filename = f"{filename_safe}.pdf"
+
+    return StreamingResponse(
+        BytesIO(data),
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
@@ -7793,10 +8637,22 @@ def ai_parse_event(
 from typing import Any, Literal
 
 class AICreateResourcesSource(BaseModel):
-    id: str
-    title: str
+    id: str | None = None
+    title: str = ""
     pages: Any | None = None   # front-end sends array or null; keep flexible
-    text: str
+    text: str = ""
+
+
+class AICreateResourcesSaveTarget(BaseModel):
+    bucket: str | None = None
+    folder: str | None = None
+
+
+class AICreateResourcesManualFile(BaseModel):
+    id: str | None = None
+    filename: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
 
 class AICreateResourcesScope(BaseModel):
     mode: Literal["general", "single", "group"]
@@ -7806,17 +8662,123 @@ class AICreateResourcesScope(BaseModel):
 
 class AICreateResourcesRequest(BaseModel):
     kind: str                       # e.g. "lesson_plan", "scheme", "dept_plan", "worksheet", "ideas"
-    template: str                   # your template dropdown value
-    tone: str                       # e.g. "Professional", "Friendly" etc
-    level: str                      # e.g. "Junior Cycle"
+    template: str | None = None     # legacy payload
+    tone: str | None = None         # legacy payload
+    level: str | None = None
+    detail: str | None = None
     scope: AICreateResourcesScope
     prompt: str
     sources: list[AICreateResourcesSource] = []
+    manual_sources: list[AICreateResourcesSource] = []
+    manual_file_sources: list[AICreateResourcesManualFile] = []
+    save_target: AICreateResourcesSaveTarget | None = None
+    source_context: dict[str, Any] | None = None
+    brandingChoice: str | None = None
+    include_answer_key: bool | None = None
+    worksheet_options: dict[str, Any] | None = None
+    branding: dict[str, Any] | None = None
+    teacherDisplayNameShort: str | None = None
+    schoolName: str | None = None
+    outputKind: str | None = None
+    output_intent: str | None = None
+    audience: str | None = None
     timezone: str = "Europe/Dublin"
+
+    class Config:
+        extra = "allow"
 
 class AICreateResourcesResponse(BaseModel):
     title: str
     content: str
+
+
+def _ai_create_resources_template_for_kind(kind: str) -> str:
+    k = (kind or "").strip().lower()
+    if k == "ideas":
+        return "3 Ideas"
+    if k == "lesson_plan":
+        return "Lesson Plan"
+    if k == "worksheet":
+        return "Worksheet"
+    if k == "scheme":
+        return "Scheme of Work"
+    if k == "dept_plan":
+        return "Department Plan"
+    return "Resource"
+
+
+def _ai_create_resources_tone(kind: str, detail: str | None, tone: str | None) -> str:
+    if tone and tone.strip():
+        return tone.strip()
+    d = (detail or "").strip().lower()
+    k = (kind or "").strip().lower()
+    base = "Clear and teacher-friendly"
+    if k == "worksheet":
+        base = "Clear, student-facing, and printable"
+    elif k == "dept_plan":
+        base = "Professional and department-facing"
+    elif k == "scheme":
+        base = "Professional and sequenced"
+    elif k == "ideas":
+        base = "Quick, practical, and teacher-facing"
+    if d == "detailed":
+        return f"{base}; more detailed"
+    if d == "concise":
+        return f"{base}; concise"
+    return base
+
+
+def _ai_create_resources_include_answer_key(payload: AICreateResourcesRequest) -> bool:
+    if payload.include_answer_key is not None:
+        return bool(payload.include_answer_key)
+    if isinstance(payload.worksheet_options, dict):
+        if "include_answer_key" in payload.worksheet_options:
+            return bool(payload.worksheet_options.get("include_answer_key"))
+    return True
+
+
+def _ai_create_resources_source_bundle(payload: AICreateResourcesRequest) -> tuple[str, str]:
+    combined: list[AICreateResourcesSource] = []
+    if payload.sources:
+        combined.extend(payload.sources)
+    if payload.manual_sources:
+        combined.extend(payload.manual_sources)
+
+    chunks: list[str] = []
+    char_budget = 12000
+    used = 0
+
+    for idx, s in enumerate(combined[:24], start=1):
+        title = (s.title or "").strip() or f"Source {idx}"
+        text_value = (s.text or "").strip()
+        if not text_value:
+            continue
+        text_value = re.sub(r"\s+\n", "\n", text_value)
+        text_value = re.sub(r"\n{3,}", "\n\n", text_value)
+        text_value = text_value[:1800]
+        pages = f" (pages: {s.pages})" if s.pages else ""
+        chunk = f"---\nSOURCE: {title}{pages}\n{text_value}"
+        if used + len(chunk) > char_budget:
+            remaining = max(0, char_budget - used)
+            if remaining < 200:
+                break
+            chunk = chunk[:remaining]
+        chunks.append(chunk)
+        used += len(chunk)
+        if used >= char_budget:
+            break
+
+    file_notes = []
+    for f in payload.manual_file_sources[:12]:
+        filename = (f.filename or "").strip()
+        if filename:
+            file_notes.append(filename)
+    file_hint = ""
+    if file_notes:
+        file_hint = "Teacher also selected uploaded files for context: " + ", ".join(file_notes)
+
+    sources_txt = "\n".join(chunks)
+    return sources_txt, file_hint
 
 @app.post("/ai/create-resources", response_model=AICreateResourcesResponse)
 def ai_create_resources(
@@ -7844,22 +8806,11 @@ def ai_create_resources(
 
     client = OpenAI(api_key=api_key)
 
-    # Build a compact "allowed sources" bundle (ONLY what teacher ticked)
-    # Keep it short to avoid token blowups.
-    sources_txt = ""
-    if payload.sources:
-        chunks = []
-        for s in payload.sources[:20]:
-            t = (s.text or "").strip()
-            if not t:
-                continue
-            # hard-trim each snippet
-            t = t[:2000]
-            pages = ""
-            if s.pages:
-                pages = f" (pages: {s.pages})"
-            chunks.append(f"---\nSOURCE: {s.title}{pages}\n{t}")
-        sources_txt = "\n".join(chunks)
+    template = (payload.template or "").strip() or _ai_create_resources_template_for_kind(payload.kind)
+    tone = _ai_create_resources_tone(payload.kind, payload.detail, payload.tone)
+    level = (payload.level or "").strip() or "Not specified"
+    answer_key = _ai_create_resources_include_answer_key(payload)
+    sources_txt, file_hint = _ai_create_resources_source_bundle(payload)
 
     scope_desc = ""
     if payload.scope.mode == "general":
@@ -7869,11 +8820,54 @@ def ai_create_resources(
     else:
         scope_desc = f"Group class_ids: {payload.scope.classIds} | groupName: {payload.scope.groupName}"
 
+    save_bucket = (payload.save_target.bucket if payload.save_target else None) or ""
+    save_folder = (payload.save_target.folder if payload.save_target else None) or ""
+    source_context = payload.source_context or {}
+    selected_folder = (
+        (source_context.get("selected_folder") if isinstance(source_context, dict) else None)
+        or save_folder
+        or ""
+    )
+    selected_bucket = (
+        (source_context.get("selected_bucket") if isinstance(source_context, dict) else None)
+        or save_bucket
+        or ""
+    )
+    output_kind = (payload.outputKind or payload.kind or "").strip()
+    teacher_name_short = (
+        (payload.teacherDisplayNameShort or "").strip()
+        or str((payload.branding or {}).get("teacherDisplayNameShort") or "").strip()
+        or "Teacher"
+    )
+    school_name = (
+        (payload.schoolName or "").strip()
+        or str((payload.branding or {}).get("schoolName") or "").strip()
+    )
+    branding_choice = (
+        (payload.brandingChoice or "").strip()
+        or str((payload.branding or {}).get("brandingChoice") or "").strip()
+        or "elume"
+    )
+    audience_rule = {
+        "ideas": "Produce quick teacher-facing suggestions that can be used immediately in class.",
+        "lesson_plan": "Produce a concise teacher-facing lesson plan for an Irish post-primary classroom using the exact requested section structure.",
+        "worksheet": "Produce a student-facing printable worksheet suitable for classroom use.",
+        "scheme": "Produce sequenced teacher planning for a scheme of work.",
+        "dept_plan": "Produce department-facing planning for shared use across a subject team.",
+    }.get((payload.kind or "").strip().lower(), "Produce a clear classroom resource.")
+
     system = (
         f"Today is {datetime.now().date().isoformat()} in timezone {payload.timezone}. "
-        "You are an assistant for teachers writing classroom resources. "
+        "You are an assistant for teachers writing classroom resources for the Irish secondary school / post-primary context. "
+        "Use British English spelling and terminology throughout. "
+        "Prioritise Irish classroom framing, curriculum assumptions, and school language. "
+        "Do not drift into US or non-Irish assumptions unless the teacher explicitly asks for that context. "
+        "Treat the selected class or group as the default working context. "
+        "Treat the selected folder as the priority search context when relevant. "
+        "Manual pasted or uploaded sources are teacher-selected guidance and should be used carefully when present. "
         "CRITICAL RULE: You may ONLY use the provided SOURCE EXCERPTS as factual grounding. "
-        "If something is not in the sources, write it as a sensible teaching suggestion, not as a quoted fact. "
+        "If something is not in the sources, write it as a sensible teaching suggestion, not as a quoted fact, and do not invent curriculum citations, exam-board references, or school policies. "
+        "Do not clutter the resource with branding or footer metadata; that is handled separately. "
         "Return ONLY valid JSON (no markdown, no backticks). "
         "JSON must have exactly these keys: title, content. "
         "content should be plain text with clear headings and bullet points where useful. "
@@ -7882,15 +8876,50 @@ def ai_create_resources(
 
     user_msg = (
         f"Teacher: {user.email}\n"
+        f"teacherDisplayNameShort: {teacher_name_short}\n"
+        f"schoolName: {school_name or '[Not provided]'}\n"
+        f"brandingChoice: {branding_choice}\n"
         f"kind: {payload.kind}\n"
-        f"template: {payload.template}\n"
-        f"tone: {payload.tone}\n"
-        f"level: {payload.level}\n"
+        f"outputKind: {output_kind or payload.kind}\n"
+        f"template: {template}\n"
+        f"tone: {tone}\n"
+        f"detail: {(payload.detail or '').strip() or '[Not provided]'}\n"
+        f"level: {level}\n"
+        f"audience: {(payload.audience or '').strip() or '[Inferred from kind]'}\n"
+        f"output_intent: {(payload.output_intent or '').strip() or template}\n"
         f"scope: {scope_desc}\n"
+        f"save_target_bucket: {save_bucket or '[Not provided]'}\n"
+        f"selected_folder_priority: {selected_folder or '[Top level / none]'}\n"
+        f"selected_bucket_context: {selected_bucket or '[Not provided]'}\n"
+        f"include_answer_key: {'Yes' if answer_key else 'No'}\n"
+        f"audience_rule: {audience_rule}\n"
         f"prompt: {p}\n"
+        "\n"
+        "Generation rules:\n"
+        "- Write for Irish post-primary teaching and learning.\n"
+        "- Use British English spelling and terminology.\n"
+        "- Keep the response appropriate to the output kind.\n"
+        "- When sources are present, use them carefully and do not invent unsupported facts.\n"
+        "- When no sources are present, draft sensibly but avoid fabricated curriculum citations.\n"
+        "- If worksheet, make it suitable for students and include an answer key unless told not to.\n"
+        "- If lesson_plan, do not use tables.\n"
+        "- If lesson_plan, keep it concise and practical, suitable for roughly 12 pages or less when exported.\n"
+        "- If lesson_plan, use clear headings only and avoid unnecessary explanation, symbols, or excessive line breaks.\n"
+        "- If lesson_plan, follow exactly this structure and order:\n"
+        "  1. Lesson Title, Class, Duration, Topic\n"
+        "  2. Prior Knowledge\n"
+        "  3. Learning Intentions using 'We are learning to...'\n"
+        "  4. Learning Outcomes with 3 to 5 clear outcomes\n"
+        "  5. Success Criteria using student-friendly 'I can...' statements\n"
+        "  6. Lesson Flow with Starter, Teaching / Development, Activity / Application, Plenary / Closure\n"
+        "  7. Assessment\n"
+        "  8. Resources\n"
+        "  9. Differentiation with Support and Extension\n"
+        "  10. Homework (optional)\n"
         "\n"
         "SOURCE EXCERPTS (allowed):\n"
         f"{sources_txt if sources_txt else '[No sources selected]'}\n"
+        f"{file_hint + chr(10) if file_hint else ''}"
         "\n"
         "Write the best possible resource for the teacher."
     )
@@ -7920,13 +8949,12 @@ def ai_create_resources(
     body = (data.get("content") or "").strip()
 
     if not title:
-        title = f"{payload.template} • {p}"[:80]
+        title = f"{template} - {p}"[:80]
     if not body:
         raise HTTPException(status_code=500, detail="AI returned empty content")
 
     _record_ai_prompt_usage(db, user)
     return {"title": title, "content": body}
-
 class AIReportCommentRequest(BaseModel):
     length: str = "Medium"            # Short | Medium | Long
     indicators: List[str] = []
@@ -8197,3 +9225,5 @@ CONTENT:
         }
     _record_ai_prompt_usage(db, user)
     return quiz
+
+

@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { apiFetch, setToken } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
 
@@ -8,7 +8,6 @@ type Props = { onLoggedIn: () => void };
 
 export default function LoginPage({ onLoggedIn }: Props) {
     const navigate = useNavigate();
-    const location = useLocation();
     const [email, setEmail] = useState("");
 
     const [password, setPassword] = useState("");
@@ -19,19 +18,6 @@ export default function LoginPage({ onLoggedIn }: Props) {
     const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
     const [forgotPasswordSuccess, setForgotPasswordSuccess] = useState<string | null>(null);
     const [forgotPasswordError, setForgotPasswordError] = useState<string | null>(null);
-    const redirectPath = useMemo(() => {
-        const path = `${location.pathname || "/"}${location.search || ""}`;
-        if (
-            path === "/login" ||
-            path.startsWith("/onboarding/billing") ||
-            path.startsWith("/billing/success") ||
-            path.startsWith("/billing/cancel")
-        ) {
-            return "/";
-        }
-        return path;
-    }, [location.pathname, location.search]);
-
     function isLocalDev() {
         const h = window.location.hostname;
         return h === "localhost" || h === "127.0.0.1";
@@ -60,7 +46,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                 } catch { }
 
                 onLoggedIn();
-                navigate(redirectPath, { replace: true });
+                navigate("/", { replace: true });
 
             } catch {
                 // silently fail so normal login form still works
@@ -72,7 +58,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
         return () => {
             cancelled = true;
         };
-    }, [onLoggedIn, navigate, redirectPath]);
+    }, [onLoggedIn, navigate]);
 
     useEffect(() => {
         document.title = "Elume – AI Tools for Secondary School Teachers";
@@ -148,7 +134,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
             } catch { }
 
             onLoggedIn();
-            navigate(redirectPath, { replace: true });
+            navigate("/", { replace: true });
 
         } catch (err: any) {
             setError(err?.message || "Login failed");

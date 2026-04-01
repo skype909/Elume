@@ -1380,7 +1380,7 @@ export default function ClassPage() {
             { name: "Quizzes", colour: "bg-yellow-400 border-yellow-500 text-black" },
             { name: "Exam Papers", colour: "bg-green-500 border-green-600 text-white" },
             { name: "Videos", colour: "bg-orange-500 border-orange-600 text-white" },
-            { name: "Links", colour: "bg-white border-slate-300 text-slate-800" },
+            { name: "Resources", colour: "bg-white border-slate-300 text-slate-800" },
           ].map((x) => (
             <button
               key={x.name}
@@ -1392,7 +1392,7 @@ export default function ClassPage() {
                 else if (x.name === "Quizzes") navigate(`/class/${classId}/quizzes`);
                 else if (x.name === "Exam Papers") navigate(`/class/${classId}/exam-papers`);
                 else if (x.name === "Videos") navigate(`/class/${classId}/videos`);
-                else if (x.name === "Links") navigate(`/class/${classId}/links`);
+                else if (x.name === "Resources") navigate(`/class/${classId}/links`);
               }}
             >
               {x.name}
@@ -1490,7 +1490,7 @@ export default function ClassPage() {
             <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
               <Icon name="spark" />
             </span>
-            <div className="text-lg font-extrabold tracking-tight">Generate Links</div>
+            <div className="text-lg font-extrabold tracking-tight">Generate Resources</div>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">

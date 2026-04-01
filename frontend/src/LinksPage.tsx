@@ -291,20 +291,20 @@ export default function LinksPage() {
               <LinkIcon className="h-6 w-6" />
             </span>
             <div>
-              <div className="text-2xl font-extrabold tracking-tight">Links</div>
+              <div className="text-2xl font-extrabold tracking-tight">Resources</div>
               <div className="text-sm text-slate-600">
-                Create categories and save useful websites with short notes for students.
+                Organise teacher-facing resources and useful websites into simple categories.
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button className={pill} type="button" onClick={() => openAddLinkModal()}>
-              + Add Link
+              + Add Resource
             </button>
 
             <button className={btnPrimary} type="button" onClick={openCreateCategory}>
-              + New Category
+              + New Resource Category
             </button>
           </div>
         </div>
@@ -313,7 +313,7 @@ export default function LinksPage() {
         <div className="mt-6 space-y-6">
           {categoriesSorted.length === 0 ? (
             <div className={`${card} p-6 text-sm text-slate-700`}>
-              No categories yet. Click <b>+ New Category</b> to get started.
+              No resource categories yet. Click <b>+ New Resource Category</b> to get started.
             </div>
           ) : (
             categoriesSorted.map((cat) => (
@@ -325,13 +325,13 @@ export default function LinksPage() {
                       <div className="mt-1 text-sm text-slate-600">{cat.description}</div>
                     )}
                     <div className="mt-2 text-xs text-slate-500">
-                      {cat.links.length} link{cat.links.length === 1 ? "" : "s"}
+                      {cat.links.length} resource{cat.links.length === 1 ? "" : "s"}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
                     <button className={pill} type="button" onClick={() => openAddLinkModal(cat.id)}>
-                      Add link to this
+                      Add resource to this
                     </button>
                     <button className={pill} type="button" onClick={() => openEditCategory(cat)}>
                       Edit
@@ -349,7 +349,7 @@ export default function LinksPage() {
                 {/* Links list */}
                 {cat.links.length === 0 ? (
                   <div className="mt-4 rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                    No links in this category yet. Click <b>Add link to this</b>.
+                    No resources in this category yet. Click <b>Add resource to this</b>.
                   </div>
                 ) : (
                   <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
