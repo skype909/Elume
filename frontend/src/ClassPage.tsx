@@ -1363,155 +1363,6 @@ export default function ClassPage() {
     </div>
   );
 
-  const Feed = () => {
-    return (
-      <div className="mt-4 space-y-4">
-        {loadingPosts && (
-          <div className={`${card} ${cardPad} text-sm text-slate-600`}>Loading announcements…</div>
-        )}
-
-        {!loadingPosts && posts.length === 0 && (
-          <div className={`${card} ${cardPad} text-sm text-slate-600`}>
-            No announcements yet for this class.
-          </div>
-        )}
-
-        {!loadingPosts &&
-          posts.map((p, idx) => (
-            <article
-              key={p.id}
-              className={`${card} ${cardPad} transition-all duration-200 hover:-translate-y-[2px] hover:shadow-lg hover:border-emerald-200`}
-            >
-              <div className="flex items-center gap-2">
-                <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
-                  {formatPostStamp(p.createdAt)}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => startEditPost(p)}
-                  className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
-                  title="Edit post"
-                >
-                  Edit
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => requestDelete(p.id)}
-                  className="rounded-2xl border-2 border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50"
-                  title="Delete post"
-                >
-                  Delete
-                </button>
-              </div>
-
-              {editingPostId === p.id ? (
-                <div className="mt-4 grid gap-3">
-                  <textarea
-                    className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                    rows={4}
-                    value={editContentDraft}
-                    onChange={(e) => setEditContentDraft(e.target.value)}
-                  />
-
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center">
-                    <input
-                      className="flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                      value={editLinkDraft}
-                      onChange={(e) => setEditLinkDraft(e.target.value)}
-                      placeholder="Paste a link…"
-                    />
-                    <button className={btn} type="button" onClick={addEditLink}>
-                      Add link
-                    </button>
-                  </div>
-
-                  {editLinksDraft.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {editLinksDraft.map((l, i) => (
-                        <button
-                          key={l + i}
-                          type="button"
-                          className={`${chip} hover:bg-slate-100`}
-                          onClick={() => removeEditLink(i)}
-                          title="Remove link"
-                        >
-                          🔗 {l} ✕
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-end gap-2">
-                    <button className={btn} type="button" onClick={cancelEditPost}>
-                      Cancel
-                    </button>
-                    <button
-                      className={btnPrimary}
-                      type="button"
-                      onClick={() => saveEditPost(p.id)}
-                      disabled={!editContentDraft.trim()}
-                    >
-                      Save
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800">
-                  {p.content}
-                </div>
-              )}
-
-              {(Boolean(p.links?.length) || Boolean(p.files?.length)) && (
-                <div className="mt-5 flex flex-wrap gap-2">
-                  {p.files?.map((f, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={async () => {
-                        const fileLink = f.url || f.path;
-                        if (!fileLink) return;
-                        try {
-                          await openProtectedAttachmentInNewTab(fileLink);
-                        } catch (err) {
-                          console.error("File open failed:", fileLink, err);
-                          alert("Could not open file.");
-                        }
-                      }}
-                      className={`${chip} ${f.url || f.path ? "hover:bg-slate-100" : ""}`}
-                      disabled={!f.url && !f.path}
-                      title={f.url || f.path ? "Open attachment" : "Attachment URL unavailable"}
-                    >
-                      📄 {f.name}
-                    </button>
-                  ))}
-
-                  {p.links?.map((l, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await openProtectedAttachmentInNewTab(l);
-                        } catch (err) {
-                          console.error("Attachment open failed:", l, err);
-                          alert("Could not open attachment.");
-                        }
-                      }}
-                      className={`${chip} hover:bg-slate-100`}
-                    >
-                      📎 Click here
-                    </button>
-                  ))}
-                </div>
-              )}
-            </article>
-          ))}
-      </div>
-    );
-  };
-
   const RightPanel = () => (
     <aside className="col-span-12 md:col-span-3 lg:col-span-3">
       <div className={`${card} ${cardPad}`}>
@@ -1798,7 +1649,150 @@ export default function ClassPage() {
                   removeFile={removeFile}
                 />
 
-                <Feed />
+                <div className="mt-4 space-y-4">
+                  {loadingPosts && (
+                    <div className={`${card} ${cardPad} text-sm text-slate-600`}>Loading announcements…</div>
+                  )}
+
+                  {!loadingPosts && posts.length === 0 && (
+                    <div className={`${card} ${cardPad} text-sm text-slate-600`}>
+                      No announcements yet for this class.
+                    </div>
+                  )}
+
+                  {!loadingPosts &&
+                    posts.map((p, idx) => (
+                      <article
+                        key={p.id}
+                        className={`${card} ${cardPad} transition-all duration-200 hover:-translate-y-[2px] hover:shadow-lg hover:border-emerald-200`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                            {formatPostStamp(p.createdAt)}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => startEditPost(p)}
+                            className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                            title="Edit post"
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => requestDelete(p.id)}
+                            className="rounded-2xl border-2 border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50"
+                            title="Delete post"
+                          >
+                            Delete
+                          </button>
+                        </div>
+
+                        {editingPostId === p.id ? (
+                          <div className="mt-4 grid gap-3">
+                            <textarea
+                              className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                              rows={4}
+                              value={editContentDraft}
+                              onChange={(e) => setEditContentDraft(e.target.value)}
+                            />
+
+                            <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                              <input
+                                className="flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                                value={editLinkDraft}
+                                onChange={(e) => setEditLinkDraft(e.target.value)}
+                                placeholder="Paste a link…"
+                              />
+                              <button className={btn} type="button" onClick={addEditLink}>
+                                Add link
+                              </button>
+                            </div>
+
+                            {editLinksDraft.length > 0 && (
+                              <div className="flex flex-wrap gap-2">
+                                {editLinksDraft.map((l, i) => (
+                                  <button
+                                    key={l + i}
+                                    type="button"
+                                    className={`${chip} hover:bg-slate-100`}
+                                    onClick={() => removeEditLink(i)}
+                                    title="Remove link"
+                                  >
+                                    🔗 {l} ✕
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-end gap-2">
+                              <button className={btn} type="button" onClick={cancelEditPost}>
+                                Cancel
+                              </button>
+                              <button
+                                className={btnPrimary}
+                                type="button"
+                                onClick={() => saveEditPost(p.id)}
+                                disabled={!editContentDraft.trim()}
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800">
+                            {p.content}
+                          </div>
+                        )}
+
+                        {(Boolean(p.links?.length) || Boolean(p.files?.length)) && (
+                          <div className="mt-5 flex flex-wrap gap-2">
+                            {p.files?.map((f, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={async () => {
+                                  const fileLink = f.url || f.path;
+                                  if (!fileLink) return;
+                                  try {
+                                    await openProtectedAttachmentInNewTab(fileLink);
+                                  } catch (err) {
+                                    console.error("File open failed:", fileLink, err);
+                                    alert("Could not open file.");
+                                  }
+                                }}
+                                className={`${chip} ${f.url || f.path ? "hover:bg-slate-100" : ""}`}
+                                disabled={!f.url && !f.path}
+                                title={f.url || f.path ? "Open attachment" : "Attachment URL unavailable"}
+                              >
+                                📄 {f.name}
+                              </button>
+                            ))}
+
+                            {p.links?.map((l, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await openProtectedAttachmentInNewTab(l);
+                                  } catch (err) {
+                                    console.error("Attachment open failed:", l, err);
+                                    alert("Could not open attachment.");
+                                  }
+                                }}
+                                className={`${chip} hover:bg-slate-100`}
+                              >
+                                📎 Click here
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                </div>
               </>
             )}
 
