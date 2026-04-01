@@ -7730,7 +7730,7 @@ def ai_parse_event(
         "Required keys: title, description, event_date, end_date, all_day, event_type, class_id."
     )
 
-    user = (
+    user_message = (
         f"Text: {text}\n"
         f"class_id: {payload.class_id}\n"
         f"default_duration_minutes: {payload.default_duration_minutes}\n"
@@ -7742,7 +7742,7 @@ def ai_parse_event(
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         messages=[
             {"role": "system", "content": system},
-            {"role": "user", "content": user},
+            {"role": "user", "content": user_message},
         ],
         temperature=0.2,
     )
