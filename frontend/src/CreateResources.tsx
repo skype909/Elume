@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 
@@ -78,6 +78,12 @@ type DocumentBlock =
   | { type: "hr" }
   | { type: "spacer" };
 
+type IdeaPreviewBlock = {
+  id: string;
+  heading: string;
+  sections: Array<{ heading: string; lines: string[] }>;
+};
+
 type DestinationOption = {
   bucket: SaveBucket;
   label: string;
@@ -98,6 +104,13 @@ type SourceOption = {
   label: string;
   recommended?: boolean;
   folders?: string[];
+};
+
+type OutputTileStyle = {
+  shell: string;
+  active: string;
+  inactive: string;
+  badge: string;
 };
 
 function uid(prefix = "id") {
@@ -228,6 +241,41 @@ function labelForOutput(kind: OutputKind) {
       return "Resource";
   }
 }
+
+const META_SEPARATOR = " | ";
+
+const OUTPUT_TILE_STYLES: Record<OutputKind, OutputTileStyle> = {
+  ideas: {
+    shell: "from-emerald-50 via-white to-teal-100",
+    active: "border-emerald-700 bg-[linear-gradient(135deg,rgba(236,253,245,0.98),rgba(204,251,241,0.92))] ring-2 ring-emerald-100 shadow-[0_18px_34px_rgba(16,185,129,0.16)]",
+    inactive: "border-emerald-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,253,245,0.84),rgba(204,251,241,0.78))] shadow-[0_10px_22px_rgba(16,185,129,0.08)] hover:-translate-y-[1px] hover:border-emerald-200 hover:shadow-[0_16px_28px_rgba(16,185,129,0.14)]",
+    badge: "border-emerald-200 bg-emerald-100/90 text-emerald-800",
+  },
+  lesson_plan: {
+    shell: "from-cyan-50 via-white to-sky-100",
+    active: "border-sky-700 bg-[linear-gradient(135deg,rgba(240,249,255,0.98),rgba(224,242,254,0.94))] ring-2 ring-sky-100 shadow-[0_18px_34px_rgba(14,165,233,0.16)]",
+    inactive: "border-sky-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.84),rgba(224,242,254,0.80))] shadow-[0_10px_22px_rgba(14,165,233,0.08)] hover:-translate-y-[1px] hover:border-sky-200 hover:shadow-[0_16px_28px_rgba(14,165,233,0.14)]",
+    badge: "border-sky-200 bg-sky-100/90 text-sky-800",
+  },
+  worksheet: {
+    shell: "from-violet-50 via-white to-fuchsia-100",
+    active: "border-violet-700 bg-[linear-gradient(135deg,rgba(245,243,255,0.98),rgba(237,233,254,0.94))] ring-2 ring-violet-100 shadow-[0_18px_34px_rgba(139,92,246,0.16)]",
+    inactive: "border-violet-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(245,243,255,0.84),rgba(237,233,254,0.80))] shadow-[0_10px_22px_rgba(139,92,246,0.08)] hover:-translate-y-[1px] hover:border-violet-200 hover:shadow-[0_16px_28px_rgba(139,92,246,0.14)]",
+    badge: "border-violet-200 bg-violet-100/90 text-violet-800",
+  },
+  scheme: {
+    shell: "from-amber-50 via-white to-orange-100",
+    active: "border-amber-700 bg-[linear-gradient(135deg,rgba(255,251,235,0.98),rgba(254,243,199,0.94))] ring-2 ring-amber-100 shadow-[0_18px_34px_rgba(245,158,11,0.16)]",
+    inactive: "border-amber-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(255,251,235,0.86),rgba(254,243,199,0.82))] shadow-[0_10px_22px_rgba(245,158,11,0.08)] hover:-translate-y-[1px] hover:border-amber-200 hover:shadow-[0_16px_28px_rgba(245,158,11,0.14)]",
+    badge: "border-amber-200 bg-amber-100/90 text-amber-800",
+  },
+  dept_plan: {
+    shell: "from-teal-50 via-white to-cyan-100",
+    active: "border-teal-700 bg-[linear-gradient(135deg,rgba(240,253,250,0.98),rgba(204,251,241,0.94))] ring-2 ring-teal-100 shadow-[0_18px_34px_rgba(13,148,136,0.16)]",
+    inactive: "border-teal-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,253,250,0.84),rgba(207,250,254,0.80))] shadow-[0_10px_22px_rgba(13,148,136,0.08)] hover:-translate-y-[1px] hover:border-teal-200 hover:shadow-[0_16px_28px_rgba(13,148,136,0.14)]",
+    badge: "border-teal-200 bg-teal-100/90 text-teal-800",
+  },
+};
 
 function destinationOptionsForOutput(kind: OutputKind): DestinationOption[] {
   if (kind === "worksheet") {
@@ -363,6 +411,124 @@ function printableBodyText(text: string) {
   return normalised;
 }
 
+function normaliseIdeaSectionHeading(text: string) {
+  const key = (text || "").trim().toLowerCase();
+  if (!key) return "";
+  if (key === "title") return "Title";
+  if (key === "the hook" || key === "hook") return "The Hook";
+  if (key === "the task" || key === "task") return "The Task";
+  if (key.includes("board") || key.includes("collaboration")) return "Board / Collaboration integration";
+  if (key === "why it works" || key === "key discussion angle") return "Why it works";
+  return text.trim();
+}
+
+function parseIdeaPreviewBlocks(text: string): IdeaPreviewBlock[] {
+  const lines = printableBodyText(text).split("\n");
+  const ideas: IdeaPreviewBlock[] = [];
+  let currentIdea: IdeaPreviewBlock | null = null;
+  let currentSection: { heading: string; lines: string[] } | null = null;
+  let ideaIndex = 0;
+
+  const pushSection = () => {
+    if (!currentIdea || !currentSection) return;
+    if (currentSection.lines.length) currentIdea.sections.push(currentSection);
+    currentSection = null;
+  };
+
+  const pushIdea = () => {
+    if (!currentIdea) return;
+    pushSection();
+    if (currentIdea.sections.length) ideas.push(currentIdea);
+    currentIdea = null;
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const headingMatch = line.match(/^(?:##\s*)?(Idea\s*[1-3]\s*:\s*.+)$/i);
+    if (headingMatch) {
+      pushIdea();
+      ideaIndex += 1;
+      currentIdea = { id: `idea_${ideaIndex}`, heading: headingMatch[1].trim(), sections: [] };
+      continue;
+    }
+    if (!currentIdea) continue;
+    if (line.startsWith("### ")) {
+      pushSection();
+      currentSection = { heading: normaliseIdeaSectionHeading(line.replace(/^###\s*/, "").trim()), lines: [] };
+      continue;
+    }
+
+    const cleanLine = line.replace(/^[-*]\s*/, "").trim();
+    const labelledLineMatch = cleanLine.match(/^(Title|The Hook|Hook|The Task|Task|Board\s*\/\s*Collaboration integration|Board integration|Collaboration integration|Why it works|Key discussion angle)\s*:\s*(.+)$/i);
+    if (labelledLineMatch) {
+      pushSection();
+      currentSection = {
+        heading: normaliseIdeaSectionHeading(labelledLineMatch[1]),
+        lines: [labelledLineMatch[2].trim()],
+      };
+      continue;
+    }
+
+    if (!currentSection) {
+      currentSection = { heading: "Body", lines: [] };
+    }
+    if (cleanLine) currentSection.lines.push(cleanLine);
+  }
+
+  pushIdea();
+  return ideas;
+}
+
+function toSecondPersonTimelineText(text: string) {
+  let next = (text || "").trim();
+  if (!next) return "";
+  next = next.replace(/^Ask students to\b/i, "You will");
+  next = next.replace(/^Invite students to\b/i, "You will");
+  next = next.replace(/^Have students\b/i, "You will");
+  next = next.replace(/^Students will\b/i, "You will");
+  next = next.replace(/^Students\b/i, "You");
+  next = next.replace(/^Student groups\b/i, "You will work in groups");
+  next = next.replace(/^Begin with\b/i, "You will begin with");
+  next = next.replace(/^Open with\b/i, "You will begin with");
+  next = next.replace(/^Give students\b/i, "You will receive");
+  next = next.replace(/^Use the built-in Elume Collaborative Board to\b/i, "You will use the Elume Collaborative Board to");
+  next = next.replace(/^Use the Elume Collaborative Board to\b/i, "You will use the Elume Collaborative Board to");
+  next = next.replace(/\bstudents will\b/gi, "you will");
+  next = next.replace(/\bask students to\b/gi, "you will");
+  next = next.replace(/\binvite students to\b/gi, "you will");
+  next = next.replace(/\bhave students\b/gi, "you will");
+  next = next.replace(/\bstudents\b/gi, "you");
+  return next;
+}
+
+function ideaBlockToTimelinePost(idea: IdeaPreviewBlock) {
+  const titleSection = idea.sections.find((section) => section.heading.toLowerCase() === "title");
+  const hookSection = idea.sections.find((section) => section.heading.toLowerCase() === "the hook");
+  const taskSection = idea.sections.find((section) => section.heading.toLowerCase() === "the task");
+  const boardSection = idea.sections.find((section) => section.heading.toLowerCase().includes("board") || section.heading.toLowerCase().includes("collaboration"));
+  const whySection = idea.sections.find((section) => section.heading.toLowerCase() === "why it works");
+
+  const lines: string[] = [];
+  const title = titleSection?.lines[0] || idea.heading;
+  if (title) lines.push(title);
+
+  for (const entry of hookSection?.lines || []) {
+    lines.push(toSecondPersonTimelineText(entry));
+  }
+  for (const entry of taskSection?.lines || []) {
+    lines.push(toSecondPersonTimelineText(entry));
+  }
+  for (const entry of boardSection?.lines || []) {
+    lines.push(toSecondPersonTimelineText(entry));
+  }
+  if (whySection?.lines[0]) {
+    lines.push(`Be ready to explain your thinking: ${toSecondPersonTimelineText(whySection.lines[0]).replace(/^You will\s+/i, "")}`);
+  }
+
+  return lines.filter(Boolean).join("\n\n");
+}
+
 function RenderDoc({
   text,
   title,
@@ -436,7 +602,7 @@ export default function CreateResources() {
     if (scope.mode === "general") return "General workspace";
     if (scope.mode === "single") {
       const current = classById.get(scope.classId ?? -1);
-      return current ? `${current.name} • ${current.subject}` : "Selected class";
+      return current ? `${current.name}${META_SEPARATOR}${current.subject}` : "Selected class";
     }
     const ids = scope.classIds ?? [];
     const named = (scope.groupName || "").trim();
@@ -467,7 +633,7 @@ export default function CreateResources() {
   const [saveBucket, setSaveBucket] = useState<SaveBucket>("links");
   const [saveFolder, setSaveFolder] = useState("");
   const [brandingChoice, setBrandingChoice] = useState<BrandingChoice>("elume");
-  const [worksheetIncludeAnswers, setWorksheetIncludeAnswers] = useState(true);
+  const [worksheetIncludeAnswers, setWorksheetIncludeAnswers] = useState(false);
   const [availableSourceFolders, setAvailableSourceFolders] = useState<string[]>([]);
   const [loadingSourceFolders, setLoadingSourceFolders] = useState(false);
   const [availableDestinationFolders, setAvailableDestinationFolders] = useState<string[]>([]);
@@ -479,12 +645,14 @@ export default function CreateResources() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState<string | null>(null);
   const [preview, setPreview] = useState<GeneratedDoc | null>(null);
+  const [postingIdeaId, setPostingIdeaId] = useState<string | null>(null);
+  const [ideaPostStatus, setIdeaPostStatus] = useState<string | null>(null);
 
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const manualFileRef = useRef<HTMLInputElement | null>(null);
 
-  const card = "rounded-[32px] border border-white/70 bg-white/90 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur";
-  const soft = "rounded-[28px] border-2 border-slate-200 bg-slate-50/90";
+  const card = "rounded-[32px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.94))] shadow-[0_22px_60px_rgba(15,23,42,0.10)] backdrop-blur";
+  const soft = "rounded-[28px] border border-white/75 bg-[linear-gradient(135deg,rgba(255,255,255,0.94),rgba(240,253,250,0.88),rgba(245,243,255,0.88))] shadow-[0_12px_32px_rgba(15,23,42,0.06)]";
   const btn = "rounded-2xl border-2 border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 active:translate-y-[1px]";
   const btnPrimary = "rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 active:translate-y-[1px] disabled:opacity-50";
   const chipBase = "rounded-full border-2 px-4 py-2 text-sm font-semibold transition";
@@ -494,6 +662,8 @@ export default function CreateResources() {
   const hasSchoolLogoOption = useMemo(() => Boolean(teacherProfile?.schoolBranding?.logoDataUrl), [teacherProfile]);
   const destinationOptions = useMemo(() => destinationOptionsForOutput(outputKind), [outputKind]);
   const sourceOptions = useMemo(() => sourceOptionsForOutput(outputKind), [outputKind]);
+  const previewIdeas = useMemo(() => (preview?.kind === "ideas" ? parseIdeaPreviewBlocks(preview.content) : []), [preview]);
+  const canPostIdeasToTimeline = useMemo(() => preview?.kind === "ideas" && scope.mode === "single" && Boolean(scope.classId), [preview, scope]);
   const destinationChoices = useMemo<DestinationChoice[]>(() => {
     const choices: DestinationChoice[] = [];
     const seen = new Set<string>();
@@ -867,23 +1037,49 @@ export default function CreateResources() {
 
     if (kind === "ideas") {
       body = [
-        `# 3 Ideas to Start a Class`,
+        `# 3 Ideas`,
         ``,
-        `Topic: ${teacherPrompt}`,
+        `## Idea 1: Thought-provoking question`,
+        `### Title`,
+        `- Big question on ${teacherPrompt || "the topic"}`,
         ``,
-        `## Idea 1`,
-        `- Quick retrieval starter`,
-        `- 3 to 5 minutes`,
-        `- Use mini-whiteboards or pair talk`,
+        `### The Hook`,
+        `- Open with a question that could divide opinion or invite more than one valid interpretation.`,
         ``,
-        `## Idea 2`,
-        `- Main activity hook`,
-        `- Connect to prior learning`,
-        `- Build in one clear check for understanding`,
+        `### The Task`,
+        `- Students answer individually first, then compare responses in pairs or small groups before a short whole-class share-out.`,
         ``,
-        `## Idea 3`,
-        `- Strong finish or exit task`,
-        `- Gather evidence of understanding`,
+        `### Why it works`,
+        `- It surfaces prior thinking quickly and gives the teacher a strong discussion starting point.`,
+        ``,
+        `## Idea 2: Thought-provoking activity`,
+        `### Title`,
+        `- Short activity based on ${teacherPrompt || "the topic"}`,
+        ``,
+        `### The Hook`,
+        `- Give students a prompt, example, statement, or stimulus that needs interpretation, sorting, or decision-making.`,
+        ``,
+        `### The Task`,
+        `- Students complete a short activity individually or in groups, then justify their thinking to the class.`,
+        ``,
+        `### Why it works`,
+        `- It creates visible thinking, discussion, and a clear reason for students to explain their choices.`,
+        ``,
+        `## Idea 3: Collaborative Board session`,
+        `### Title`,
+        `- Collaborative Board challenge on ${teacherPrompt || "the topic"}`,
+        ``,
+        `### The Hook`,
+        `- Open the Elume Collaborative Board with a focused prompt that invites multiple responses or viewpoints.`,
+        ``,
+        `### The Task`,
+        `- Students post ideas, examples, or arguments to the board, then group, compare, or challenge the responses together.`,
+        ``,
+        `### Board / Collaboration integration`,
+        `- Use the built-in Elume Collaborative Board to collect, sort, and discuss student contributions live.`,
+        ``,
+        `### Why it works`,
+        `- It makes every student contribution visible and gives the class a shared space for live discussion.`,
       ].join("\n");
     }
 
@@ -891,74 +1087,71 @@ export default function CreateResources() {
       body = [
         `# Lesson Plan`,
         ``,
-        `## Lesson Title, Class, Duration, Topic`,
-        `- Lesson Title: ${teacherPrompt || "Lesson title"}`,
-        `- Class: ${scopeLabel}`,
-        `- Duration: 40 to 60 minutes`,
+        `## Learning Overview`,
         `- Topic: ${teacherPrompt || "Lesson topic"}`,
         ``,
-        `## Prior Knowledge`,
-        `- Identify the key knowledge or skills students should already have before starting this lesson.`,
-        ``,
         `## Learning Intentions`,
-        `- We are learning to understand the core ideas in ${teacherPrompt || "this topic"}.`,
-        `- We are learning to apply the topic using clear subject-specific language.`,
-        ``,
-        `## Learning Outcomes`,
-        `- Explain the main concept in simple, accurate terms.`,
-        `- Use relevant key terms correctly during discussion or written work.`,
-        `- Apply the learning to a classroom task or example.`,
-        `- Show understanding through questioning, discussion, or written response.`,
+        `- We are learning to explain the key ideas in ${teacherPrompt || "this topic"} clearly.`,
+        `- We are learning to use accurate subject language in discussion and written work.`,
+        `- We are learning to apply the learning in a short classroom task.`,
         ``,
         `## Success Criteria`,
-        `- I can explain the main idea clearly.`,
-        `- I can use the correct keywords in my answer.`,
-        `- I can complete the class task using what I have learned.`,
+        `- I can explain the main point using the correct keywords.`,
+        `- I can complete the class task accurately and clearly.`,
+        `- I can show my understanding in discussion or written work.`,
         ``,
         `## Lesson Flow`,
-        `### Starter`,
-        `- Use a short retrieval or discussion task to connect to prior learning.`,
-        `### Teaching / Development`,
-        `- Model the new learning clearly using examples and teacher explanation.`,
-        `### Activity / Application`,
-        `- Students apply the learning through a focused classroom task.`,
-        `### Plenary / Closure`,
-        `- Finish with a quick check for understanding or exit prompt.`,
-        ``,
-        `## Assessment`,
-        `- Observe student responses, questioning, and completed work during the lesson.`,
+        `### Starter (5 Minutes)`,
+        `- Begin with a short retrieval or settling task linked to recent learning.`,
+        `### Teaching and Development (35 Minutes)`,
+        `- Explain and model the new learning with clear examples, questioning, and guided input.`,
+        `### Activity and Application (20 Minutes)`,
+        `- Students complete a focused task that applies the learning with teacher circulation and feedback.`,
+        `### Plenary and Closure (5 Minutes)`,
+        `- Close with a brief review, exit prompt, or check for understanding.`,
         ``,
         `## Resources`,
-        `- Whiteboard, teacher explanation, and any class materials relevant to the topic.`,
+        `- Whiteboard, teacher slides or notes, and class materials relevant to the topic.`,
         ``,
         `## Differentiation`,
-        `- Support: Provide prompts, guided examples, or reduced task load where needed.`,
-        `- Extension: Add challenge questions or deeper application tasks.`,
+        `- Support: Use prompts, worked examples, and guided teacher check-ins where needed.`,
+        `- Extension: Add a short challenge task or deeper application question.`,
         ``,
-        `## Homework`,
-        `- Optional short follow-up task linked to the lesson focus.`,
+        `## Assessment`,
+        `- Use questioning, teacher observation, and the completed class task to check understanding.`,
+        ``,
+        `## Suggested Homework`,
+        `- Set a short follow-up task that reinforces the main learning from the lesson.`,
       ].join("\n");
     }
 
     if (kind === "worksheet") {
       body = [
-        `# Worksheet`,
+        `# Worksheet: ${teacherPrompt || "Worksheet Title"}`,
         ``,
-        `Topic: ${teacherPrompt}`,
-        `Level: ${level}`,
+        `Student Name: ________________________________`,
+        `Class: ________________________________`,
+        `Date: ________________________________`,
         ``,
         `## Instructions`,
-        `- Read each question carefully.`,
-        `- Show your working where appropriate.`,
-        `- Use clear subject-specific vocabulary.`,
+        `- Read each task carefully and answer in clear subject-specific language.`,
+        `- Complete each question in order and show your working where needed.`,
         ``,
-        `## Questions`,
-        `1. Short-answer starter question`,
-        `2. Retrieval question linked to prior learning`,
-        `3. Applied question using the topic in context`,
-        `4. Extension question for deeper thinking`,
+        `## Task 1`,
+        `- Short response on ${teacherPrompt || "the topic"} to check core understanding.`,
         ``,
-        worksheetIncludeAnswers ? `## Answer key\n- Add concise model answers and marking guidance.` : "",
+        `## Task 2`,
+        `- Apply the main idea in a short written question or worked example.`,
+        ``,
+        `## Task 3`,
+        `- Explain, compare, or justify an answer using relevant subject vocabulary.`,
+        ``,
+        `## Extension Challenge`,
+        `- Optional challenge: extend your answer with a deeper example, explanation, or comparison.`,
+        ``,
+        worksheetIncludeAnswers
+          ? `## Answer Key\n- Provide concise model answers and brief marking guidance for each task.`
+          : "",
       ]
         .filter(Boolean)
         .join("\n");
@@ -1007,7 +1200,7 @@ export default function CreateResources() {
     }
 
     const header = [
-      `ELume • ${labelForOutput(kind)}`,
+      `ELume${META_SEPARATOR}${labelForOutput(kind)}`,
       `${scopeSection}`,
       `Audience: ${toneLabelForOutput(kind)}`,
       `Context: Irish secondary school / post-primary`,
@@ -1037,7 +1230,7 @@ export default function CreateResources() {
     return {
       id: uid("gen"),
       kind,
-      title: `${labelForOutput(kind)} • ${teacherPrompt || "Untitled"}`.slice(0, 90),
+      title: `${labelForOutput(kind)}${META_SEPARATOR}${teacherPrompt || "Untitled"}`.slice(0, 90),
       prompt: teacherPrompt,
       scopeLabel,
       saveBucket,
@@ -1059,6 +1252,7 @@ export default function CreateResources() {
     setAiBusy(true);
     setAiErr(null);
     setPreview(null);
+    setIdeaPostStatus(null);
 
     const payload = {
       kind: outputKind,
@@ -1112,6 +1306,10 @@ export default function CreateResources() {
         teacher_name_format: "Use title plus surname only for printable footer metadata. Never use the teacher's first name.",
         spelling: "Use British English spelling and terminology throughout.",
         worksheet_tone: "Student-facing printable resource",
+        lesson_plan_format:
+          outputKind === "lesson_plan"
+            ? "For lesson plans only: no tables, no raw markdown dump, and use a compact printable school-ready structure for Irish post-primary classrooms in British English. Follow this exact section order: Learning Overview, Learning Intentions, Success Criteria, Lesson Flow, Starter, Teaching and Development, Activity and Application, Plenary and Closure, Resources, Differentiation, Assessment, Suggested Homework. Keep the wording concise, practical, teacher-facing, and ready for printing."
+            : null,
       },
       use_class_context: scope.mode !== "general",
       timezone: "Europe/Dublin",
@@ -1126,7 +1324,7 @@ export default function CreateResources() {
       const title =
         (data as any)?.title ??
         (data as any)?.draft?.title ??
-        `${labelForOutput(outputKind)} • ${teacherPrompt}`.slice(0, 90);
+        `${labelForOutput(outputKind)}${META_SEPARATOR}${teacherPrompt}`.slice(0, 90);
       const content = (data as any)?.content ?? (data as any)?.draft?.content ?? "";
 
       if (!content) {
@@ -1165,13 +1363,40 @@ export default function CreateResources() {
     setHistory((prev) => [preview, ...prev]);
   }
 
+  async function postIdeaToClassTimeline(idea: IdeaPreviewBlock) {
+    if (scope.mode !== "single" || !scope.classId) return;
+
+    const postText = ideaBlockToTimelinePost(idea).trim();
+    if (!postText) return;
+
+    setPostingIdeaId(idea.id);
+    setIdeaPostStatus(null);
+
+    const fd = new FormData();
+    fd.append("author", preview?.teacherDisplayNameShort || teacherNameShort);
+    fd.append("content", postText);
+    fd.append("links", JSON.stringify([]));
+
+    try {
+      await apiFetch(`/classes/${scope.classId}/posts`, {
+        method: "POST",
+        body: fd,
+      });
+      setIdeaPostStatus(`Posted "${idea.heading}" to the class timeline.`);
+    } catch (e: any) {
+      setIdeaPostStatus(e?.message || "Failed to post idea to class timeline.");
+    } finally {
+      setPostingIdeaId(null);
+    }
+  }
+
   async function exportPreviewDocx() {
     if (!preview) return;
 
     const body = {
       title: preview.title,
       content: preview.content,
-      teacher: getEmailFromToken(),
+      teacher: preview.teacherDisplayNameShort || teacherNameShort,
       meta: {
         kind: preview.kind,
         outputKind: preview.kind,
@@ -1227,14 +1452,14 @@ export default function CreateResources() {
 
     const subtitle = [
       preview.scopeLabel,
-      `${level} • ${detail}`,
+      `${level}${META_SEPARATOR}${detail}`,
       `${displayLabelForBucket(preview.saveBucket)}${preview.saveFolder ? ` / ${preview.saveFolder}` : ""}`,
       new Date(preview.createdAt).toLocaleString("en-IE"),
-    ].join(" • ");
+    ].join(META_SEPARATOR);
 
     const footer = `${preview.teacherDisplayNameShort || teacherNameShort}${
-      preview.schoolName || teacherSchoolName ? ` • ${preview.schoolName || teacherSchoolName}` : ""
-    } • ${
+      preview.schoolName || teacherSchoolName ? `${META_SEPARATOR}${preview.schoolName || teacherSchoolName}` : ""
+    }${META_SEPARATOR}${
       preview.brandingChoice === "none"
         ? "No branding"
         : preview.brandingChoice === "school" && hasSchoolLogoOption
@@ -1281,7 +1506,7 @@ export default function CreateResources() {
     const body = {
       title: preview.title,
       content: preview.content,
-      teacher: getEmailFromToken(),
+      teacher: preview.teacherDisplayNameShort || teacherNameShort,
       meta: {
         kind: preview.kind,
         outputKind: preview.kind,
@@ -1335,10 +1560,10 @@ export default function CreateResources() {
           <div className="min-w-0">
             <div className="text-3xl font-extrabold tracking-tight text-slate-900">Create Resources</div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-              <span className="rounded-full border border-white/80 bg-white/70 px-3 py-1 shadow-sm">
+              <span className="rounded-full border border-emerald-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,253,245,0.90))] px-3 py-1 shadow-sm">
                 Working on <span className="font-semibold text-slate-900">{scopeLabel}</span>
               </span>
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-800 shadow-sm">
+              <span className="rounded-full border border-cyan-200 bg-[linear-gradient(135deg,rgba(236,254,255,0.95),rgba(245,243,255,0.88))] px-3 py-1 text-cyan-800 shadow-sm">
                 Prompt-first workflow
               </span>
             </div>
@@ -1346,7 +1571,7 @@ export default function CreateResources() {
 
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => navigate("/")} className={btn}>
-              ← Back
+              {"<- Back"}
             </button>
             <button type="button" onClick={openScopeModal} className={btn}>
               Change class
@@ -1355,7 +1580,7 @@ export default function CreateResources() {
         </div>
 
         <div className="mx-auto mt-6 max-w-5xl space-y-6">
-            <section className={`${card} p-5 md:p-6`}>
+            <section className={`${card} border-emerald-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,253,245,0.90),rgba(239,246,255,0.88))] p-5 md:p-6`}>
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-800">
@@ -1379,157 +1604,180 @@ export default function CreateResources() {
                   ["dept_plan", "Department Plan", "Shared direction for teams and departments"],
                 ] as Array<[OutputKind, string, string]>).map(([kind, title, description]) => {
                   const active = outputKind === kind;
+                  const tileStyle = OUTPUT_TILE_STYLES[kind];
                   return (
                     <button
                       key={kind}
                       type="button"
                       onClick={() => setOutputKind(kind)}
-                      className={`rounded-[28px] border-2 p-4 text-left transition ${active ? "border-emerald-700 bg-emerald-50 shadow-sm" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                      className={[
+                        "group flex min-h-[196px] flex-col rounded-[30px] border-2 p-4 text-left transition",
+                        `bg-gradient-to-br ${tileStyle.shell}`,
+                        active ? tileStyle.active : tileStyle.inactive,
+                      ].join(" ")}
                     >
-                      <div className="text-base font-extrabold tracking-tight text-slate-900">{title}</div>
-                      <div className="mt-2 text-sm leading-relaxed text-slate-600">{description}</div>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] ${tileStyle.badge}`}>
+                          {active ? "Selected" : "Ready"}
+                        </div>
+                        <div className={`grid h-8 w-8 place-items-center rounded-full border text-[11px] font-black ${active ? "border-slate-900 bg-slate-900 text-white" : "border-white/80 bg-white/80 text-slate-500"}`}>
+                          {active ? "OK" : "+"}
+                        </div>
+                      </div>
+                      <div className="mt-5 flex min-h-[52px] items-start text-base font-extrabold tracking-tight text-slate-900">{title}</div>
+                      <div className="mt-3 flex flex-1 items-start text-sm leading-relaxed text-slate-600">{description}</div>
+                      <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        {kind === "worksheet" ? "Student-facing" : kind === "ideas" ? "Fast classroom use" : "Teacher-facing"}
+                      </div>
                     </button>
                   );
                 })}
               </div>
             </section>
 
-            <section className={`${card} p-5 md:p-6`}>
+            <section className={`${card} border-cyan-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(239,246,255,0.92),rgba(245,243,255,0.90))] p-5 md:p-6`}>
               <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-sky-800">
                 Step 2
                 <span className="text-[10px] text-sky-600">Prompt</span>
               </div>
 
-              <div className="mt-4 grid gap-5 lg:grid-cols-[1.35fr_0.8fr]">
-                <div>
+              <div className="mt-4 grid gap-4 lg:grid-cols-[1.35fr_0.8fr]">
+                <div className="space-y-4">
                   <div className="text-xl font-extrabold tracking-tight text-slate-900">Ask for the resource in plain language</div>
                   <div className="mt-1 text-sm text-slate-600">
                     This should feel like a normal AI prompt, but grounded in the selected class context.
                   </div>
 
-                  <div className="mt-4">
+                  <div className="rounded-[30px] border border-cyan-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,254,255,0.92),rgba(236,253,245,0.90))] p-4 shadow-[0_14px_32px_rgba(14,165,233,0.08)]">
                     <label className="mb-2 block text-sm font-bold text-slate-700">Prompt</label>
                     <textarea
                       ref={promptRef}
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                       rows={7}
-                      className="w-full rounded-[28px] border-2 border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm outline-none focus:border-emerald-300 focus:ring-4 focus:ring-emerald-100"
+                      className="w-full rounded-[28px] border-2 border-cyan-100 bg-white/95 px-4 py-3 text-sm text-slate-800 shadow-sm outline-none focus:border-emerald-300 focus:ring-4 focus:ring-emerald-100"
                       placeholder={promptHint}
                     />
                   </div>
 
-                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)]">
-                    <div>
-                      <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Level</label>
-                      <select value={level} onChange={(e) => setLevel(e.target.value as PhaseLevel)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
-                        <option value="Junior Cycle">Junior Cycle</option>
-                        <option value="Leaving Cert">Leaving Cert</option>
-                        <option value="Common Level">Common Level</option>
-                      </select>
-                    </div>
+                  <div className="rounded-[30px] border border-sky-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(239,246,255,0.92),rgba(245,243,255,0.90))] p-4 shadow-[0_14px_32px_rgba(59,130,246,0.08)]">
+                    <div className="grid gap-3">
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Level</label>
+                          <select value={level} onChange={(e) => setLevel(e.target.value as PhaseLevel)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
+                            <option value="Junior Cycle">Junior Cycle</option>
+                            <option value="Leaving Cert">Leaving Cert</option>
+                            <option value="Common Level">Common Level</option>
+                          </select>
+                        </div>
 
-                    <div>
-                      <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Detail</label>
-                      <select value={detail} onChange={(e) => setDetail(e.target.value as DetailLevel)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
-                        <option value="Concise">Concise</option>
-                        <option value="Detailed">Detailed</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Source area</label>
-                      <select value={sourceBucket} onChange={(e) => setSourceBucket(e.target.value as SourceBucket)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
-                        {sourceOptions.map((option) => (
-                          <option key={option.bucket} value={option.bucket}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="mt-2 text-xs text-slate-500">
-                        Recommended: {sourceOptions.find((item) => item.recommended)?.label || sourceOptions[0]?.label || "Notes"}
+                        <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Detail</label>
+                          <select value={detail} onChange={(e) => setDetail(e.target.value as DetailLevel)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
+                            <option value="Concise">Concise</option>
+                            <option value="Detailed">Detailed</option>
+                          </select>
+                        </div>
                       </div>
-                      <div className="mt-3">
-                        <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Source folder</label>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Source area</label>
+                          <select value={sourceBucket} onChange={(e) => setSourceBucket(e.target.value as SourceBucket)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
+                            {sourceOptions.map((option) => (
+                              <option key={option.bucket} value={option.bucket}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="mt-2 text-xs text-slate-500">
+                            Recommended: {sourceOptions.find((item) => item.recommended)?.label || sourceOptions[0]?.label || "Notes"}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Source folder</label>
+                          <select
+                            value={sourceFolder}
+                            onChange={(e) => setSourceFolder(e.target.value)}
+                            className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800"
+                          >
+                            <option value="">Top level</option>
+                            {!loadingSourceFolders && availableSourceFolders.length === 0 && (
+                              <option value="" disabled>
+                                {sourceBucket === "links" ? "No resource folders suggested yet" : scope.mode === "single" ? "No source folders found" : "No single class source folders"}
+                              </option>
+                            )}
+                            {availableSourceFolders.map((folder) => (
+                              <option key={folder} value={folder}>
+                                {folder}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="mt-2 text-xs text-slate-500">
+                            {loadingSourceFolders
+                              ? "Loading source folders..."
+                              : sourceBucket === "links"
+                              ? "AI will search the selected resource folder first when relevant."
+                              : scope.mode === "single"
+                              ? "AI will search this Notes folder first for relevant content."
+                              : "Source folders are only specific when working from a single class."}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Destination folder</label>
                         <select
-                          value={sourceFolder}
-                          onChange={(e) => setSourceFolder(e.target.value)}
+                          value={selectedDestinationChoiceId}
+                          onChange={(e) => {
+                            const nextChoice = destinationChoices.find((choice) => choice.id === e.target.value);
+                            if (!nextChoice) return;
+                            setSaveBucket(nextChoice.bucket);
+                            setSaveFolder(nextChoice.folder);
+                          }}
                           className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800"
                         >
-                          <option value="">Top level</option>
-                          {!loadingSourceFolders && availableSourceFolders.length === 0 && (
-                            <option value="" disabled>
-                              {sourceBucket === "links" ? "No resource folders suggested yet" : scope.mode === "single" ? "No source folders found" : "No single class source folders"}
-                            </option>
-                          )}
-                          {availableSourceFolders.map((folder) => (
-                            <option key={folder} value={folder}>
-                              {folder}
+                          {destinationChoices.map((choice) => (
+                            <option key={choice.id} value={choice.id}>
+                              {choice.label}
                             </option>
                           ))}
                         </select>
-                        <div className="mt-2 text-xs text-slate-500">
-                          {loadingSourceFolders
-                            ? "Loading source folders..."
-                            : sourceBucket === "links"
-                            ? "AI will search the selected resource folder first when relevant."
-                            : scope.mode === "single"
-                            ? "AI will search this Notes folder first for relevant content."
-                            : "Source folders are only specific when working from a single class."}
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                          <span>
+                            {loadingDestinationFolders
+                              ? "Loading destination folders..."
+                              : saveBucket === "links"
+                              ? "Teacher-facing resource folders are prepared here."
+                              : saveBucket === "tests"
+                              ? "Worksheet destinations stay ready for printing and reuse."
+                              : scope.mode === "single"
+                              ? "This controls where the generated resource is saved."
+                              : "Destination folders are only specific when working from a single class."}
+                          </span>
+                          <span>Recommended: {recommendedDestinationLabel}</span>
                         </div>
-                      </div>
-                    </div>
-
-                    <div className="md:col-span-2 xl:col-span-2">
-                      <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Destination folder</label>
-                      <select
-                        value={selectedDestinationChoiceId}
-                        onChange={(e) => {
-                          const nextChoice = destinationChoices.find((choice) => choice.id === e.target.value);
-                          if (!nextChoice) return;
-                          setSaveBucket(nextChoice.bucket);
-                          setSaveFolder(nextChoice.folder);
-                        }}
-                        className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800"
-                      >
-                        {destinationChoices.map((choice) => (
-                          <option key={choice.id} value={choice.id}>
-                            {choice.label}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-                        <span>
-                          {loadingDestinationFolders
-                            ? "Loading destination folders..."
-                            : saveBucket === "links"
-                            ? "Teacher-facing resource folders are prepared here."
-                            : saveBucket === "tests"
-                            ? "Worksheet destinations stay ready for printing and reuse."
-                            : scope.mode === "single"
-                            ? "This controls where the generated resource is saved."
-                            : "Destination folders are only specific when working from a single class."}
-                        </span>
-                        <span>Recommended: {recommendedDestinationLabel}</span>
                       </div>
                     </div>
                   </div>
 
                   <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
                     <div>
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                      <div className="rounded-2xl border border-cyan-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,254,255,0.88))] px-4 py-3 text-sm text-slate-700 shadow-sm">
                         AI reads from <span className="font-semibold text-slate-900">{displayLabelForBucket(sourceBucket as SaveBucket)}{sourceFolder ? ` / ${sourceFolder}` : ""}</span> and saves to <span className="font-semibold text-slate-900">{saveDestinationLabel}</span>.
                       </div>
                     </div>
-                    <div className="self-end rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800">
+                    <div className="self-end rounded-2xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(236,254,255,0.88))] px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-sm">
                       Destination: {saveDestinationLabel}
                     </div>
                   </div>
 
                   {outputKind === "worksheet" && (
-                    <div className="mt-4 rounded-[24px] border-2 border-slate-200 bg-slate-50 p-4">
+                    <div className="mt-4 rounded-[24px] border border-violet-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(245,243,255,0.92),rgba(236,254,255,0.88))] p-4 shadow-[0_12px_28px_rgba(139,92,246,0.08)]">
                       <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Worksheet</label>
-                      <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-3">
                         <div>
                           <div className="text-sm font-bold text-slate-900">Include answer key</div>
                           <div className="mt-1 text-xs text-slate-500">Add model answers for printing and export.</div>
@@ -1547,14 +1795,14 @@ export default function CreateResources() {
                   )}
                 </div>
 
-                <div className="space-y-3">
-                  <div className={`${soft} p-4`}>
+                <div className="space-y-4">
+                  <div className={`${soft} border-emerald-100/80 p-4`}>
                     <div className="text-sm font-extrabold text-slate-900">Printable branding</div>
                     <div className="mt-1 text-xs text-slate-600">
                       Footer identity: {teacherNameShort}
-                      {teacherSchoolName ? ` • ${teacherSchoolName}` : ""}
+                      {teacherSchoolName ? `${META_SEPARATOR}${teacherSchoolName}` : ""}
                     </div>
-                    <div className="mt-4 space-y-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <div className="mt-4 space-y-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm">
                       <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
                         <div>
                           <div className="text-sm font-bold text-slate-900">Branding choice</div>
@@ -1580,7 +1828,7 @@ export default function CreateResources() {
                     </div>
                   </div>
 
-                  <div className={`${soft} p-4`}>
+                  <div className={`${soft} border-cyan-100/80 p-4`}>
                     <input
                       ref={manualFileRef}
                       type="file"
@@ -1610,7 +1858,7 @@ export default function CreateResources() {
                     </div>
 
                     {noteComposerOpen && (
-                      <div className="mt-4 rounded-[24px] border-2 border-slate-200 bg-white p-4">
+                      <div className="mt-4 rounded-[24px] border border-white/80 bg-white/92 p-4 shadow-sm">
                         <div>
                           <label className="mb-2 block text-sm font-bold text-slate-700">Note title</label>
                           <input value={newSourceTitle} onChange={(e) => setNewSourceTitle(e.target.value)} placeholder="e.g. Exam technique reminders" className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800" />
@@ -1627,7 +1875,7 @@ export default function CreateResources() {
                       </div>
                     )}
 
-                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                    <div className="mt-4 rounded-2xl border border-white/80 bg-white/90 px-3 py-2 text-sm text-slate-700 shadow-sm">
                       {manualSourceSummary.length === 0 ? "No manual sources added yet" : `${manualSourceSummary.length} manual source${manualSourceSummary.length === 1 ? "" : "s"} ready`}
                     </div>
 
@@ -1635,16 +1883,16 @@ export default function CreateResources() {
                       {uploadedManualFiles.map((item) => {
                         const ext = item.file.name.includes(".") ? item.file.name.split(".").pop()?.toUpperCase() : "FILE";
                         return (
-                          <div key={item.id} className="rounded-[24px] border-2 border-slate-200 bg-white p-4 shadow-sm">
+                          <div key={item.id} className="rounded-[24px] border border-white/80 bg-white/95 p-4 shadow-sm">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="truncate text-sm font-extrabold text-slate-900">{item.file.name}</div>
                                 <div className="mt-1 text-xs text-slate-500">
-                                  Uploaded file • {ext || "FILE"} • {(item.file.size / 1024).toFixed(1)} KB
+                                  Uploaded file{META_SEPARATOR}{ext || "FILE"}{META_SEPARATOR}{(item.file.size / 1024).toFixed(1)} KB
                                 </div>
                               </div>
-                              <button type="button" className="text-sm opacity-70 hover:opacity-100" onClick={() => removeUploadedFile(item.id)} title="Remove file">
-                                🗑️
+                              <button type="button" className="text-xs font-semibold text-slate-500 opacity-80 hover:opacity-100" onClick={() => removeUploadedFile(item.id)} title="Remove file">
+                                Remove
                               </button>
                             </div>
                           </div>
@@ -1652,22 +1900,22 @@ export default function CreateResources() {
                       })}
 
                       {sortedSources.map((source) => (
-                        <div key={source.id} className="rounded-[24px] border-2 border-slate-200 bg-white p-4 shadow-sm">
+                        <div key={source.id} className="rounded-[24px] border border-white/80 bg-white/95 p-4 shadow-sm">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <div className="truncate text-sm font-extrabold text-slate-900">{source.pinned ? "📌 " : ""}{source.title}</div>
-                              <div className="mt-1 text-xs text-slate-500">Pasted note • {new Date(source.createdAt).toLocaleString("en-IE")}</div>
+                              <div className="truncate text-sm font-extrabold text-slate-900">{source.title}</div>
+                              <div className="mt-1 text-xs text-slate-500">Pasted note{META_SEPARATOR}{new Date(source.createdAt).toLocaleString("en-IE")}</div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <button type="button" className="text-sm opacity-70 hover:opacity-100" onClick={() => togglePinSource(source.id)} title={source.pinned ? "Unpin" : "Pin"}>
-                                {source.pinned ? "📌" : "📍"}
+                              <button type="button" className="text-xs font-semibold text-slate-500 opacity-80 hover:opacity-100" onClick={() => togglePinSource(source.id)} title={source.pinned ? "Unpin" : "Pin"}>
+                                {source.pinned ? "Pinned" : "Pin"}
                               </button>
-                              <button type="button" className="text-sm opacity-70 hover:opacity-100" onClick={() => deleteSource(source.id)} title="Delete note">
-                                🗑️
+                              <button type="button" className="text-xs font-semibold text-slate-500 opacity-80 hover:opacity-100" onClick={() => deleteSource(source.id)} title="Delete note">
+                                Remove
                               </button>
                             </div>
                           </div>
-                          <div className="mt-3 whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm leading-relaxed text-slate-700">
+                          <div className="mt-3 whitespace-pre-wrap rounded-2xl border border-cyan-50 bg-[linear-gradient(135deg,rgba(248,250,252,0.95),rgba(236,254,255,0.82))] p-3 text-sm leading-relaxed text-slate-700">
                             {source.text}
                           </div>
                         </div>
@@ -1695,11 +1943,11 @@ export default function CreateResources() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <button type="button" className={btn} onClick={() => { setPrompt(""); setAiErr(null); setPreview(null); }}>
-                    Clear
-                  </button>
+                <button type="button" className={btn} onClick={() => { setPrompt(""); setAiErr(null); setPreview(null); }}>
+                  Clear
+                </button>
                   <button type="button" className={btnPrimary} onClick={runGenerate} disabled={aiBusy || !prompt.trim()}>
-                    {aiBusy ? "Generating…" : `Generate ${labelForOutput(outputKind)}`}
+                    {aiBusy ? "Generating..." : `Generate ${labelForOutput(outputKind)}`}
                   </button>
                 </div>
               </div>
@@ -1723,9 +1971,9 @@ export default function CreateResources() {
                       <div className="truncate text-lg font-extrabold tracking-tight text-slate-900">{preview.title}</div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                         <span>{new Date(preview.createdAt).toLocaleString("en-IE")}</span>
-                        <span>•</span>
+                        <span>|</span>
                         <span>{preview.scopeLabel}</span>
-                        <span>•</span>
+                        <span>|</span>
                         <span>{preview.manualSources.length} manual source{preview.manualSources.length === 1 ? "" : "s"}</span>
                       </div>
                     </div>
@@ -1746,18 +1994,69 @@ export default function CreateResources() {
                     </div>
                   </div>
 
+                  {preview.kind === "ideas" && (
+                    <div className="space-y-3">
+                      <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-3">
+                        <div className="text-sm font-extrabold text-slate-900">Post Individual Ideas</div>
+                        <div className="mt-1 text-xs text-slate-600">
+                          Post one idea at a time to the class timeline in direct classroom language.
+                        </div>
+                        {!canPostIdeasToTimeline && (
+                          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                            Posting is available only when working from a single selected class.
+                          </div>
+                        )}
+                        {ideaPostStatus && (
+                          <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                            {ideaPostStatus}
+                          </div>
+                        )}
+                      </div>
+
+                      {previewIdeas.length > 0 ? (
+                        <div className="grid gap-3 lg:grid-cols-3">
+                          {previewIdeas.map((idea) => {
+                            const title = idea.sections.find((section) => section.heading.toLowerCase() === "title")?.lines[0] || idea.heading;
+                            const task = idea.sections.find((section) => section.heading.toLowerCase() === "the task")?.lines[0] || "";
+                            return (
+                              <div key={idea.id} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                                <div className="text-sm font-extrabold text-slate-900">{idea.heading}</div>
+                                <div className="mt-2 text-sm font-semibold text-slate-800">{title}</div>
+                                {task && <div className="mt-2 text-sm leading-relaxed text-slate-600">{task}</div>}
+                                <div className="mt-4">
+                                  <button
+                                    type="button"
+                                    className={btn}
+                                    onClick={() => postIdeaToClassTimeline(idea)}
+                                    disabled={!canPostIdeasToTimeline || postingIdeaId === idea.id}
+                                  >
+                                    {postingIdeaId === idea.id ? "Posting..." : "Post to class timeline"}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                          Could not split this draft into individual idea cards yet.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <RenderDoc
                     text={preview.content}
                     title={preview.title}
                     subtitle={[
                       preview.scopeLabel,
-                      `${level} • ${detail}`,
+                      `${level}${META_SEPARATOR}${detail}`,
                       `${displayLabelForBucket(preview.saveBucket)}${preview.saveFolder ? ` / ${preview.saveFolder}` : ""}`,
                       new Date(preview.createdAt).toLocaleString("en-IE"),
-                    ].join(" • ")}
+                    ].join(META_SEPARATOR)}
                     footer={`${preview.teacherDisplayNameShort || teacherNameShort}${
-                      preview.schoolName || teacherSchoolName ? ` • ${preview.schoolName || teacherSchoolName}` : ""
-                    } • ${
+                      preview.schoolName || teacherSchoolName ? `${META_SEPARATOR}${preview.schoolName || teacherSchoolName}` : ""
+                    }${META_SEPARATOR}${
                       preview.brandingChoice === "none"
                         ? "No branding"
                         : preview.brandingChoice === "school" && hasSchoolLogoOption
@@ -1768,8 +2067,8 @@ export default function CreateResources() {
 
                   <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500">
                     Footer for print/export: {preview.teacherDisplayNameShort || teacherNameShort}
-                    {preview.schoolName || teacherSchoolName ? ` • ${preview.schoolName || teacherSchoolName}` : ""}
-                    {` • ${
+                    {preview.schoolName || teacherSchoolName ? `${META_SEPARATOR}${preview.schoolName || teacherSchoolName}` : ""}
+                    {`${META_SEPARATOR}${
                       preview.brandingChoice === "none"
                         ? "No branding"
                         : preview.brandingChoice === "school" && hasSchoolLogoOption
@@ -1783,7 +2082,7 @@ export default function CreateResources() {
           
         </div>
 
-        <div className="mt-8 text-xs text-slate-500">© 2026 Elume Beta. P Fitzgerald</div>
+        <div className="mt-8 text-xs text-slate-500">(c) 2026 Elume Beta. P Fitzgerald</div>
       </div>
 
       {scopeOpen && (
@@ -1807,7 +2106,7 @@ export default function CreateResources() {
               </button>
             </div>
 
-            <div className="mt-6 rounded-[32px] border border-emerald-100 bg-[linear-gradient(135deg,rgba(236,253,245,0.78),rgba(236,254,255,0.82),rgba(245,243,255,0.80))] p-5 shadow-[0_16px_40px_rgba(16,185,129,0.08)]">
+            <div className="mt-5 rounded-[32px] border border-emerald-100 bg-[linear-gradient(135deg,rgba(236,253,245,0.78),rgba(236,254,255,0.82),rgba(245,243,255,0.80))] p-4 shadow-[0_16px_40px_rgba(16,185,129,0.08)]">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-500">Step 1</div>
@@ -1818,7 +2117,7 @@ export default function CreateResources() {
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {classes.map((item) => {
                   const visual = tileVisualForClass(item);
                   const active = scopeClassId === item.id;
@@ -1828,7 +2127,7 @@ export default function CreateResources() {
                       type="button"
                       onClick={() => setScopeClassId(item.id)}
                       className={[
-                        "group relative min-h-[148px] rounded-[30px] border-[4px] border-black p-5 text-left shadow-[0_6px_0_rgba(15,23,42,0.16)] transition-all duration-200",
+                        "group relative min-h-[116px] rounded-[30px] border-[4px] border-black px-4 py-3.5 text-left shadow-[0_6px_0_rgba(15,23,42,0.16)] transition-all duration-200",
                         visual.bg,
                         visual.text,
                         active
@@ -1836,21 +2135,24 @@ export default function CreateResources() {
                           : "hover:-translate-y-[2px] hover:shadow-[0_14px_26px_rgba(15,23,42,0.18)]",
                       ].join(" ")}
                     >
-                      <div className="absolute right-4 top-4">
-                        <div className="grid h-9 w-9 place-items-center rounded-2xl border border-white/65 bg-white/15 text-sm font-black backdrop-blur-sm">
-                          {active ? "✓" : "+"}
+                      <div className="absolute right-3 top-3">
+                        <div
+                          className={[
+                            "rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] backdrop-blur-sm",
+                            active
+                              ? "border-white/80 bg-white text-slate-900 shadow-sm"
+                              : "border-white/65 bg-white/15 text-white",
+                          ].join(" ")}
+                        >
+                          {active ? "Selected" : "Choose"}
                         </div>
                       </div>
 
-                      <div className="pr-10">
-                        <div className="text-2xl font-extrabold tracking-tight leading-tight" style={{ textShadow: "0 3px 6px rgba(0,0,0,0.28)" }}>
+                      <div className="pr-24">
+                        <div className="text-xl font-extrabold tracking-tight leading-tight" style={{ textShadow: "0 3px 6px rgba(0,0,0,0.28)" }}>
                           {item.name}
                         </div>
-                        <div className="mt-2 text-sm font-semibold opacity-95">{item.subject}</div>
-                      </div>
-
-                      <div className="mt-6 inline-flex rounded-full border border-white/65 bg-white/15 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] backdrop-blur-sm">
-                        {active ? "Selected" : "Choose"}
+                        <div className="mt-1.5 text-sm font-semibold opacity-95">{item.subject}</div>
                       </div>
                     </button>
                   );
@@ -1864,19 +2166,19 @@ export default function CreateResources() {
               )}
 
               {classes.length > 0 && (
-                <div className="mt-4 text-sm text-slate-700">
+                <div className="mt-3 text-sm text-slate-700">
                   Selected class: <span className="font-semibold text-slate-900">{classById.get(scopeClassId)?.name || "Choose a class"}</span>
                 </div>
               )}
             </div>
 
-            <div className="mt-6 rounded-[32px] border border-cyan-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.95),rgba(239,246,255,0.96),rgba(245,243,255,0.96))] p-5 shadow-[0_16px_40px_rgba(14,165,233,0.08)]">
+            <div className="mt-4 rounded-[32px] border border-cyan-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.95),rgba(239,246,255,0.96),rgba(245,243,255,0.96))] p-4 shadow-[0_16px_40px_rgba(14,165,233,0.08)]">
               <div>
                 <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-500">Step 2</div>
                 <div className="mt-1 text-lg font-extrabold text-slate-900">How do you want to work?</div>
               </div>
 
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
                 {([
                   ["single", "Single class", "Work from one selected class.", "from-emerald-50 via-white to-cyan-50", "border-emerald-200"],
                   ["group", "Group", "Choose 2 to 3 classes together.", "from-cyan-50 via-white to-violet-50", "border-cyan-200"],
@@ -1889,7 +2191,7 @@ export default function CreateResources() {
                       type="button"
                       onClick={() => setScopeMode(mode)}
                       className={[
-                        "rounded-[28px] border-2 p-4 text-left transition",
+                        "rounded-[28px] border-2 p-3.5 text-left transition",
                         `bg-gradient-to-br ${gradient}`,
                         active
                           ? "border-slate-900 shadow-[0_16px_36px_rgba(15,23,42,0.14)] ring-2 ring-slate-200"
@@ -1899,7 +2201,7 @@ export default function CreateResources() {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="text-base font-extrabold text-slate-900">{title}</div>
-                          <div className="mt-2 text-sm leading-relaxed text-slate-600">{description}</div>
+                          <div className="mt-1.5 text-sm leading-relaxed text-slate-600">{description}</div>
                         </div>
                         <div
                           className={[
@@ -1909,7 +2211,7 @@ export default function CreateResources() {
                               : "border-white/80 bg-white/90 text-slate-500",
                           ].join(" ")}
                         >
-                          {active ? "✓" : ""}
+                          {active ? "OK" : ""}
                         </div>
                       </div>
                     </button>
@@ -1966,7 +2268,7 @@ export default function CreateResources() {
                       >
                         <div className="absolute right-4 top-4">
                           <div className="grid h-9 w-9 place-items-center rounded-2xl border border-white/65 bg-white/15 text-sm font-black backdrop-blur-sm">
-                            {checked ? "✓" : disableNewSelection ? "!" : "+"}
+                          {checked ? "OK" : disableNewSelection ? "!" : "+"}
                           </div>
                         </div>
 
@@ -2001,7 +2303,7 @@ export default function CreateResources() {
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/80 bg-white/85 px-4 py-4 backdrop-blur sm:px-5 md:px-6">
-              <div className="text-xs text-slate-500">{loadingClasses ? "Loading classes…" : `${classes.length} classes available`}</div>
+              <div className="text-xs text-slate-500">{loadingClasses ? "Loading classes..." : `${classes.length} classes available`}</div>
               <div className="flex items-center gap-2">
                 <button type="button" className={btn} onClick={() => setScopeOpen(false)}>
                   Cancel
@@ -2017,3 +2319,4 @@ export default function CreateResources() {
     </div>
   );
 }
+

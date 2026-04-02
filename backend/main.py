@@ -532,8 +532,6 @@ LESSON_PLAN_SECTION_ORDER = [
     "Learning Intentions",
     "Success Criteria",
     "Lesson Flow",
-    "Activity and Application",
-    "Plenary and Closure",
     "Resources",
     "Differentiation",
     "Assessment",
@@ -545,25 +543,37 @@ LESSON_PLAN_SECTION_DISPLAY = {
     "Learning Intentions": "Learning Intentions",
     "Success Criteria": "Success Criteria",
     "Lesson Flow": "Lesson Flow",
-    "Activity and Application": "Activity and Application (20-25 mins)",
-    "Plenary and Closure": "Plenary and Closure (5 mins)",
     "Resources": "Resources",
     "Differentiation": "Differentiation",
     "Assessment": "Assessment",
     "Suggested Homework": "Suggested Homework",
 }
 
+LESSON_FLOW_SUBHEADINGS = [
+    "Starter (5 Minutes)",
+    "Teaching and Development (35 Minutes)",
+    "Activity and Application (20 Minutes)",
+    "Plenary and Closure (5 Minutes)",
+]
+
 LESSON_PLAN_SUBHEADING_DISPLAY = {
-    "starter": ("Lesson Flow", "Starter (5-10 mins)"),
-    "teaching / development": ("Lesson Flow", "Teaching and Development (15-20 mins)"),
-    "teaching and development": ("Lesson Flow", "Teaching and Development (15-20 mins)"),
-    "development": ("Lesson Flow", "Teaching and Development (15-20 mins)"),
-    "activity / application": ("Activity and Application", "Activity and Application (20-25 mins)"),
-    "activity and application": ("Activity and Application", "Activity and Application (20-25 mins)"),
-    "application": ("Activity and Application", "Activity and Application (20-25 mins)"),
-    "plenary / closure": ("Plenary and Closure", "Plenary and Closure (5 mins)"),
-    "plenary and closure": ("Plenary and Closure", "Plenary and Closure (5 mins)"),
-    "closure": ("Plenary and Closure", "Plenary and Closure (5 mins)"),
+    "starter": ("Lesson Flow", "Starter (5 Minutes)"),
+    "teaching / development": ("Lesson Flow", "Teaching and Development (35 Minutes)"),
+    "teaching and development": ("Lesson Flow", "Teaching and Development (35 Minutes)"),
+    "development": ("Lesson Flow", "Teaching and Development (35 Minutes)"),
+    "activity / application": ("Lesson Flow", "Activity and Application (20 Minutes)"),
+    "activity and application": ("Lesson Flow", "Activity and Application (20 Minutes)"),
+    "application": ("Lesson Flow", "Activity and Application (20 Minutes)"),
+    "plenary / closure": ("Lesson Flow", "Plenary and Closure (5 Minutes)"),
+    "plenary and closure": ("Lesson Flow", "Plenary and Closure (5 Minutes)"),
+    "closure": ("Lesson Flow", "Plenary and Closure (5 Minutes)"),
+}
+
+WORKSHEET_SECTION_DISPLAY = {
+    "Instructions": "Instructions",
+    "Tasks": "Tasks",
+    "Extension Challenge": "Extension Challenge",
+    "Answer Key": "Answer Key",
 }
 
 
@@ -670,10 +680,10 @@ def _normalise_section_name(name: str) -> str:
         "success criteria": "Success Criteria",
         "success criterion": "Success Criteria",
         "lesson flow": "Lesson Flow",
-        "activity and application": "Activity and Application",
-        "activity / application": "Activity and Application",
-        "plenary and closure": "Plenary and Closure",
-        "plenary / closure": "Plenary and Closure",
+        "activity and application": "Lesson Flow",
+        "activity / application": "Lesson Flow",
+        "plenary and closure": "Lesson Flow",
+        "plenary / closure": "Lesson Flow",
         "resources": "Resources",
         "differentiation": "Differentiation",
         "assessment": "Assessment",
@@ -704,6 +714,52 @@ def _append_lesson_plan_item(
     if item_kind == "subheading" and any(kind == "subheading" and text == clean_text for kind, text in target):
         return
     target.append((item_kind, clean_text))
+
+
+def _lesson_flow_items_for_subheading(items: list[tuple[str, str]], subheading: str) -> list[tuple[str, str]]:
+    active = False
+    collected: list[tuple[str, str]] = []
+    for kind, text in items:
+        if kind == "subheading":
+            if text == subheading:
+                active = True
+                continue
+            if active:
+                break
+            continue
+        if active:
+            collected.append((kind, text))
+    return collected
+
+
+def _lesson_flow_has_subheading(items: list[tuple[str, str]], subheading: str) -> bool:
+    return any(kind == "subheading" and text == subheading for kind, text in items)
+
+
+def _lesson_flow_has_content(items: list[tuple[str, str]], subheading: str) -> bool:
+    return bool(_lesson_flow_items_for_subheading(items, subheading))
+
+
+def _ensure_lesson_flow_subheading(
+    sections: dict[str, list[tuple[str, str]]],
+    subheading: str,
+    fallback_lines: list[str],
+) -> None:
+    flow_items = sections["Lesson Flow"]
+    if _lesson_flow_has_content(flow_items, subheading):
+        return
+    if not _lesson_flow_has_subheading(flow_items, subheading):
+        _append_lesson_plan_item(sections, "Lesson Flow", "subheading", subheading)
+    for line in fallback_lines:
+        _append_lesson_plan_item(sections, "Lesson Flow", "bullet", line)
+
+
+def _extract_homework_text(text: str) -> str | None:
+    clean = _clean_lesson_plan_text(text)
+    match = re.match(r"^(suggested homework|homework)\s*:\s*(.+)$", clean, flags=re.IGNORECASE)
+    if match:
+        return _clean_lesson_plan_text(match.group(2))
+    return None
 
 
 def _lesson_plan_meta_line(meta: dict[str, str]) -> str:
@@ -858,6 +914,227 @@ def _is_lesson_plan_pdf(title: str, meta: dict | None = None) -> bool:
     return "lesson plan" in (title or "").strip().lower()
 
 
+def _is_worksheet_pdf(title: str, meta: dict | None = None) -> bool:
+    meta = meta or {}
+    output_kind = str(meta.get("outputKind") or meta.get("kind") or "").strip().lower()
+    if output_kind == "worksheet":
+        return True
+    return "worksheet" in (title or "").strip().lower()
+
+
+def _normalise_worksheet_heading(name: str) -> str:
+    key = _clean_lesson_plan_text(_clean_heading_text(name or "")).lower()
+    mapping = {
+        "instructions": "Instructions",
+        "short instructions": "Instructions",
+        "task 1": "Tasks",
+        "task 2": "Tasks",
+        "task 3": "Tasks",
+        "task 4": "Tasks",
+        "task 5": "Tasks",
+        "tasks": "Tasks",
+        "questions": "Tasks",
+        "question 1": "Tasks",
+        "question 2": "Tasks",
+        "question 3": "Tasks",
+        "question 4": "Tasks",
+        "question 5": "Tasks",
+        "extension challenge": "Extension Challenge",
+        "extension": "Extension Challenge",
+        "challenge": "Extension Challenge",
+        "reflection": "Extension Challenge",
+        "answer key": "Answer Key",
+        "answers": "Answer Key",
+    }
+    return mapping.get(key, "")
+
+
+def _clean_worksheet_line(value: str) -> str:
+    return _clean_lesson_plan_text(_clean_heading_text(value or ""))
+
+
+def _worksheet_display_line(value: str) -> str:
+    text = _clean_worksheet_line(value)
+    lowered = text.lower()
+    if lowered.startswith("instructions:"):
+        text = text.split(":", 1)[1].strip()
+    if lowered.startswith("short instructions:"):
+        text = text.split(":", 1)[1].strip()
+    return text
+
+
+def _parse_worksheet_pdf_content(title: str, content: str, meta: dict | None = None) -> dict[str, Any]:
+    body = _strip_export_preamble(content)
+    meta = meta or {}
+    worksheet_title = (title or "").strip() or "Worksheet"
+    instructions: list[str] = []
+    tasks: list[dict[str, Any]] = []
+    extension: list[str] = []
+    answers: list[str] = []
+    class_line = ""
+    found_structure = False
+
+    current_section = ""
+    current_task: dict[str, Any] | None = None
+
+    def flush_task() -> None:
+        nonlocal current_task
+        if current_task and (current_task.get("title") or current_task.get("lines")):
+            tasks.append(current_task)
+        current_task = None
+
+    for raw in body.split("\n"):
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped == "---":
+            continue
+
+        if stripped.lower().startswith("worksheet:"):
+            candidate = _clean_lesson_plan_title(stripped)
+            if candidate:
+                worksheet_title = candidate
+                found_structure = True
+            continue
+
+        if stripped.lower().startswith("worksheet title:"):
+            candidate = _clean_lesson_plan_text(stripped.split(":", 1)[1])
+            if candidate:
+                worksheet_title = candidate
+                found_structure = True
+            continue
+
+        if stripped.lower().startswith("class:"):
+            class_line = _clean_lesson_plan_text(stripped.split(":", 1)[1])
+            if class_line:
+                found_structure = True
+            continue
+
+        if stripped.lower().startswith("student name:") or stripped.lower().startswith("date:"):
+            found_structure = True
+            continue
+
+        heading = _normalise_worksheet_heading(stripped)
+        if heading:
+            if heading != "Tasks":
+                flush_task()
+            current_section = heading
+            found_structure = True
+            continue
+
+        clean = _worksheet_display_line(stripped)
+        if not clean:
+            continue
+
+        if current_section == "Instructions":
+            instructions.append(clean)
+            found_structure = True
+            continue
+
+        if current_section == "Tasks":
+            task_heading = _clean_heading_text(stripped)
+            if re.match(r"^(task|question)\s*\d+(\s*[:\-]\s*.+)?$", task_heading, flags=re.IGNORECASE):
+                flush_task()
+                title_match = re.match(r"^((?:task|question)\s*\d+)\s*[:\-]?\s*(.*)$", task_heading, flags=re.IGNORECASE)
+                if title_match:
+                    current_task = {"title": title_match.group(1).title(), "lines": []}
+                    trailing = _clean_worksheet_line(title_match.group(2))
+                    if trailing:
+                        current_task["lines"].append(trailing)
+                else:
+                    current_task = {"title": task_heading, "lines": []}
+                found_structure = True
+                continue
+            numbered = re.match(r"^(\d+)[\.\)]\s*(.+)$", stripped)
+            if numbered:
+                flush_task()
+                current_task = {"title": f"Task {numbered.group(1)}", "lines": [_clean_lesson_plan_text(numbered.group(2))]}
+                found_structure = True
+                continue
+            if stripped.startswith("#"):
+                continue
+            if current_task is None:
+                current_task = {"title": f"Task {len(tasks) + 1}", "lines": []}
+            current_task["lines"].append(clean)
+            found_structure = True
+            continue
+
+        if current_section == "Extension Challenge":
+            extension.append(clean)
+            found_structure = True
+            continue
+
+        if current_section == "Answer Key":
+            answers.append(clean)
+            found_structure = True
+            continue
+
+        task_heading = _clean_heading_text(stripped)
+        if re.match(r"^(task|question)\s*\d+(\s*[:\-]\s*.+)?$", task_heading, flags=re.IGNORECASE):
+            flush_task()
+            title_match = re.match(r"^((?:task|question)\s*\d+)\s*[:\-]?\s*(.*)$", task_heading, flags=re.IGNORECASE)
+            if title_match:
+                current_task = {"title": title_match.group(1).title(), "lines": []}
+                trailing = _clean_worksheet_line(title_match.group(2))
+                if trailing:
+                    current_task["lines"].append(trailing)
+            else:
+                current_task = {"title": task_heading, "lines": []}
+            current_section = "Tasks"
+            found_structure = True
+            continue
+
+        numbered = re.match(r"^(\d+)[\.\)]\s*(.+)$", stripped)
+        if numbered:
+            flush_task()
+            current_task = {"title": f"Task {numbered.group(1)}", "lines": [_clean_worksheet_line(numbered.group(2))]}
+            current_section = "Tasks"
+            found_structure = True
+            continue
+
+        if not current_section and clean:
+            if not instructions:
+                instructions.append(clean)
+                found_structure = True
+                continue
+            if current_task is None:
+                current_task = {"title": f"Task {len(tasks) + 1}", "lines": []}
+            current_section = "Tasks"
+            current_task["lines"].append(clean)
+            found_structure = True
+            continue
+
+    flush_task()
+
+    if not instructions:
+        instructions = [
+            "Read each task carefully and answer in clear subject-specific language.",
+            "Show your working or explanation where appropriate.",
+        ]
+
+    if not tasks and not found_structure:
+        tasks = [
+            {"title": "Task 1", "lines": ["Complete the first question using the topic and key vocabulary provided."]},
+            {"title": "Task 2", "lines": ["Apply what you know in a short written response or worked example."]},
+        ]
+
+    for idx, task in enumerate(tasks, start=1):
+        task["title"] = task.get("title") or f"Task {idx}"
+        task["lines"] = [line for line in task.get("lines", []) if line]
+
+    include_answers = bool(meta.get("worksheetIncludeAnswers"))
+    if not include_answers:
+        answers = []
+
+    return {
+        "title": worksheet_title,
+        "classLine": class_line or str(meta.get("scopeLabel") or "").strip(),
+        "instructions": instructions,
+        "tasks": tasks,
+        "extension": extension,
+        "answers": answers,
+    }
+
+
 def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None = None) -> dict:
     body = _strip_export_preamble(content)
     meta = meta or {}
@@ -896,14 +1173,18 @@ def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None =
         if normalised:
             current_section = normalised
             section_zero = False
+            if heading in {"Activity and Application", "Plenary and Closure"}:
+                mapped = _normalise_lesson_plan_subheading(heading)
+                if mapped:
+                    current_section = mapped[0]
+                    _append_lesson_plan_item(sections, current_section, "subheading", mapped[1])
             continue
 
         subheading = _normalise_lesson_plan_subheading(heading)
-        if subheading and (stripped.startswith("### ") or current_section in {"Lesson Flow", "Activity and Application", "Plenary and Closure"}):
+        if subheading and (stripped.startswith("### ") or current_section == "Lesson Flow"):
             current_section = subheading[0]
             section_zero = False
-            if current_section == "Lesson Flow":
-                _append_lesson_plan_item(sections, current_section, "subheading", subheading[1])
+            _append_lesson_plan_item(sections, current_section, "subheading", subheading[1])
             continue
 
         if ":" in stripped:
@@ -969,17 +1250,41 @@ def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None =
             overview_items.append((kind, text))
     sections["Learning Overview"] = overview_items
 
-    if not sections["Lesson Flow"]:
-        _append_lesson_plan_item(sections, "Lesson Flow", "subheading", "Starter (5-10 mins)")
-        _append_lesson_plan_item(sections, "Lesson Flow", "bullet", "Open with a short retrieval, discussion, or settling task linked to prior learning.")
-        _append_lesson_plan_item(sections, "Lesson Flow", "subheading", "Teaching and Development (15-20 mins)")
-        _append_lesson_plan_item(sections, "Lesson Flow", "bullet", "Model and explain the core learning clearly using worked examples, visuals, or teacher questioning.")
+    moved_homework: list[tuple[str, str]] = []
+    for section_name in list(sections.keys()):
+        if section_name == "Suggested Homework":
+            continue
+        cleaned_items: list[tuple[str, str]] = []
+        for item_kind, item_text in sections[section_name]:
+            extracted_homework = _extract_homework_text(item_text)
+            if extracted_homework:
+                moved_homework.append(("bullet", extracted_homework))
+                continue
+            cleaned_items.append((item_kind, item_text))
+        sections[section_name] = cleaned_items
+    for item_kind, item_text in moved_homework:
+        _append_lesson_plan_item(sections, "Suggested Homework", item_kind, item_text)
 
-    if not sections["Activity and Application"]:
-        _append_lesson_plan_item(sections, "Activity and Application", "bullet", "Students apply the new learning through a focused task with clear teacher circulation and support.")
-
-    if not sections["Plenary and Closure"]:
-        _append_lesson_plan_item(sections, "Plenary and Closure", "bullet", "Finish with a quick review, exit prompt, or check for understanding that captures the main learning.")
+    _ensure_lesson_flow_subheading(
+        sections,
+        "Starter (5 Minutes)",
+        ["Begin with a short retrieval or settling task linked to recent learning."],
+    )
+    _ensure_lesson_flow_subheading(
+        sections,
+        "Teaching and Development (35 Minutes)",
+        ["Explain and model the new learning using clear examples, questioning, and guided teacher input."],
+    )
+    _ensure_lesson_flow_subheading(
+        sections,
+        "Activity and Application (20 Minutes)",
+        ["Students complete a focused task that applies the learning with teacher circulation and feedback."],
+    )
+    _ensure_lesson_flow_subheading(
+        sections,
+        "Plenary and Closure (5 Minutes)",
+        ["Close with a brief review, exit prompt, or check for understanding."],
+    )
 
     ordered_sections = [(name, sections[name]) for name in LESSON_PLAN_SECTION_ORDER if sections[name]]
     return {"meta": top_meta, "sections": ordered_sections}
@@ -1086,8 +1391,9 @@ def _pdf_from_markdownish(title: str, content: str, teacher: str | None = None, 
     output_kind = str(meta.get("outputKind") or meta.get("kind") or "").strip()
     school_logo_available = bool(meta.get("schoolLogoAvailable"))
     lesson_plan_mode = _is_lesson_plan_pdf(title, meta)
+    worksheet_mode = _is_worksheet_pdf(title, meta)
     footer_logo = _prepare_pdf_png_image(_load_footer_logo_bytes(branding_choice, meta))
-    footer_reserved_height = 74 if lesson_plan_mode else bottom
+    footer_reserved_height = 74 if lesson_plan_mode or worksheet_mode else bottom
     usable_width = page_width - left - right
 
     pages: list[str] = []
@@ -1117,6 +1423,26 @@ def _pdf_from_markdownish(title: str, content: str, teacher: str | None = None, 
         ops.append(f"{r:.3f} {g:.3f} {b:.3f} RG")
         ops.append(f"{width:.2f} w")
         ops.append(f"{left} {y_value:.2f} m {page_width - right} {y_value:.2f} l S")
+
+    def add_rule_segment(x1: float, x2: float, y_value: float, color: tuple[float, float, float] = (0.84, 0.88, 0.92), width: float = 1.0) -> None:
+        r, g, b = color
+        ops.append(f"{r:.3f} {g:.3f} {b:.3f} RG")
+        ops.append(f"{width:.2f} w")
+        ops.append(f"{x1:.2f} {y_value:.2f} m {x2:.2f} {y_value:.2f} l S")
+
+    def add_light_box(
+        x: float,
+        y_value: float,
+        width: float,
+        height: float,
+        fill: tuple[float, float, float] = (0.97, 0.98, 0.99),
+        stroke: tuple[float, float, float] = (0.86, 0.90, 0.94),
+    ) -> None:
+        fr, fg, fb = fill
+        sr, sg, sb = stroke
+        ops.append(f"{fr:.3f} {fg:.3f} {fb:.3f} rg")
+        ops.append(f"{sr:.3f} {sg:.3f} {sb:.3f} RG")
+        ops.append(f"{x:.2f} {y_value:.2f} {width:.2f} {height:.2f} re B")
 
     def fit_logo_to_box(
         image: dict[str, Any] | None,
@@ -1171,9 +1497,19 @@ def _pdf_from_markdownish(title: str, content: str, teacher: str | None = None, 
             first = False
         y -= extra_after
 
+    def add_writing_lines(count: int = 3, gap: float = 18.0) -> None:
+        nonlocal y
+        ensure_room((count * gap) + 4)
+        for _ in range(count):
+            add_rule(y - 8, color=(0.88, 0.91, 0.95), width=0.8)
+            y -= gap
+
     def add_header(current_page: int) -> None:
         nonlocal y
         if lesson_plan_mode:
+            y = page_height - top
+            return
+        if worksheet_mode:
             y = page_height - top
             return
         add_text_line(title, left, page_height - 34, 10, font_name="F2", color=(0.20, 0.25, 0.33))
@@ -1198,6 +1534,16 @@ def _pdf_from_markdownish(title: str, content: str, teacher: str | None = None, 
             add_text_line(f"Page {page_number}", page_x, footer_y, 9, color=(0.42, 0.48, 0.56))
             if footer_logo:
                 draw_footer_logo(footer_y + 2, page_width - right, max_width=logo_area_width, max_height=20.0)
+        elif worksheet_mode:
+            footer_y = 28
+            footer_left = " | ".join([part for part in [teacher_short, school_name] if part])
+            footer_left = trim_footer_text(footer_left, 42)
+            logo_area_width = 88.0 if footer_logo else 0.0
+            if footer_left:
+                add_text_line(footer_left, left, footer_y, 9, color=(0.42, 0.48, 0.56))
+            add_text_line(f"Page {page_number}", (page_width / 2) - 10, footer_y, 9, color=(0.42, 0.48, 0.56))
+            if footer_logo:
+                draw_footer_logo(footer_y + 2, page_width - right, max_width=logo_area_width, max_height=18.0)
         else:
             footer_left = " | ".join([part for part in [teacher_short, school_name] if part])
             footer_left = trim_footer_text(footer_left, 48)
@@ -1275,6 +1621,78 @@ def _pdf_from_markdownish(title: str, content: str, teacher: str | None = None, 
                     continue
                 draw_wrapped(item_text, left, 11, 78, 14, color=(0.14, 0.18, 0.24), extra_after=3)
             y -= 10
+    elif worksheet_mode:
+        parsed = _parse_worksheet_pdf_content(title, content, meta=meta)
+        display_title = parsed["title"]
+        meta_parts = [part for part in [level] if part]
+        meta_line = " | ".join(meta_parts)
+
+        def draw_worksheet_lines(
+            lines: list[str],
+            *,
+            x: float,
+            text_width: int = 72,
+            font_size: int = 11,
+            line_height: float = 14,
+            extra_after: float = 2,
+        ) -> None:
+            for item in lines:
+                clean_item = _worksheet_display_line(item)
+                if not clean_item:
+                    continue
+                numbered_match = re.match(r"^(\d+[\.\)])\s+(.+)$", clean_item)
+                bullet_match = clean_item.startswith("- ") or clean_item.startswith("* ")
+                if numbered_match:
+                    draw_wrapped(f"{numbered_match.group(1)} {numbered_match.group(2)}", x, font_size, text_width, line_height, color=(0.14, 0.18, 0.24), extra_after=extra_after)
+                    continue
+                if bullet_match:
+                    add_bullet_line(clean_item[2:].strip(), indent=max(int(x - left), 10), width_chars=text_width - 2, font_size=font_size, line_height=line_height, extra_after=extra_after)
+                    continue
+                draw_wrapped(clean_item, x, font_size, text_width, line_height, color=(0.14, 0.18, 0.24), extra_after=extra_after)
+
+        draw_wrapped(display_title, left, 22, 34, 24, font_name="F2", color=(0.08, 0.14, 0.22), extra_after=4)
+        if meta_line:
+            draw_wrapped(meta_line, left, 10, 78, 13, color=(0.38, 0.45, 0.55), extra_after=4)
+        add_rule(y, color=(0.83, 0.89, 0.95), width=1.0)
+        y -= 18
+
+        ensure_room(64)
+        add_text_line("Student Name", left, y, 10, font_name="F2", color=(0.25, 0.31, 0.40))
+        add_rule_segment(left + 74, left + 224, y - 4, color=(0.78, 0.83, 0.89), width=0.9)
+        add_text_line("Class", left + 244, y, 10, font_name="F2", color=(0.25, 0.31, 0.40))
+        add_rule_segment(left + 278, left + 392, y - 4, color=(0.78, 0.83, 0.89), width=0.9)
+        add_text_line("Date", left + 408, y, 10, font_name="F2", color=(0.25, 0.31, 0.40))
+        add_rule_segment(left + 440, page_width - right, y - 4, color=(0.78, 0.83, 0.89), width=0.9)
+        y -= 22
+        if parsed["classLine"]:
+            draw_wrapped(f"Class group: {parsed['classLine']}", left, 10, 78, 13, color=(0.38, 0.45, 0.55), extra_after=8)
+
+        draw_wrapped("Instructions", left, 15, 54, 18, font_name="F2", color=(0.10, 0.30, 0.37), extra_after=2)
+        draw_worksheet_lines(parsed["instructions"], x=left, text_width=76, font_size=11, line_height=14, extra_after=3)
+        y -= 8
+
+        for idx, task in enumerate(parsed["tasks"], start=1):
+            task_lines = [line for line in task["lines"] if _worksheet_display_line(line)]
+            writing_line_count = 4 if len(task_lines) <= 2 else 3
+            estimated_height = 92 + (len(task_lines) * 16) + (writing_line_count * 12)
+            ensure_room(estimated_height)
+            add_light_box(left, y - 12, usable_width, 32)
+            draw_wrapped(task["title"] or f"Task {idx}", left + 12, 13, 60, 16, font_name="F2", color=(0.10, 0.24, 0.31), extra_after=1)
+            y -= 18
+            draw_worksheet_lines(task_lines, x=left + 12, text_width=72, font_size=11, line_height=15, extra_after=3)
+            add_writing_lines(writing_line_count)
+            y -= 8
+
+        if parsed["extension"]:
+            draw_wrapped("Extension Challenge", left, 15, 54, 18, font_name="F2", color=(0.10, 0.30, 0.37), extra_after=3)
+            draw_worksheet_lines(parsed["extension"], x=left + 12, text_width=72, font_size=11, line_height=15, extra_after=3)
+            add_writing_lines(2)
+            y -= 8
+
+        if parsed["answers"]:
+            draw_wrapped("Teacher Answer Key", left, 15, 54, 18, font_name="F2", color=(0.10, 0.30, 0.37), extra_after=3)
+            draw_worksheet_lines(parsed["answers"], x=left + 12, text_width=72, font_size=11, line_height=15, extra_after=3)
+            y -= 6
     else:
         body = _strip_export_preamble(content)
         blocks: list[tuple[str, str]] = [("title", title)]
@@ -1504,11 +1922,14 @@ def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
         email_verified=False,
         billing_onboarding_required=True,
     )
+
     try:
         db.add(user)
         db.flush()
+
         raw_token = secrets.token_urlsafe(32)
         now = datetime.utcnow()
+
         db.add(
             models.EmailVerificationTokenModel(
                 user_id=user.id,
@@ -1516,6 +1937,7 @@ def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
                 expires_at=now + timedelta(hours=24),
             )
         )
+
         verify_link = f"{APP_BASE_URL.rstrip('/')}/#/verify-email?token={raw_token}"
         body = (
             f"Hello {first_name},\n\n"
@@ -1525,7 +1947,9 @@ def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
             "This link will expire in 24 hours.\n\n"
             "Elume"
         )
+
         _send_email(user.email, "Verify your Elume account", body)
+
         admin_notify_email = (os.getenv("ADMIN_SIGNUP_NOTIFY_EMAIL") or "admin@elume.ie").strip()
         if admin_notify_email:
             admin_body = (
@@ -1540,21 +1964,22 @@ def auth_register(payload: AuthRegister, db: Session = Depends(get_db)):
                 _send_email(admin_notify_email, "New Elume teacher signup", admin_body)
             except Exception:
                 logger.exception("Failed to send admin signup notification for %s", email)
+
         db.commit()
         db.refresh(user)
+
     except HTTPException:
         db.rollback()
         raise
-    except Exception:
+    except Exception as e:
         db.rollback()
-        logger.exception("Failed to register teacher account for %s", email)
+        logger.exception("Failed to register teacher account for %s; error=%r", email, e)
         raise HTTPException(status_code=500, detail="Failed to create account")
 
     return {
         "success": True,
         "message": "Account created. Please check your email to verify your account before signing in.",
     }
-
 
 @app.post("/auth/dev-auto-login", response_model=DevAutoLoginResponse)
 def auth_dev_auto_login(
@@ -6363,6 +6788,11 @@ def _links_to_storage(v):
     return json.dumps(_links_to_list(v), ensure_ascii=False)
 
 
+class PostUpdatePayload(BaseModel):
+    content: str = ""
+    links: list[str] | str | None = None
+
+
 @app.get("/classes/{class_id}/posts")
 def get_posts(
     class_id: int,
@@ -6468,6 +6898,59 @@ async def add_post(
         "content": p.content,
         "links": rewritten_links,
         "createdAt": getattr(p, "created_at", None).isoformat() if getattr(p, "created_at", None) else None,
+    }
+
+
+@app.put("/posts/{post_id}")
+def update_post(
+    post_id: int,
+    payload: PostUpdatePayload,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    post = db.query(PostModel).filter(PostModel.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    get_owned_class_or_404(post.class_id, db, user)
+
+    content = (payload.content or "").strip()
+    links = _links_to_list(payload.links)
+
+    existing_links = _links_to_list(getattr(post, "links", None))
+    kept_links: list[str] = []
+    for link in links:
+        if link.startswith("/posts/"):
+            match = re.match(r"^/posts/\d+/attachments/(\d+)$", link.strip())
+            if match:
+                idx = int(match.group(1))
+                if 0 <= idx < len(existing_links):
+                    kept_links.append(existing_links[idx])
+                    continue
+        kept_links.append(link)
+
+    if not content and not kept_links:
+        raise HTTPException(status_code=400, detail="Post must contain text or a link")
+
+    post.content = content
+    post.links = _links_to_storage(kept_links)
+    db.commit()
+    db.refresh(post)
+
+    final_links = _links_to_list(getattr(post, "links", None))
+    rewritten_links = []
+    for idx, link in enumerate(final_links):
+        if _internal_post_upload_relpath_or_none(link):
+            rewritten_links.append(f"/posts/{post.id}/attachments/{idx}")
+        else:
+            rewritten_links.append(link)
+
+    return {
+        "id": post.id,
+        "class_id": post.class_id,
+        "author": getattr(post, "author", ""),
+        "content": getattr(post, "content", ""),
+        "links": rewritten_links,
+        "createdAt": getattr(post, "created_at", None).isoformat() if getattr(post, "created_at", None) else None,
     }
 
 
@@ -8849,9 +9332,9 @@ def ai_create_resources(
         or "elume"
     )
     audience_rule = {
-        "ideas": "Produce quick teacher-facing suggestions that can be used immediately in class.",
+        "ideas": "Produce three structured teacher-facing teaching ideas for immediate classroom use, not a lesson plan.",
         "lesson_plan": "Produce a concise teacher-facing lesson plan for an Irish post-primary classroom using the exact requested section structure.",
-        "worksheet": "Produce a student-facing printable worksheet suitable for classroom use.",
+        "worksheet": "Produce a clean student-facing printable worksheet for an Irish post-primary classroom, not a lesson plan.",
         "scheme": "Produce sequenced teacher planning for a scheme of work.",
         "dept_plan": "Produce department-facing planning for shared use across a subject team.",
     }.get((payload.kind or "").strip().lower(), "Produce a clear classroom resource.")
@@ -8901,21 +9384,52 @@ def ai_create_resources(
         "- Keep the response appropriate to the output kind.\n"
         "- When sources are present, use them carefully and do not invent unsupported facts.\n"
         "- When no sources are present, draft sensibly but avoid fabricated curriculum citations.\n"
-        "- If worksheet, make it suitable for students and include an answer key unless told not to.\n"
+        "- If ideas, produce exactly 3 structured teaching ideas and do not turn them into a lesson plan.\n"
+        "- If ideas, follow this exact top-level structure: Idea 1: Thought-provoking question; Idea 2: Thought-provoking activity; Idea 3: Collaborative Board session.\n"
+        "- If ideas, Idea 1 must centre on a question that can be answered by an individual or a group.\n"
+        "- If ideas, Idea 2 must centre on an activity that can be completed by an individual or a group.\n"
+        "- If ideas, Idea 3 must centre on a Collaborative Board task using Elume's built-in collaboration technology.\n"
+        "- If ideas, for each idea include practical teacher-facing elements such as a Title, The Hook, The Task, optional Board / Whiteboard / Collaboration integration where relevant, and Why it works or the key discussion angle.\n"
+        "- If ideas, keep the ideas concise, practical, varied in wording, and ready for immediate use in an Irish post-primary classroom.\n"
+        "- If ideas, do not generate lesson-plan sections such as Learning Intentions, Success Criteria, Lesson Flow, Resources, Assessment, or Homework.\n"
+        "- If worksheet, write for Irish post-primary / secondary students using British English.\n"
+        "- If worksheet, make it feel like a clean printable classroom handout, not a lesson plan or teacher note.\n"
+        "- If worksheet, keep the wording concise, student-facing, and easy to follow in print.\n"
+        "- If worksheet, do not write like a raw markdown dump.\n"
+        "- If worksheet, follow this structure: Worksheet Title, Student Name line, Class line, Date line, short Instructions, 3 to 5 worksheet task sections, Extension Challenge if useful, and Answer Key only if included.\n"
+        "- If worksheet, anchor the content closely to the selected source notes or selected folder context whenever sources are available.\n"
+        "- If worksheet, use the selected source notes first and derive named facts, keywords, processes, definitions, and examples directly from the provided material.\n"
+        "- If worksheet, avoid broad generic worksheet questions when more specific source-grounded questions are possible.\n"
+        "- If worksheet, prefer real handout tasks such as a fill-in-the-blanks paragraph, label or identify, short-answer questions tied to exact concepts from the notes, sequencing or process steps from the notes, and compare or contrast tasks using concepts explicitly present in the notes.\n"
+        "- If worksheet, one task should usually be a proper fill-in-the-blanks paragraph when the topic suits it; for science or biology, use topic vocabulary drawn from the notes.\n"
+        "- If worksheet, the fill-in-the-blanks paragraph should read like a real cloze exercise, not a loose bullet list.\n"
+        "- If worksheet, reduce generic filler such as broad reflection prompts, placeholder task summaries, generic research tasks, or 'write a definition in your own words' when a more specific notes-based question is possible.\n"
+        "- If worksheet, do not refer to a diagram, image, chart, or labelled visual unless one is actually provided.\n"
+        "- If worksheet, do not say 'Below is a diagram' or ask students to label an image unless that asset is actually included; instead use wording such as 'Draw a simple diagram of ...' or 'Draw and label ...' when a text-only task is needed.\n"
+        "- If worksheet, do not include lesson-plan sections such as Learning Intentions, Success Criteria, Lesson Flow, Assessment, or Homework.\n"
+        "- If worksheet, do not let markdown markers like ### Task 1 or ### Reflection appear in the final worksheet body.\n"
+        "- If worksheet, include an answer key unless told not to.\n"
         "- If lesson_plan, do not use tables.\n"
-        "- If lesson_plan, keep it concise and practical, suitable for roughly 12 pages or less when exported.\n"
-        "- If lesson_plan, use clear headings only and avoid unnecessary explanation, symbols, or excessive line breaks.\n"
+        "- If lesson_plan, keep it concise, printable, teacher-facing, and suitable for roughly 12 pages or less when exported.\n"
+        "- If lesson_plan, use clear headings only, keep spacing clean, and avoid unnecessary explanation, symbols, or excessive line breaks.\n"
+        "- If lesson_plan, do not write like a raw markdown dump or a generic scaffold.\n"
+        "- If lesson_plan, write for Irish post-primary / secondary classrooms using practical, realistic classroom phrasing.\n"
+        "- If lesson_plan, avoid US curriculum assumptions unless the teacher explicitly asks for them.\n"
         "- If lesson_plan, follow exactly this structure and order:\n"
-        "  1. Lesson Title, Class, Duration, Topic\n"
-        "  2. Prior Knowledge\n"
-        "  3. Learning Intentions using 'We are learning to...'\n"
-        "  4. Learning Outcomes with 3 to 5 clear outcomes\n"
-        "  5. Success Criteria using student-friendly 'I can...' statements\n"
-        "  6. Lesson Flow with Starter, Teaching / Development, Activity / Application, Plenary / Closure\n"
-        "  7. Assessment\n"
-        "  8. Resources\n"
-        "  9. Differentiation with Support and Extension\n"
-        "  10. Homework (optional)\n"
+        "  1. Learning Overview\n"
+        "  2. Learning Intentions\n"
+        "  3. Success Criteria\n"
+        "  4. Lesson Flow\n"
+        "  5. Starter\n"
+        "  6. Teaching and Development\n"
+        "  7. Activity and Application\n"
+        "  8. Plenary and Closure\n"
+        "  9. Resources\n"
+        "  10. Differentiation\n"
+        "  11. Assessment\n"
+        "  12. Suggested Homework\n"
+        "- If lesson_plan, make each lesson-flow subsection usable and specific rather than filler.\n"
+        "- If lesson_plan, keep the tone practical, school-ready, and concise.\n"
         "\n"
         "SOURCE EXCERPTS (allowed):\n"
         f"{sources_txt if sources_txt else '[No sources selected]'}\n"

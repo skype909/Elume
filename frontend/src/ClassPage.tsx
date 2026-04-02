@@ -39,22 +39,24 @@ function metaKeyForUser() {
 }
 
 function loadTeacherDisplayName(): string {
-  try {
-    const raw = localStorage.getItem(teacherAdminKeyForUser());
-    if (!raw) return "";
+  const keys = [teacherAdminV3KeyForUser(), teacherAdminKeyForUser()];
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
 
-    const parsed = JSON.parse(raw);
-    const p = parsed?.profile;
-    if (!p) return "";
+      const parsed = JSON.parse(raw);
+      const p = parsed?.profile;
+      if (!p) continue;
 
-    const title = String(p.title ?? "").trim();
-    const surname = String(p.surname ?? "").trim();
+      const title = String(p.title ?? "").trim();
+      const surname = String(p.surname ?? "").trim();
 
-    if (!title || !surname) return "";
-    return `${title} ${surname}`;
-  } catch {
-    return "";
+      if (title && surname) return `${title} ${surname}`;
+      if (surname) return surname;
+    } catch {}
   }
+  return "";
 }
 
 function loadClassAdminPin(): string {
@@ -410,6 +412,7 @@ export default function ClassPage() {
   const [editContentDraft, setEditContentDraft] = useState("");
   const [editLinksDraft, setEditLinksDraft] = useState<string[]>([]);
   const [editLinkDraft, setEditLinkDraft] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
 
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerFinished, setTimerFinished] = useState(false);
@@ -657,6 +660,7 @@ export default function ClassPage() {
   async function saveEditPost(postId: number) {
     try {
       setError(null);
+      setEditError(null);
 
       const updated = normalizePost(
         await apiFetch(`${API_BASE}/posts/${postId}`, {
@@ -671,7 +675,7 @@ export default function ClassPage() {
       setPosts((prev) => prev.map((p) => (p.id === postId ? updated : p)));
       cancelEditPost();
     } catch (e: any) {
-      setError(e?.message || "Failed to update post");
+      setEditError(e?.message || "Could not save changes to this post.");
     }
   }
 
@@ -861,6 +865,7 @@ export default function ClassPage() {
     setEditContentDraft(p.content || "");
     setEditLinksDraft(p.links || []);
     setEditLinkDraft("");
+    setEditError(null);
   }
 
   function cancelEditPost() {
@@ -868,6 +873,7 @@ export default function ClassPage() {
     setEditContentDraft("");
     setEditLinksDraft([]);
     setEditLinkDraft("");
+    setEditError(null);
   }
 
   function addEditLink() {
@@ -1724,6 +1730,12 @@ export default function ClassPage() {
                                     🔗 {l} ✕
                                   </button>
                                 ))}
+                              </div>
+                            )}
+
+                            {editError && (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                                {editError}
                               </div>
                             )}
 
