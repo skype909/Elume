@@ -6188,6 +6188,38 @@ EXAM_LIBRARY_DIR = Path(os.getenv("ELUME_EXAM_LIBRARY_DIR") or "/var/lib/elume/e
 EXAM_LIBRARY_MANIFEST = EXAM_LIBRARY_DIR / "manifest.json"
 
 
+def _normalise_exam_library_level(
+    raw_level: str | None,
+    rel_path: str = "",
+    title: str = "",
+) -> str:
+    explicit = str(raw_level or "").strip().lower()
+    if explicit in {"higher level", "higher", "hl"}:
+        return "Higher Level"
+    if explicit in {"ordinary level", "ordinary", "ol"}:
+        return "Ordinary Level"
+    if explicit in {"common level", "common", "cl"}:
+        return "Common Level"
+
+    probe = " ".join(
+        [
+            Path(rel_path).stem.replace("-", " ").replace("_", " "),
+            str(title or ""),
+        ]
+    ).lower()
+    tokens = [token for token in re.split(r"[^a-z0-9]+", probe) if token]
+    token_set = set(tokens)
+
+    if "hl" in token_set:
+        return "Higher Level"
+    if "ol" in token_set:
+        return "Ordinary Level"
+    if "cl" in token_set:
+        return "Common Level"
+
+    return str(raw_level or "").strip()
+
+
 def _read_exam_library_manifest() -> list[schemas.ExamLibraryItemOut]:
     if not EXAM_LIBRARY_MANIFEST.exists():
         return []
@@ -6212,10 +6244,10 @@ def _read_exam_library_manifest() -> list[schemas.ExamLibraryItemOut]:
         item_id = str(entry.get("id") or "").strip()
         cycle = str(entry.get("cycle") or "").strip()
         subject = str(entry.get("subject") or "").strip()
-        level = str(entry.get("level") or "").strip()
         year = str(entry.get("year") or "").strip()
         title = str(entry.get("title") or "").strip()
         rel_path = str(entry.get("path") or "").strip().replace("\\", "/")
+        level = _normalise_exam_library_level(entry.get("level"), rel_path, title)
 
         if not item_id or item_id in seen_ids:
             continue
