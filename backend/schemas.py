@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 class ClassCreate(BaseModel):
     name: str
     subject: str
+    stream: Optional[str] = None
     color: Optional[str] = None
     preferred_exam_subject: Optional[str] = None
 
@@ -43,8 +44,11 @@ class ClassOut(BaseModel):
     id: int
     name: str
     subject: str
+    stream: Optional[str] = None
     color: Optional[str] = None
     preferred_exam_subject: Optional[str] = None
+    is_archived: bool = False
+    archived_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -164,6 +168,8 @@ class SavedQuizOut(BaseModel):
     title: str
     category: str
     description: Optional[str] = None
+    is_starred: bool = False
+    origin_class_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     questions: List[SavedQuizQuestionOut] = []

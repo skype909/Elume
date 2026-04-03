@@ -23,6 +23,9 @@ type NormalisedQuiz = {
   id: string;
   title: string;
   createdAt?: string;
+  classId?: number;
+  originClassName?: string;
+  isStarred?: boolean;
   questions: LiveQuestion[];
 };
 
@@ -294,7 +297,15 @@ function normaliseSavedQuiz(q: SavedQuizAny): NormalisedQuiz | null {
 
   if (!questions.length) return null;
 
-  return { id, title, createdAt, questions };
+  return {
+    id,
+    title,
+    createdAt,
+    classId: typeof q.class_id === "number" ? q.class_id : undefined,
+    originClassName: typeof q.origin_class_name === "string" ? q.origin_class_name : undefined,
+    isStarred: Boolean(q.is_starred),
+    questions,
+  };
 }
 
 function copyToClipboard(text: string) {
@@ -347,8 +358,10 @@ export default function LiveQuizPage() {
 
   const [savedQuizzes, setSavedQuizzes] = useState<NormalisedQuiz[]>([]);
   const [selectedSavedQuizId, setSelectedSavedQuizId] = useState<string>("");
+  const [starredQuizzes, setStarredQuizzes] = useState<NormalisedQuiz[]>([]);
+  const [selectedStarredQuizId, setSelectedStarredQuizId] = useState<string>("");
 
-  const [mode, setMode] = useState<"saved" | "custom">("saved");
+  const [mode, setMode] = useState<"saved" | "starred" | "custom">("saved");
 
   const [shuffleQuestions, setShuffleQuestions] = useState<boolean>(false);
   const [autoPlay, setAutoPlay] = useState<boolean>(false);
@@ -466,6 +479,19 @@ export default function LiveQuizPage() {
         setSelectedSavedQuizId("");
       }
     }
+
+    try {
+      const data = await apiFetch(`${API_BASE}/quizzes/starred`);
+      const normalisedStarred = (Array.isArray(data) ? data : []).map(normaliseSavedQuiz).filter(Boolean) as NormalisedQuiz[];
+      setStarredQuizzes(normalisedStarred);
+      setSelectedStarredQuizId((prev) => {
+        if (prev && normalisedStarred.some((q) => q.id === prev)) return prev;
+        return normalisedStarred[0]?.id || "";
+      });
+    } catch {
+      setStarredQuizzes([]);
+      setSelectedStarredQuizId("");
+    }
   }
 
   useEffect(() => {
@@ -511,16 +537,23 @@ export default function LiveQuizPage() {
     return savedQuizzes.find((q) => q.id === selectedSavedQuizId) || null;
   }, [mode, savedQuizzes, selectedSavedQuizId]);
 
+  const selectedStarredQuiz = useMemo(() => {
+    if (mode !== "starred") return null;
+    return starredQuizzes.find((q) => q.id === selectedStarredQuizId) || null;
+  }, [mode, starredQuizzes, selectedStarredQuizId]);
+
   const effectiveQuestions = useMemo(() => {
     if (mode === "saved" && selectedQuiz) return selectedQuiz.questions;
+    if (mode === "starred" && selectedStarredQuiz) return selectedStarredQuiz.questions;
     if (mode === "custom") return customQuestions;
     return [];
-  }, [mode, selectedQuiz, customQuestions]);
+  }, [mode, selectedQuiz, selectedStarredQuiz, customQuestions]);
 
   const effectiveTitle = useMemo(() => {
     if (mode === "saved" && selectedQuiz) return selectedQuiz.title;
+    if (mode === "starred" && selectedStarredQuiz) return selectedStarredQuiz.title;
     return customTitle.trim() || "Live Quiz";
-  }, [mode, selectedQuiz, customTitle]);
+  }, [mode, selectedQuiz, selectedStarredQuiz, customTitle]);
 
   const currentLiveQuestion = useMemo(() => {
     if (typeof status?.current_index !== "number") return null;
@@ -605,7 +638,7 @@ export default function LiveQuizPage() {
       class_id: classId,
       title: effectiveTitle,
       anonymous: false,
-      quiz_id: mode === "saved" && selectedQuiz ? selectedQuiz.id : null,
+      quiz_id: mode === "saved" && selectedQuiz ? selectedQuiz.id : mode === "starred" && selectedStarredQuiz ? selectedStarredQuiz.id : null,
       seconds_per_question: useTimer ? clamp(secondsPerQuestion, 5, 600) : null,
       shuffle_questions: shuffleQuestions,
       auto_play: autoPlay,
@@ -991,7 +1024,7 @@ export default function LiveQuizPage() {
                 <div className="rounded-2xl border border-white/70 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 px-4 py-3 text-sm shadow-sm">
                   <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Current mode</div>
                   <div className="mt-1 font-black text-slate-900">
-                    {mode === "saved" ? "Saved quiz" : "Quick custom poll"}
+                    {mode === "saved" ? "Saved Quizzes" : mode === "starred" ? "Main Quiz Collection" : "Quick Custom"}
                   </div>
                 </div>
 
@@ -1033,7 +1066,7 @@ export default function LiveQuizPage() {
                   </div>
                 </div>
 
-                <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="mt-5 grid grid-cols-3 gap-3">
                   <button
                     type="button"
                     className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${mode === "saved"
@@ -1042,7 +1075,19 @@ export default function LiveQuizPage() {
                       }`}
                     onClick={() => setMode("saved")}
                   >
-                    Use saved quiz
+                    Class Quizzes
+                  </button>
+
+
+                  <button
+                    type="button"
+                    className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${mode === "starred"
+                        ? "border-slate-900 bg-slate-900 text-white shadow-md"
+                        : "border-slate-200 bg-white text-slate-800 hover:-translate-y-0.5 hover:bg-slate-50"
+                      }`}
+                    onClick={() => setMode("starred")}
+                  >
+                    Main Quiz Collection
                   </button>
 
                   <button
@@ -1053,7 +1098,7 @@ export default function LiveQuizPage() {
                       }`}
                     onClick={() => setMode("custom")}
                   >
-                    Quick custom
+                    Quick Custom
                   </button>
                 </div>
 
@@ -1075,11 +1120,38 @@ export default function LiveQuizPage() {
                         </select>
                       ) : (
                         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                          No saved quizzes found for this class yet. Generate one in the Quizzes page, or use
-                          “Quick custom”.
+                          No saved quizzes found for this class yet. Generate one in the Quizzes page, or use Quick Custom.
                         </div>
                       )}
                     </div>
+                  </div>
+                ) : mode === "starred" ? (
+                  <div className="mt-5">
+                    <div className="text-sm font-bold text-slate-700">Choose a quiz from your main quiz collection</div>
+                    <div className="mt-2">
+                      {starredQuizzes.length ? (
+                        <select
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                          value={selectedStarredQuizId}
+                          onChange={(e) => setSelectedStarredQuizId(e.target.value)}
+                        >
+                          {starredQuizzes.map((q) => (
+                            <option key={q.id} value={q.id}>
+                              {q.title} {q.originClassName ? `| ${q.originClassName}` : ""} {q.questions?.length ? `(${q.questions.length} Qs)` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                          No quizzes in your main quiz collection yet. Save a quiz from the Quizzes page to reuse it across classes.
+                        </div>
+                      )}
+                    </div>
+                    {selectedStarredQuiz?.originClassName ? (
+                      <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                        Origin class: <span className="font-semibold">{selectedStarredQuiz.originClassName}</span>
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="mt-5">
@@ -1092,7 +1164,6 @@ export default function LiveQuizPage() {
                     />
                   </div>
                 )}
-
                 <div className="mt-5 rounded-[28px] border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
                   <div className="text-sm font-black text-slate-900">Session options</div>
 
@@ -1166,7 +1237,7 @@ export default function LiveQuizPage() {
 
                 <button
                   className="mt-5 w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-4 text-base font-black text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={creating || (mode === "saved" && !selectedQuiz)}
+                  disabled={creating || (mode === "saved" && !selectedQuiz) || (mode === "starred" && !selectedStarredQuiz)}
                   onClick={createSession}
                 >
                   {creating ? "Creating session…" : "Create live session"}

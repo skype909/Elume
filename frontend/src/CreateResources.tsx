@@ -246,34 +246,34 @@ const META_SEPARATOR = " | ";
 
 const OUTPUT_TILE_STYLES: Record<OutputKind, OutputTileStyle> = {
   ideas: {
-    shell: "from-emerald-50 via-white to-teal-100",
-    active: "border-emerald-700 bg-[linear-gradient(135deg,rgba(236,253,245,0.98),rgba(204,251,241,0.92))] ring-2 ring-emerald-100 shadow-[0_18px_34px_rgba(16,185,129,0.16)]",
-    inactive: "border-emerald-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,253,245,0.84),rgba(204,251,241,0.78))] shadow-[0_10px_22px_rgba(16,185,129,0.08)] hover:-translate-y-[1px] hover:border-emerald-200 hover:shadow-[0_16px_28px_rgba(16,185,129,0.14)]",
-    badge: "border-emerald-200 bg-emerald-100/90 text-emerald-800",
+    shell: "from-emerald-500 via-emerald-500 to-teal-500",
+    active: "border-slate-950 ring-4 ring-emerald-200/80 shadow-[0_22px_40px_rgba(16,185,129,0.28)]",
+    inactive: "border-emerald-700/80 shadow-[0_14px_28px_rgba(16,185,129,0.18)] hover:-translate-y-[1px] hover:border-emerald-900 hover:shadow-[0_18px_32px_rgba(16,185,129,0.24)]",
+    badge: "border-white/35 bg-white/16 text-white",
   },
   lesson_plan: {
-    shell: "from-cyan-50 via-white to-sky-100",
-    active: "border-sky-700 bg-[linear-gradient(135deg,rgba(240,249,255,0.98),rgba(224,242,254,0.94))] ring-2 ring-sky-100 shadow-[0_18px_34px_rgba(14,165,233,0.16)]",
-    inactive: "border-sky-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.84),rgba(224,242,254,0.80))] shadow-[0_10px_22px_rgba(14,165,233,0.08)] hover:-translate-y-[1px] hover:border-sky-200 hover:shadow-[0_16px_28px_rgba(14,165,233,0.14)]",
-    badge: "border-sky-200 bg-sky-100/90 text-sky-800",
+    shell: "from-blue-500 via-sky-500 to-indigo-500",
+    active: "border-slate-950 ring-4 ring-sky-200/80 shadow-[0_22px_40px_rgba(59,130,246,0.28)]",
+    inactive: "border-blue-700/80 shadow-[0_14px_28px_rgba(59,130,246,0.18)] hover:-translate-y-[1px] hover:border-indigo-900 hover:shadow-[0_18px_32px_rgba(59,130,246,0.24)]",
+    badge: "border-white/35 bg-white/16 text-white",
   },
   worksheet: {
-    shell: "from-violet-50 via-white to-fuchsia-100",
-    active: "border-violet-700 bg-[linear-gradient(135deg,rgba(245,243,255,0.98),rgba(237,233,254,0.94))] ring-2 ring-violet-100 shadow-[0_18px_34px_rgba(139,92,246,0.16)]",
-    inactive: "border-violet-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(245,243,255,0.84),rgba(237,233,254,0.80))] shadow-[0_10px_22px_rgba(139,92,246,0.08)] hover:-translate-y-[1px] hover:border-violet-200 hover:shadow-[0_16px_28px_rgba(139,92,246,0.14)]",
-    badge: "border-violet-200 bg-violet-100/90 text-violet-800",
+    shell: "from-violet-500 via-violet-500 to-fuchsia-500",
+    active: "border-slate-950 ring-4 ring-violet-200/80 shadow-[0_22px_40px_rgba(139,92,246,0.28)]",
+    inactive: "border-violet-700/80 shadow-[0_14px_28px_rgba(139,92,246,0.18)] hover:-translate-y-[1px] hover:border-fuchsia-900 hover:shadow-[0_18px_32px_rgba(139,92,246,0.24)]",
+    badge: "border-white/35 bg-white/16 text-white",
   },
   scheme: {
-    shell: "from-amber-50 via-white to-orange-100",
-    active: "border-amber-700 bg-[linear-gradient(135deg,rgba(255,251,235,0.98),rgba(254,243,199,0.94))] ring-2 ring-amber-100 shadow-[0_18px_34px_rgba(245,158,11,0.16)]",
-    inactive: "border-amber-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(255,251,235,0.86),rgba(254,243,199,0.82))] shadow-[0_10px_22px_rgba(245,158,11,0.08)] hover:-translate-y-[1px] hover:border-amber-200 hover:shadow-[0_16px_28px_rgba(245,158,11,0.14)]",
-    badge: "border-amber-200 bg-amber-100/90 text-amber-800",
+    shell: "from-orange-500 via-orange-500 to-amber-400",
+    active: "border-slate-950 ring-4 ring-amber-200/80 shadow-[0_22px_40px_rgba(249,115,22,0.28)]",
+    inactive: "border-orange-700/80 shadow-[0_14px_28px_rgba(249,115,22,0.18)] hover:-translate-y-[1px] hover:border-amber-900 hover:shadow-[0_18px_32px_rgba(249,115,22,0.24)]",
+    badge: "border-white/35 bg-white/18 text-white",
   },
   dept_plan: {
-    shell: "from-teal-50 via-white to-cyan-100",
-    active: "border-teal-700 bg-[linear-gradient(135deg,rgba(240,253,250,0.98),rgba(204,251,241,0.94))] ring-2 ring-teal-100 shadow-[0_18px_34px_rgba(13,148,136,0.16)]",
-    inactive: "border-teal-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,253,250,0.84),rgba(207,250,254,0.80))] shadow-[0_10px_22px_rgba(13,148,136,0.08)] hover:-translate-y-[1px] hover:border-teal-200 hover:shadow-[0_16px_28px_rgba(13,148,136,0.14)]",
-    badge: "border-teal-200 bg-teal-100/90 text-teal-800",
+    shell: "from-cyan-500 via-cyan-500 to-teal-500",
+    active: "border-slate-950 ring-4 ring-cyan-200/80 shadow-[0_22px_40px_rgba(6,182,212,0.28)]",
+    inactive: "border-cyan-700/80 shadow-[0_14px_28px_rgba(6,182,212,0.18)] hover:-translate-y-[1px] hover:border-teal-900 hover:shadow-[0_18px_32px_rgba(6,182,212,0.24)]",
+    badge: "border-white/35 bg-white/16 text-white",
   },
 };
 
@@ -1085,43 +1085,48 @@ export default function CreateResources() {
 
     if (kind === "lesson_plan") {
       body = [
-        `# Lesson Plan`,
+        `# Lesson Plan: ${teacherPrompt || "Lesson topic"}`,
+        ``,
+        `Subject | ${level} | 60 Minutes`,
         ``,
         `## Learning Overview`,
         `- Topic: ${teacherPrompt || "Lesson topic"}`,
         ``,
         `## Learning Intentions`,
-        `- We are learning to explain the key ideas in ${teacherPrompt || "this topic"} clearly.`,
-        `- We are learning to use accurate subject language in discussion and written work.`,
-        `- We are learning to apply the learning in a short classroom task.`,
+        `- We are learning to explain the key process or concept in ${teacherPrompt || "this topic"} using accurate subject language.`,
+        `- We are learning to connect today’s learning to examples, terms, or steps from the class materials.`,
+        `- We are learning to apply the learning in a short task and respond clearly to teacher questioning.`,
         ``,
         `## Success Criteria`,
-        `- I can explain the main point using the correct keywords.`,
-        `- I can complete the class task accurately and clearly.`,
-        `- I can show my understanding in discussion or written work.`,
+        `- I can explain the main idea using the correct keywords.`,
+        `- I can complete the class task accurately and support my answer with evidence from the lesson.`,
+        `- I can answer a short question or exit task clearly in my own words.`,
         ``,
         `## Lesson Flow`,
         `### Starter (5 Minutes)`,
-        `- Begin with a short retrieval or settling task linked to recent learning.`,
+        `- Open with a short retrieval question linked to prior learning and use the responses to surface misconceptions quickly.`,
         `### Teaching and Development (35 Minutes)`,
-        `- Explain and model the new learning with clear examples, questioning, and guided input.`,
+        `- Introduce the key content in small steps, model one example clearly, and use targeted questioning to check understanding as you go.`,
         `### Activity and Application (20 Minutes)`,
-        `- Students complete a focused task that applies the learning with teacher circulation and feedback.`,
+        `- Students complete a focused task based on today’s content while the teacher circulates, prompts, and gives short live feedback.`,
         `### Plenary and Closure (5 Minutes)`,
-        `- Close with a brief review, exit prompt, or check for understanding.`,
+        `- End with a short review question, exit prompt, or mini-check that confirms what students can now explain or do.`,
         ``,
         `## Resources`,
-        `- Whiteboard, teacher slides or notes, and class materials relevant to the topic.`,
+        `- Whiteboard, class notes, teacher slides, and any source material used in the lesson.`,
         ``,
         `## Differentiation`,
-        `- Support: Use prompts, worked examples, and guided teacher check-ins where needed.`,
-        `- Extension: Add a short challenge task or deeper application question.`,
+        `- Support: Use prompts, guided questioning, and one worked example before independent work.`,
+        `- Extension: Add a deeper application question or require students to justify an answer in more detail.`,
         ``,
         `## Assessment`,
-        `- Use questioning, teacher observation, and the completed class task to check understanding.`,
+        `- Use questioning, circulation, and the completed task or exit response to check understanding during the lesson.`,
         ``,
         `## Suggested Homework`,
-        `- Set a short follow-up task that reinforces the main learning from the lesson.`,
+        `- Set one short follow-up task that reinforces the key vocabulary, process, or explanation from the lesson.`,
+        ``,
+        `## Reflection`,
+        `- What worked well in the lesson and what needs adjusting next time?`,
       ].join("\n");
     }
 
@@ -1230,7 +1235,7 @@ export default function CreateResources() {
     return {
       id: uid("gen"),
       kind,
-      title: `${labelForOutput(kind)}${META_SEPARATOR}${teacherPrompt || "Untitled"}`.slice(0, 90),
+      title: `${kind === "lesson_plan" ? "Lesson Plan" : labelForOutput(kind)}${META_SEPARATOR}${teacherPrompt || "Untitled"}`.slice(0, 90),
       prompt: teacherPrompt,
       scopeLabel,
       saveBucket,
@@ -1308,7 +1313,11 @@ export default function CreateResources() {
         worksheet_tone: "Student-facing printable resource",
         lesson_plan_format:
           outputKind === "lesson_plan"
-            ? "For lesson plans only: no tables, no raw markdown dump, and use a compact printable school-ready structure for Irish post-primary classrooms in British English. Follow this exact section order: Learning Overview, Learning Intentions, Success Criteria, Lesson Flow, Starter, Teaching and Development, Activity and Application, Plenary and Closure, Resources, Differentiation, Assessment, Suggested Homework. Keep the wording concise, practical, teacher-facing, and ready for printing."
+            ? "For lesson plans only: no tables, no raw markdown dump, and use a compact printable school-ready structure for Irish post-primary classrooms in British English. Title the resource as Lesson Plan: {topic/title}. Use one concise metadata line under the title in the form Subject | Level | Duration. Follow this exact section order: Learning Overview, Learning Intentions, Success Criteria, Lesson Flow, Starter, Teaching and Development, Activity and Application, Plenary and Closure, Resources, Differentiation, Assessment, Suggested Homework, Reflection. Keep Learning Overview topic-led and concise. Write Success Criteria as checklist-style 'I can...' statements. Keep lesson flow timed and practical. End with short reflection lines. If manual sources or uploaded files are attached, preserve their facts, vocabulary, framing, and sequence where possible and treat them as the primary grounding."
+            : null,
+        source_priority:
+          outputKind === "lesson_plan" || outputKind === "worksheet"
+            ? "If teacher-selected files or manual notes are attached, treat them as the primary truth. Preserve source facts, topic framing, vocabulary, and sequence where possible. Do not drift into generic content if usable source content exists."
             : null,
       },
       use_class_context: scope.mode !== "general",
@@ -1554,116 +1563,138 @@ export default function CreateResources() {
   }, [outputKind]);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#eefbf0,_#def3e4_45%,_#d8eef1_100%)]">
-      <div className="mx-auto max-w-6xl px-4 pb-10 pt-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-3xl font-extrabold tracking-tight text-slate-900">Create Resources</div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-              <span className="rounded-full border border-emerald-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,253,245,0.90))] px-3 py-1 shadow-sm">
-                Working on <span className="font-semibold text-slate-900">{scopeLabel}</span>
-              </span>
-              <span className="rounded-full border border-cyan-200 bg-[linear-gradient(135deg,rgba(236,254,255,0.95),rgba(245,243,255,0.88))] px-3 py-1 text-cyan-800 shadow-sm">
-                Prompt-first workflow
-              </span>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(207,250,254,0.95),_rgba(236,253,245,0.96)_24%,_rgba(245,243,255,0.96)_56%,_#f8fafc_100%)]">
+      <div className="mx-auto max-w-6xl px-4 pb-10 pt-5">
+        <div className="rounded-[36px] border border-white/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.94),rgba(236,253,245,0.88),rgba(236,254,255,0.88),rgba(245,243,255,0.88))] p-5 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="inline-flex items-center rounded-full border border-emerald-200 bg-white/85 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800 shadow-sm">
+                Elume Create Resources
+              </div>
+              <div className="mt-3 text-3xl font-extrabold tracking-tight text-slate-900">Create Resources</div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                <span className="rounded-full border border-emerald-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,253,245,0.92))] px-3 py-1 shadow-sm">
+                  Working on <span className="font-semibold text-slate-900">{scopeLabel}</span>
+                </span>
+                <span className="rounded-full border border-cyan-200/80 bg-[linear-gradient(135deg,rgba(236,254,255,0.95),rgba(245,243,255,0.90))] px-3 py-1 font-medium text-cyan-800 shadow-sm">
+                  Prompt-first workflow
+                </span>
+              </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => navigate("/")} className={btn}>
-              {"<- Back"}
-            </button>
-            <button type="button" onClick={openScopeModal} className={btn}>
-              Change class
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => navigate("/")} className={btn}>
+                {"<- Back"}
+              </button>
+              <button type="button" onClick={openScopeModal} className={btn}>
+                Change class
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="mx-auto mt-6 max-w-5xl space-y-6">
-            <section className={`${card} border-emerald-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,253,245,0.90),rgba(239,246,255,0.88))] p-5 md:p-6`}>
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-800">
-                    Step 1
-                    <span className="text-[10px] text-emerald-600">Choose output</span>
-                  </div>
-                  <div className="mt-4 text-xl font-extrabold tracking-tight text-slate-900">What do you want to create?</div>
-                  <div className="mt-1 text-sm text-slate-600">
-                    The class or group you selected is the default source context. Keep this fast and teacher-first.
-                  </div>
+        <div className="mx-auto mt-4 max-w-5xl space-y-4">
+          <section className={`${card} border-emerald-100/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,253,245,0.92),rgba(239,246,255,0.86))] p-4 md:p-5`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white/90 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800 shadow-sm">
+                  Step 1
+                  <span className="text-[10px] text-emerald-600">Choose output</span>
                 </div>
-
+                <div className="mt-3 text-lg font-extrabold tracking-tight text-slate-900">Pick the format first</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Keep this fast. Select the output, then move straight into the prompt.
+                </div>
               </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                {([
-                  ["ideas", "3 Ideas", "Quick starter ideas for the next class"],
-                  ["lesson_plan", "Lesson Plan", "A full lesson flow teachers can use quickly"],
-                  ["worksheet", "Worksheet", "A student-facing printable resource with optional answers"],
-                  ["scheme", "Scheme of Work", "Multi-lesson planning across a topic"],
-                  ["dept_plan", "Department Plan", "Shared direction for teams and departments"],
-                ] as Array<[OutputKind, string, string]>).map(([kind, title, description]) => {
-                  const active = outputKind === kind;
-                  const tileStyle = OUTPUT_TILE_STYLES[kind];
-                  return (
-                    <button
-                      key={kind}
-                      type="button"
-                      onClick={() => setOutputKind(kind)}
-                      className={[
-                        "group flex min-h-[196px] flex-col rounded-[30px] border-2 p-4 text-left transition",
-                        `bg-gradient-to-br ${tileStyle.shell}`,
-                        active ? tileStyle.active : tileStyle.inactive,
-                      ].join(" ")}
+              <div className="rounded-2xl border border-white/80 bg-white/80 px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm">
+                {labelForOutput(outputKind)} selected
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
+              {([
+                ["ideas", "3 Ideas", "Fast classroom use"],
+                ["lesson_plan", "Lesson Plan", "Teacher-facing"],
+                ["worksheet", "Worksheet", "Student-facing"],
+                ["scheme", "Scheme of Work", "Sequenced planning"],
+                ["dept_plan", "Department Plan", "Department-facing"],
+              ] as Array<[OutputKind, string, string]>).map(([kind, title, shortLabel]) => {
+                const active = outputKind === kind;
+                const tileStyle = OUTPUT_TILE_STYLES[kind];
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => setOutputKind(kind)}
+                    className={[
+                      "group flex min-h-[132px] flex-col rounded-[26px] border p-3 text-left transition duration-200",
+                      "shadow-[0_10px_28px_rgba(15,23,42,0.06)]",
+                      `bg-gradient-to-br ${tileStyle.shell}`,
+                      active
+                        ? `${tileStyle.active} -translate-y-[1px] shadow-[0_16px_34px_rgba(15,23,42,0.10)]`
+                        : `${tileStyle.inactive} hover:-translate-y-[1px] hover:shadow-[0_12px_28px_rgba(15,23,42,0.08)]`,
+                    ].join(" ")}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] ${tileStyle.badge}`}>
-                          {active ? "Selected" : "Ready"}
-                        </div>
-                        <div className={`grid h-8 w-8 place-items-center rounded-full border text-[11px] font-black ${active ? "border-slate-900 bg-slate-900 text-white" : "border-white/80 bg-white/80 text-slate-500"}`}>
-                          {active ? "OK" : "+"}
-                        </div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${tileStyle.badge}`}>
+                        {active ? "Selected" : "Choose"}
                       </div>
-                      <div className="mt-5 flex min-h-[52px] items-start text-base font-extrabold tracking-tight text-slate-900">{title}</div>
-                      <div className="mt-3 flex flex-1 items-start text-sm leading-relaxed text-slate-600">{description}</div>
-                      <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                        {kind === "worksheet" ? "Student-facing" : kind === "ideas" ? "Fast classroom use" : "Teacher-facing"}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
+                      {active && (
+                        <div className="rounded-full border border-white/80 bg-slate-950/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-white">
+                          Active
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-3 flex min-h-[56px] items-start text-[1.75rem] font-extrabold leading-[1.02] tracking-[-0.03em] text-white [text-shadow:0_4px_12px_rgba(15,23,42,0.34)]">
+                      {title}
+                    </div>
+                    <div className="mt-auto pt-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/78">
+                      {shortLabel}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
 
-            <section className={`${card} border-cyan-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(239,246,255,0.92),rgba(245,243,255,0.90))] p-5 md:p-6`}>
-              <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-sky-800">
-                Step 2
-                <span className="text-[10px] text-sky-600">Prompt</span>
+          <section className={`${card} border-cyan-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,254,255,0.92),rgba(236,253,245,0.88),rgba(245,243,255,0.90))] p-4 md:p-5`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-sky-800 shadow-sm">
+                  Step 2
+                  <span className="text-[10px] text-sky-600">Prompt and settings</span>
+                </div>
+                <div className="mt-3 text-xl font-extrabold tracking-tight text-slate-900">Ask for the resource in plain language</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  The selected class, source folder, and optional manual sources shape what Elume creates.
+                </div>
               </div>
+            </div>
 
-              <div className="mt-4 grid gap-4 lg:grid-cols-[1.35fr_0.8fr]">
+            <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_0.78fr]">
                 <div className="space-y-4">
-                  <div className="text-xl font-extrabold tracking-tight text-slate-900">Ask for the resource in plain language</div>
-                  <div className="mt-1 text-sm text-slate-600">
-                    This should feel like a normal AI prompt, but grounded in the selected class context.
-                  </div>
-
-                  <div className="rounded-[30px] border border-cyan-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,254,255,0.92),rgba(236,253,245,0.90))] p-4 shadow-[0_14px_32px_rgba(14,165,233,0.08)]">
-                    <label className="mb-2 block text-sm font-bold text-slate-700">Prompt</label>
+                  <div className="rounded-[30px] border border-cyan-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,254,255,0.94),rgba(236,253,245,0.92))] p-4 shadow-[0_18px_38px_rgba(14,165,233,0.10)]">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <label className="block text-sm font-bold text-slate-700">Prompt</label>
+                      <div className="rounded-full border border-white/80 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-700 shadow-sm">
+                        Main work surface
+                      </div>
+                    </div>
                     <textarea
                       ref={promptRef}
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
-                      rows={7}
+                      rows={6}
                       className="w-full rounded-[28px] border-2 border-cyan-100 bg-white/95 px-4 py-3 text-sm text-slate-800 shadow-sm outline-none focus:border-emerald-300 focus:ring-4 focus:ring-emerald-100"
                       placeholder={promptHint}
                     />
                   </div>
 
-                  <div className="rounded-[30px] border border-sky-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(239,246,255,0.92),rgba(245,243,255,0.90))] p-4 shadow-[0_14px_32px_rgba(59,130,246,0.08)]">
+                  <div className="rounded-[30px] border border-sky-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(239,246,255,0.93),rgba(245,243,255,0.92))] p-4 shadow-[0_16px_34px_rgba(59,130,246,0.08)]">
                     <div className="grid gap-3">
                       <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                        <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
                           <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Level</label>
                           <select value={level} onChange={(e) => setLevel(e.target.value as PhaseLevel)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
                             <option value="Junior Cycle">Junior Cycle</option>
@@ -1672,7 +1703,7 @@ export default function CreateResources() {
                           </select>
                         </div>
 
-                        <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                        <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
                           <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Detail</label>
                           <select value={detail} onChange={(e) => setDetail(e.target.value as DetailLevel)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
                             <option value="Concise">Concise</option>
@@ -1682,7 +1713,7 @@ export default function CreateResources() {
                       </div>
 
                       <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                        <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
                           <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Source area</label>
                           <select value={sourceBucket} onChange={(e) => setSourceBucket(e.target.value as SourceBucket)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
                             {sourceOptions.map((option) => (
@@ -1696,7 +1727,7 @@ export default function CreateResources() {
                           </div>
                         </div>
 
-                        <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                        <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
                           <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Source folder</label>
                           <select
                             value={sourceFolder}
@@ -1727,7 +1758,7 @@ export default function CreateResources() {
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-slate-100 bg-white/85 p-3">
+                      <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
                         <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Destination folder</label>
                         <select
                           value={selectedDestinationChoiceId}
@@ -1763,11 +1794,9 @@ export default function CreateResources() {
                     </div>
                   </div>
 
-                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
-                    <div>
-                      <div className="rounded-2xl border border-cyan-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,254,255,0.88))] px-4 py-3 text-sm text-slate-700 shadow-sm">
-                        AI reads from <span className="font-semibold text-slate-900">{displayLabelForBucket(sourceBucket as SaveBucket)}{sourceFolder ? ` / ${sourceFolder}` : ""}</span> and saves to <span className="font-semibold text-slate-900">{saveDestinationLabel}</span>.
-                      </div>
+                  <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                    <div className="rounded-2xl border border-cyan-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,254,255,0.90))] px-4 py-3 text-sm text-slate-700 shadow-sm">
+                      AI reads from <span className="font-semibold text-slate-900">{displayLabelForBucket(sourceBucket as SaveBucket)}{sourceFolder ? ` / ${sourceFolder}` : ""}</span> and saves to <span className="font-semibold text-slate-900">{saveDestinationLabel}</span>.
                     </div>
                     <div className="self-end rounded-2xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(236,254,255,0.88))] px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-sm">
                       Destination: {saveDestinationLabel}
@@ -1775,7 +1804,7 @@ export default function CreateResources() {
                   </div>
 
                   {outputKind === "worksheet" && (
-                    <div className="mt-4 rounded-[24px] border border-violet-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(245,243,255,0.92),rgba(236,254,255,0.88))] p-4 shadow-[0_12px_28px_rgba(139,92,246,0.08)]">
+                    <div className="rounded-[24px] border border-violet-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(245,243,255,0.92),rgba(236,254,255,0.88))] p-4 shadow-[0_12px_28px_rgba(139,92,246,0.08)]">
                       <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Worksheet</label>
                       <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-3">
                         <div>
@@ -1796,13 +1825,13 @@ export default function CreateResources() {
                 </div>
 
                 <div className="space-y-4">
-                  <div className={`${soft} border-emerald-100/80 p-4`}>
+                  <div className={`${soft} border-emerald-100/80 bg-[linear-gradient(135deg,rgba(236,253,245,0.86),rgba(236,254,255,0.70),rgba(255,255,255,0.94))] p-4`}>
                     <div className="text-sm font-extrabold text-slate-900">Printable branding</div>
                     <div className="mt-1 text-xs text-slate-600">
                       Footer identity: {teacherNameShort}
                       {teacherSchoolName ? `${META_SEPARATOR}${teacherSchoolName}` : ""}
                     </div>
-                    <div className="mt-4 space-y-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm">
+                    <div className="mt-4 space-y-3 rounded-2xl border border-white/80 bg-white/92 px-4 py-3 shadow-sm">
                       <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
                         <div>
                           <div className="text-sm font-bold text-slate-900">Branding choice</div>
@@ -1828,7 +1857,7 @@ export default function CreateResources() {
                     </div>
                   </div>
 
-                  <div className={`${soft} border-cyan-100/80 p-4`}>
+                  <div className={`${soft} border-cyan-100/80 bg-[linear-gradient(135deg,rgba(236,254,255,0.82),rgba(245,243,255,0.72),rgba(255,255,255,0.95))] p-4`}>
                     <input
                       ref={manualFileRef}
                       type="file"
@@ -1875,7 +1904,7 @@ export default function CreateResources() {
                       </div>
                     )}
 
-                    <div className="mt-4 rounded-2xl border border-white/80 bg-white/90 px-3 py-2 text-sm text-slate-700 shadow-sm">
+                    <div className="mt-4 rounded-2xl border border-white/80 bg-white/92 px-3 py-2 text-sm text-slate-700 shadow-sm">
                       {manualSourceSummary.length === 0 ? "No manual sources added yet" : `${manualSourceSummary.length} manual source${manualSourceSummary.length === 1 ? "" : "s"} ready`}
                     </div>
 
@@ -1932,14 +1961,14 @@ export default function CreateResources() {
               </div>
             </section>
 
-            <section className={`${card} p-5 md:p-6`}>
+            <section className={`${card} ${preview ? "border-violet-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(245,243,255,0.92),rgba(236,254,255,0.84))]" : "border-slate-200/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.97),rgba(248,250,252,0.96),rgba(241,245,249,0.92))]"} p-4 md:p-5`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-800">
+                  <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] shadow-sm ${preview ? "border-violet-200 bg-violet-50 text-violet-800" : "border-slate-200 bg-white text-slate-700"}`}>
                     Step 3
-                    <span className="text-[10px] text-emerald-600">Generate</span>
+                    <span className={`text-[10px] ${preview ? "text-violet-600" : "text-slate-500"}`}>Preview and export</span>
                   </div>
-                  <div className="mt-3 text-xl font-extrabold tracking-tight text-slate-900">Preview before you save or export</div>
+                  <div className="mt-3 text-lg font-extrabold tracking-tight text-slate-900">Preview before you save or export</div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -1959,21 +1988,21 @@ export default function CreateResources() {
               )}
 
               {!preview && (
-                <div className="mt-4 rounded-[28px] border-2 border-dashed border-slate-200 bg-slate-50 p-6 text-sm leading-relaxed text-slate-600">
+                <div className="mt-4 rounded-[28px] border border-slate-200 bg-white/80 p-5 text-sm leading-relaxed text-slate-600 shadow-sm">
                   Generate a draft to preview it here. The intent is simple: Irish post-primary context first, selected class and folder next, optional manual sources after that, then save the finished resource to the right class location.
                 </div>
               )}
 
               {preview && (
                 <div className="mt-4 space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-4 rounded-[28px] border-2 border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-4 rounded-[28px] border border-white/80 bg-white/92 p-4 shadow-sm">
                     <div className="min-w-0">
                       <div className="truncate text-lg font-extrabold tracking-tight text-slate-900">{preview.title}</div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                         <span>{new Date(preview.createdAt).toLocaleString("en-IE")}</span>
-                        <span>|</span>
+                        <span>{META_SEPARATOR}</span>
                         <span>{preview.scopeLabel}</span>
-                        <span>|</span>
+                        <span>{META_SEPARATOR}</span>
                         <span>{preview.manualSources.length} manual source{preview.manualSources.length === 1 ? "" : "s"}</span>
                       </div>
                     </div>

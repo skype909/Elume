@@ -17,6 +17,7 @@ type QuizItem = {
   category: string;
   description: string;
   createdAt: number;
+  is_starred?: boolean;
   questions: MCQQuestion[];
 };
 
@@ -26,6 +27,8 @@ type SavedQuizOut = {
   title: string;
   category: string;
   description?: string | null;
+  is_starred?: boolean;
+  origin_class_name?: string | null;
   created_at?: string;
   questions?: Array<{
     id: number;
@@ -102,6 +105,7 @@ function mapSavedQuizToQuizItem(quiz: SavedQuizOut): QuizItem {
     category: clampCategory(quiz.category || "General"),
     description: String(quiz.description || "").trim(),
     createdAt: quiz.created_at ? new Date(quiz.created_at).getTime() : Date.now(),
+    is_starred: Boolean(quiz.is_starred),
     questions: Array.isArray(quiz.questions)
       ? quiz.questions.map((q) => ({
           id: String(q.id),
@@ -439,6 +443,18 @@ export default function QuizzesPage() {
       if (playing?.quizId === quizId) setPlaying(null);
     } catch (e: any) {
       setError(e?.message || "Could not delete quiz.");
+    }
+  }
+
+  async function toggleQuizStar(quizId: string, nextStarred: boolean) {
+    try {
+      const data = (await apiFetch(`${API_BASE}/quizzes/${quizId}/${nextStarred ? "star" : "unstar"}`, {
+        method: "POST",
+      })) as SavedQuizOut;
+      const updatedQuiz = mapSavedQuizToQuizItem(data);
+      setQuizzes((prev) => prev.map((q) => (q.id === quizId ? updatedQuiz : q)));
+    } catch (e: any) {
+      setError(e?.message || "Could not update main quiz collection status.");
     }
   }
 
@@ -1037,6 +1053,16 @@ export default function QuizzesPage() {
                                 onClick={() => startPlay(q.id, true)}
                               >
                                 Preview
+                              </button>
+                            </div>
+
+                            <div className="mt-4 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${q.is_starred ? "border-amber-300 bg-amber-50 text-amber-900" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                                onClick={() => toggleQuizStar(q.id, !q.is_starred)}
+                              >
+                                {q.is_starred ? "In Main Quiz Collection" : "Save to Main Quiz Collection"}
                               </button>
                             </div>
 

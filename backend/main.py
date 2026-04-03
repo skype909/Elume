@@ -30,6 +30,8 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
+UPLOADS_DIR = BASE_DIR.parent / "uploads"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -536,6 +538,7 @@ LESSON_PLAN_SECTION_ORDER = [
     "Differentiation",
     "Assessment",
     "Suggested Homework",
+    "Reflection",
 ]
 
 LESSON_PLAN_SECTION_DISPLAY = {
@@ -547,6 +550,7 @@ LESSON_PLAN_SECTION_DISPLAY = {
     "Differentiation": "Differentiation",
     "Assessment": "Assessment",
     "Suggested Homework": "Suggested Homework",
+    "Reflection": "Reflection",
 }
 
 LESSON_FLOW_SUBHEADINGS = [
@@ -689,6 +693,7 @@ def _normalise_section_name(name: str) -> str:
         "assessment": "Assessment",
         "homework": "Suggested Homework",
         "suggested homework": "Suggested Homework",
+        "reflection": "Reflection",
         "footer metadata": "__ignore__",
         "manual notes supplied": "__ignore__",
     }
@@ -764,12 +769,12 @@ def _extract_homework_text(text: str) -> str | None:
 
 def _lesson_plan_meta_line(meta: dict[str, str]) -> str:
     parts = []
-    if meta.get("Class"):
-        parts.append(f"Class: {meta['Class']}")
+    if meta.get("Subject"):
+        parts.append(meta["Subject"])
     if meta.get("Level"):
-        parts.append(f"Level: {meta['Level']}")
+        parts.append(meta["Level"])
     if meta.get("Duration"):
-        parts.append(f"Duration: {meta['Duration']}")
+        parts.append(meta["Duration"])
     return " | ".join(parts)
 
 
@@ -1142,6 +1147,7 @@ def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None =
     top_meta = {
         "Lesson Title": _clean_lesson_plan_title(title or ""),
         "Class": "",
+        "Subject": "",
         "Level": "",
         "Duration": "",
         "Topic": "",
@@ -1149,6 +1155,7 @@ def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None =
 
     current_section = "Learning Overview"
     section_zero = False
+    seen_structured_section = False
 
     for raw in body.split("\n"):
         line = raw.rstrip()
@@ -1173,6 +1180,7 @@ def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None =
         if normalised:
             current_section = normalised
             section_zero = False
+            seen_structured_section = True
             if heading in {"Activity and Application", "Plenary and Closure"}:
                 mapped = _normalise_lesson_plan_subheading(heading)
                 if mapped:
@@ -1184,8 +1192,20 @@ def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None =
         if subheading and (stripped.startswith("### ") or current_section == "Lesson Flow"):
             current_section = subheading[0]
             section_zero = False
+            seen_structured_section = True
             _append_lesson_plan_item(sections, current_section, "subheading", subheading[1])
             continue
+
+        if not seen_structured_section and "|" in stripped and not stripped.startswith("#"):
+            meta_parts = [part.strip() for part in stripped.split("|") if part.strip()]
+            if len(meta_parts) >= 3:
+                if not top_meta["Subject"]:
+                    top_meta["Subject"] = _clean_lesson_plan_text(meta_parts[0])
+                if not top_meta["Level"]:
+                    top_meta["Level"] = _clean_lesson_plan_text(meta_parts[1])
+                if not top_meta["Duration"]:
+                    top_meta["Duration"] = _clean_lesson_plan_text(meta_parts[2])
+                continue
 
         if ":" in stripped:
             key, value = stripped.lstrip("- ").split(":", 1)
@@ -1203,10 +1223,17 @@ def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None =
                 if value_clean:
                     _append_lesson_plan_item(sections, current_section, "bullet", f"{key.strip().title()}: {value_clean}")
                 continue
-            if key_clean in {"lesson title", "class", "duration", "topic", "level"} and value_clean:
+            if key_clean == "reflection":
+                current_section = "Reflection"
+                section_zero = False
+                if value_clean:
+                    _append_lesson_plan_item(sections, current_section, "bullet", value_clean)
+                continue
+            if key_clean in {"lesson title", "class", "subject", "duration", "topic", "level"} and value_clean:
                 target_key = {
                     "lesson title": "Lesson Title",
                     "class": "Class",
+                    "subject": "Subject",
                     "duration": "Duration",
                     "topic": "Topic",
                     "level": "Level",
@@ -1232,13 +1259,15 @@ def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None =
         item_kind = "bullet" if _is_lesson_plan_bullet(stripped) else "p"
         _append_lesson_plan_item(sections, target_section, item_kind, clean_text)
 
-    class_from_scope, _ = _lesson_plan_scope_parts(str(meta.get("scopeLabel") or ""))
+    class_from_scope, subject_from_scope = _lesson_plan_scope_parts(str(meta.get("scopeLabel") or ""))
     if not top_meta["Class"] and class_from_scope:
         top_meta["Class"] = class_from_scope
+    if not top_meta["Subject"] and subject_from_scope:
+        top_meta["Subject"] = subject_from_scope
     if not top_meta["Level"]:
         top_meta["Level"] = _clean_lesson_plan_text(str(meta.get("level") or ""))
     if not top_meta["Duration"]:
-        top_meta["Duration"] = _lesson_plan_duration_from_text(str(meta.get("detail") or ""))
+        top_meta["Duration"] = _lesson_plan_duration_from_text(str(meta.get("detail") or "")) or "60 Minutes"
     if not top_meta["Topic"]:
         top_meta["Topic"] = top_meta["Lesson Title"]
 
@@ -1286,7 +1315,14 @@ def _parse_lesson_plan_pdf_content(title: str, content: str, meta: dict | None =
         ["Close with a brief review, exit prompt, or check for understanding."],
     )
 
-    ordered_sections = [(name, sections[name]) for name in LESSON_PLAN_SECTION_ORDER if sections[name]]
+    if not sections["Reflection"]:
+        sections["Reflection"] = []
+
+    ordered_sections = [
+        (name, sections[name])
+        for name in LESSON_PLAN_SECTION_ORDER
+        if sections[name] or name == "Reflection"
+    ]
     return {"meta": top_meta, "sections": ordered_sections}
 
 
@@ -1594,11 +1630,11 @@ def _pdf_from_markdownish(title: str, content: str, teacher: str | None = None, 
         display_title = f"Lesson Plan: {lesson_meta.get('Lesson Title') or _clean_lesson_plan_title(title)}"
         meta_line = _lesson_plan_meta_line(lesson_meta)
 
-        draw_wrapped(display_title, left, 22, 34, 24, font_name="F2", color=(0.08, 0.14, 0.22), extra_after=4)
+        draw_wrapped(display_title, left, 22, 44, 24, font_name="F2", color=(0.08, 0.14, 0.22), extra_after=3)
         if meta_line:
-            draw_wrapped(meta_line, left, 10, 78, 13, color=(0.38, 0.45, 0.55), extra_after=6)
+            draw_wrapped(meta_line, left, 10, 94, 13, color=(0.38, 0.45, 0.55), extra_after=5)
         add_rule(y, color=(0.83, 0.89, 0.95), width=1.0)
-        y -= 18
+        y -= 16
 
         for section_name, items in sections:
             ensure_room(34)
@@ -1606,20 +1642,29 @@ def _pdf_from_markdownish(title: str, content: str, teacher: str | None = None, 
                 LESSON_PLAN_SECTION_DISPLAY.get(section_name, section_name),
                 left,
                 15,
-                54,
+                66,
                 18,
                 font_name="F2",
                 color=(0.10, 0.30, 0.37),
                 extra_after=3,
             )
+            if section_name == "Reflection":
+                for item_kind, item_text in items:
+                    if item_kind == "bullet":
+                        add_bullet_line(item_text, indent=10, width_chars=90, font_size=11, line_height=14, extra_after=2)
+                    elif item_kind == "p":
+                        draw_wrapped(item_text, left, 11, 96, 14, color=(0.14, 0.18, 0.24), extra_after=3)
+                add_writing_lines(4, gap=16.0)
+                y -= 8
+                continue
             for item_kind, item_text in items:
                 if item_kind == "subheading":
-                    draw_wrapped(item_text, left, 12, 66, 15, font_name="F2", color=(0.17, 0.23, 0.31), extra_after=1)
+                    draw_wrapped(item_text, left, 12, 82, 15, font_name="F2", color=(0.17, 0.23, 0.31), extra_after=1)
                     continue
                 if item_kind == "bullet":
-                    add_bullet_line(item_text, indent=12, width_chars=68, font_size=11, line_height=14, extra_after=2)
+                    add_bullet_line(item_text, indent=10, width_chars=90, font_size=11, line_height=14, extra_after=2)
                     continue
-                draw_wrapped(item_text, left, 11, 78, 14, color=(0.14, 0.18, 0.24), extra_after=3)
+                draw_wrapped(item_text, left, 11, 96, 14, color=(0.14, 0.18, 0.24), extra_after=3)
             y -= 10
     elif worksheet_mode:
         parsed = _parse_worksheet_pdf_content(title, content, meta=meta)
@@ -2957,6 +3002,29 @@ def _post_attachment_path_or_404(post: PostModel, attachment_index: int) -> tupl
         raise HTTPException(status_code=404, detail="File not found")
 
     return path, path.name
+
+def _resolve_stored_upload_path_or_none(stored_path: str | None) -> Optional[Path]:
+    if not stored_path:
+        return None
+
+    direct_path = Path(stored_path)
+    if direct_path.exists() and direct_path.is_file():
+        return direct_path
+
+    normalized = str(stored_path).replace("\\", "/")
+    marker = "uploads/"
+    marker_index = normalized.lower().find(marker)
+    if marker_index != -1:
+        rel_suffix = normalized[marker_index + len(marker):].lstrip("/")
+        fallback_path = (UPLOADS_DIR / Path(rel_suffix)).resolve()
+        try:
+            fallback_path.relative_to(UPLOADS_DIR.resolve())
+        except ValueError:
+            return None
+        if fallback_path.exists() and fallback_path.is_file():
+            return fallback_path
+
+    return None
 
 
 SAVED_WHITEBOARDS_TOPIC_NAME = "Saved Whiteboards"
@@ -4442,6 +4510,21 @@ def ensure_columns():
         if "preferred_exam_subject" not in col_names:
             conn.execute(text("ALTER TABLE classes ADD COLUMN preferred_exam_subject TEXT"))
             conn.commit()
+        if "stream" not in col_names:
+            conn.execute(text("ALTER TABLE classes ADD COLUMN stream TEXT"))
+            conn.commit()
+        if "is_archived" not in col_names:
+            conn.execute(text("ALTER TABLE classes ADD COLUMN is_archived BOOLEAN DEFAULT 0 NOT NULL"))
+            conn.commit()
+        if "archived_at" not in col_names:
+            conn.execute(text("ALTER TABLE classes ADD COLUMN archived_at DATETIME"))
+            conn.commit()
+
+        quiz_cols = conn.execute(text("PRAGMA table_info(saved_quizzes)")).fetchall()
+        quiz_col_names = {c[1] for c in quiz_cols}
+        if quiz_cols and "is_starred" not in quiz_col_names:
+            conn.execute(text("ALTER TABLE saved_quizzes ADD COLUMN is_starred BOOLEAN DEFAULT 0 NOT NULL"))
+            conn.commit()
 
         conn.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS ix_classes_class_code ON classes (class_code)")
@@ -5108,12 +5191,19 @@ def _assert_class_access(class_id: int, db: Session, user: models.UserModel):
 
 
 def _quiz_out(q: models.SavedQuizModel) -> dict:
+    origin_name = None
+    try:
+        origin_name = q.class_rel.name if getattr(q, "class_rel", None) else None
+    except Exception:
+        origin_name = None
     return {
         "id": q.id,
         "class_id": q.class_id,
         "title": q.title,
         "category": q.category,
         "description": q.description,
+        "is_starred": bool(getattr(q, "is_starred", False)),
+        "origin_class_name": origin_name,
         "created_at": q.created_at,
         "updated_at": q.updated_at,
         "questions": [
@@ -5138,6 +5228,19 @@ def _normalise_choices(choices: list[str]) -> list[str]:
         raise HTTPException(status_code=400, detail="Exactly 4 non-empty choices are required")
     return vals[:4]
 
+
+def _get_accessible_quiz_or_404(
+    quiz_id: int,
+    db: Session,
+    user: models.UserModel,
+) -> models.SavedQuizModel:
+    quiz = db.query(models.SavedQuizModel).filter(models.SavedQuizModel.id == quiz_id).first()
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    _assert_class_access(quiz.class_id, db, user)
+    return quiz
+
 @app.get("/classes/{class_id}/quizzes", response_model=List[schemas.SavedQuizOut])
 def list_saved_quizzes(
     class_id: int,
@@ -5149,8 +5252,23 @@ def list_saved_quizzes(
     rows = (
         db.query(models.SavedQuizModel)
         .filter(models.SavedQuizModel.class_id == class_id)
-        .filter(models.SavedQuizModel.owner_user_id == user.id)
         .order_by(models.SavedQuizModel.created_at.desc())
+        .all()
+    )
+    return [_quiz_out(row) for row in rows]
+
+
+@app.get("/quizzes/starred", response_model=List[schemas.SavedQuizOut])
+def list_starred_quizzes(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    rows = (
+        db.query(models.SavedQuizModel)
+        .join(ClassModel, ClassModel.id == models.SavedQuizModel.class_id)
+        .filter(ClassModel.owner_user_id == user.id)
+        .filter(models.SavedQuizModel.is_starred == True)
+        .order_by(models.SavedQuizModel.updated_at.desc(), models.SavedQuizModel.created_at.desc())
         .all()
     )
     return [_quiz_out(row) for row in rows]
@@ -5206,6 +5324,40 @@ def create_saved_quiz(
     return _quiz_out(quiz)
 
 
+@app.post("/quizzes/{quiz_id}/star", response_model=schemas.SavedQuizOut)
+def star_saved_quiz(
+    quiz_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    quiz = _get_accessible_quiz_or_404(quiz_id, db, user)
+
+    quiz.is_starred = True
+    if quiz.owner_user_id is None:
+        quiz.owner_user_id = user.id
+    quiz.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(quiz)
+    return _quiz_out(quiz)
+
+
+@app.post("/quizzes/{quiz_id}/unstar", response_model=schemas.SavedQuizOut)
+def unstar_saved_quiz(
+    quiz_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    quiz = _get_accessible_quiz_or_404(quiz_id, db, user)
+
+    quiz.is_starred = False
+    if quiz.owner_user_id is None:
+        quiz.owner_user_id = user.id
+    quiz.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(quiz)
+    return _quiz_out(quiz)
+
+
 @app.put("/quizzes/{quiz_id}", response_model=schemas.SavedQuizOut)
 def update_saved_quiz(
     quiz_id: int,
@@ -5213,14 +5365,7 @@ def update_saved_quiz(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    quiz = (
-        db.query(models.SavedQuizModel)
-        .filter(models.SavedQuizModel.id == quiz_id)
-        .filter(models.SavedQuizModel.owner_user_id == user.id)
-        .first()
-    )
-    if not quiz:
-        raise HTTPException(status_code=404, detail="Quiz not found")
+    quiz = _get_accessible_quiz_or_404(quiz_id, db, user)
 
     if payload.title is not None:
         title = payload.title.strip()
@@ -5246,14 +5391,7 @@ def delete_saved_quiz(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    quiz = (
-        db.query(models.SavedQuizModel)
-        .filter(models.SavedQuizModel.id == quiz_id)
-        .filter(models.SavedQuizModel.owner_user_id == user.id)
-        .first()
-    )
-    if not quiz:
-        raise HTTPException(status_code=404, detail="Quiz not found")
+    quiz = _get_accessible_quiz_or_404(quiz_id, db, user)
 
     db.delete(quiz)
     db.commit()
@@ -5267,14 +5405,7 @@ def add_quiz_question(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    quiz = (
-        db.query(models.SavedQuizModel)
-        .filter(models.SavedQuizModel.id == quiz_id)
-        .filter(models.SavedQuizModel.owner_user_id == user.id)
-        .first()
-    )
-    if not quiz:
-        raise HTTPException(status_code=404, detail="Quiz not found")
+    quiz = _get_accessible_quiz_or_404(quiz_id, db, user)
 
     choices = _normalise_choices(payload.choices)
     prompt = (payload.prompt or "").strip()
@@ -5310,14 +5441,7 @@ def update_quiz_question(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    quiz = (
-        db.query(models.SavedQuizModel)
-        .filter(models.SavedQuizModel.id == quiz_id)
-        .filter(models.SavedQuizModel.owner_user_id == user.id)
-        .first()
-    )
-    if not quiz:
-        raise HTTPException(status_code=404, detail="Quiz not found")
+    quiz = _get_accessible_quiz_or_404(quiz_id, db, user)
 
     q = (
         db.query(models.SavedQuizQuestionModel)
@@ -5361,14 +5485,7 @@ def delete_quiz_question(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    quiz = (
-        db.query(models.SavedQuizModel)
-        .filter(models.SavedQuizModel.id == quiz_id)
-        .filter(models.SavedQuizModel.owner_user_id == user.id)
-        .first()
-    )
-    if not quiz:
-        raise HTTPException(status_code=404, detail="Quiz not found")
+    quiz = _get_accessible_quiz_or_404(quiz_id, db, user)
 
     q = (
         db.query(models.SavedQuizQuestionModel)
@@ -6028,9 +6145,6 @@ Base.metadata.create_all(bind=engine)
 # =========================================================
 # FILES / UPLOADS (ABSOLUTE + STABLE)
 # =========================================================
-BASE_DIR = Path(__file__).resolve().parent
-UPLOADS_DIR = BASE_DIR / "uploads"
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 LEGACY_PUBLIC_UPLOAD_DIRS = {"notes", "tests", "posts", "whiteboards"}
 EXAM_LIBRARY_DIR = Path(os.getenv("ELUME_EXAM_LIBRARY_DIR") or "/var/lib/elume/exam-library")
 EXAM_LIBRARY_MANIFEST = EXAM_LIBRARY_DIR / "manifest.json"
@@ -6421,10 +6535,34 @@ def on_startup():
 # =========================================================
 @app.get("/classes")
 def get_classes(
+    archived: bool = False,
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    return db.query(ClassModel).filter(ClassModel.owner_user_id == user.id).all()
+    return (
+        db.query(ClassModel)
+        .filter(
+            ClassModel.owner_user_id == user.id,
+            ClassModel.is_archived == archived,
+        )
+        .all()
+    )
+
+
+@app.get("/classes/archived", response_model=List[schemas.ClassOut])
+def get_archived_classes(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    return (
+        db.query(ClassModel)
+        .filter(
+            ClassModel.owner_user_id == user.id,
+            ClassModel.is_archived == True,
+        )
+        .order_by(ClassModel.archived_at.desc().nullslast(), ClassModel.id.desc())
+        .all()
+    )
 
 
 @app.post("/classes", response_model=schemas.ClassOut)
@@ -6437,6 +6575,7 @@ def create_class(
         owner_user_id=user.id,
         name=new_class.name,
         subject=new_class.subject,
+        stream=(new_class.stream or "").strip() or None,
         color=(new_class.color or "").strip() or None,
         preferred_exam_subject=(new_class.preferred_exam_subject or "").strip() or None,
         class_code=_rand_class_code(db),
@@ -6750,6 +6889,9 @@ def update_class(
     if "subject" in payload and isinstance(payload["subject"], str):
         cls.subject = payload["subject"].strip() or cls.subject
 
+    if "stream" in payload and isinstance(payload["stream"], str):
+        cls.stream = payload["stream"].strip() or None
+
     if "color" in payload and isinstance(payload["color"], str):
         cls.color = payload["color"].strip() or None
 
@@ -6759,6 +6901,44 @@ def update_class(
     db.commit()
     db.refresh(cls)
 
+    return cls
+
+
+@app.post("/classes/{class_id}/archive")
+def archive_class(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    cls = db.query(ClassModel).filter(
+        ClassModel.id == class_id,
+        ClassModel.owner_user_id == user.id,
+    ).first()
+
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    if cls.is_archived:
+        return cls
+
+    archived_count = (
+        db.query(ClassModel)
+        .filter(
+            ClassModel.owner_user_id == user.id,
+            ClassModel.is_archived == True,
+        )
+        .count()
+    )
+    if archived_count >= 20:
+        raise HTTPException(
+            status_code=400,
+            detail="You have reached the limit of 20 archived classes. Delete one permanently before archiving another.",
+        )
+
+    cls.is_archived = True
+    cls.archived_at = datetime.utcnow()
+    db.commit()
+    db.refresh(cls)
     return cls
 
 # =========================================================
@@ -7198,25 +7378,7 @@ def download_note(
         raise HTTPException(status_code=404, detail="Note not found")
     get_owned_class_or_404(note.class_id, db, user)
 
-    resolved_path: Optional[Path] = None
-    if note.stored_path:
-        direct_path = Path(note.stored_path)
-        if direct_path.exists():
-            resolved_path = direct_path
-        else:
-            normalized = str(note.stored_path).replace("\\", "/")
-            marker = "uploads/"
-            marker_index = normalized.lower().find(marker)
-            if marker_index != -1:
-                rel_suffix = normalized[marker_index + len(marker):].lstrip("/")
-                fallback_path = (UPLOADS_DIR / Path(rel_suffix)).resolve()
-                try:
-                    fallback_path.relative_to(UPLOADS_DIR.resolve())
-                except ValueError:
-                    fallback_path = None
-                if fallback_path and fallback_path.exists():
-                    resolved_path = fallback_path
-
+    resolved_path = _resolve_stored_upload_path_or_none(note.stored_path)
     if not resolved_path:
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path=str(resolved_path), filename=note.filename)
@@ -7233,11 +7395,10 @@ def student_download_note(
         models.Note.id == note_id,
         models.Note.class_id == link.class_id,
     ).first()
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    if not note.stored_path or not os.path.exists(note.stored_path):
+    resolved_path = _resolve_stored_upload_path_or_none(note.stored_path)
+    if not resolved_path:
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(path=note.stored_path, filename=note.filename)
+    return FileResponse(path=str(resolved_path), filename=note.filename)
 
 
 # =========================================================
@@ -9384,6 +9545,9 @@ def ai_create_resources(
         "- Keep the response appropriate to the output kind.\n"
         "- When sources are present, use them carefully and do not invent unsupported facts.\n"
         "- When no sources are present, draft sensibly but avoid fabricated curriculum citations.\n"
+        "- When teacher-selected files or manual notes are present for lesson_plan or worksheet, treat them as the primary truth and preserve their facts, framing, vocabulary, and sequence where possible.\n"
+        "- For lesson_plan or worksheet, do not drift into generic content if usable source content exists.\n"
+        "- If you add support content beyond the source, frame it as sensible teaching support rather than as a source fact.\n"
         "- If ideas, produce exactly 3 structured teaching ideas and do not turn them into a lesson plan.\n"
         "- If ideas, follow this exact top-level structure: Idea 1: Thought-provoking question; Idea 2: Thought-provoking activity; Idea 3: Collaborative Board session.\n"
         "- If ideas, Idea 1 must centre on a question that can be answered by an individual or a group.\n"
@@ -9415,6 +9579,9 @@ def ai_create_resources(
         "- If lesson_plan, do not write like a raw markdown dump or a generic scaffold.\n"
         "- If lesson_plan, write for Irish post-primary / secondary classrooms using practical, realistic classroom phrasing.\n"
         "- If lesson_plan, avoid US curriculum assumptions unless the teacher explicitly asks for them.\n"
+        "- If lesson_plan, title it as Lesson Plan: {topic/title} and follow with one clean metadata line in the form Subject | Level | Duration.\n"
+        "- If lesson_plan, keep Learning Overview short and topic-led rather than padded with a long overview paragraph.\n"
+        "- If lesson_plan, write Success Criteria as checklist-style 'I can ...' statements.\n"
         "- If lesson_plan, follow exactly this structure and order:\n"
         "  1. Learning Overview\n"
         "  2. Learning Intentions\n"
@@ -9428,7 +9595,10 @@ def ai_create_resources(
         "  10. Differentiation\n"
         "  11. Assessment\n"
         "  12. Suggested Homework\n"
+        "  13. Reflection\n"
         "- If lesson_plan, make each lesson-flow subsection usable and specific rather than filler.\n"
+        "- If lesson_plan, make the four timed lesson-flow subsections read as concrete classroom actions, not vague scaffold text.\n"
+        "- If lesson_plan, if usable source content exists, preserve its topic framing, vocabulary, named facts, and sequence where possible.\n"
         "- If lesson_plan, keep the tone practical, school-ready, and concise.\n"
         "\n"
         "SOURCE EXCERPTS (allowed):\n"
@@ -9684,11 +9854,6 @@ def generate_quiz(
 
     text = extract_pdf_text(str(resolved_path))
 
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
     prompt = f"""
 Create {payload.num_questions} multiple choice quiz questions from this content.
 
@@ -9709,21 +9874,31 @@ CONTENT:
 {text}
 """
 
-    body = {
-        "model": OPENAI_MODEL,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.4
-    }
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="Missing OpenAI API key")
 
-    r = requests.post(OPENAI_URL, headers=headers, json=body)
+    try:
+        try:
+            from openai import OpenAI  # type: ignore
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"OpenAI client not available: {e}")
 
-    if r.status_code != 200:
-        raise HTTPException(status_code=500, detail=r.text)
-
-    data = r.json()
-    content = data["choices"][0]["message"]["content"]
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.4,
+        )
+        content = (resp.choices[0].message.content or "").strip()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"OpenAI quiz generation failed: {str(exc)}",
+        )
 
     cleaned = content.strip()
 

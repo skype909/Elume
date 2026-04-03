@@ -97,10 +97,13 @@ class ClassModel(Base):
 
     name = Column(String, nullable=False)
     subject = Column(String, nullable=False)
+    stream = Column(String, nullable=True)
     color = Column(String, nullable=True)
     preferred_exam_subject = Column(String, nullable=True)
     class_code = Column(String, unique=True, index=True, nullable=True)
     class_pin = Column(String, nullable=True)
+    is_archived = Column(Boolean, nullable=False, default=False)
+    archived_at = Column(DateTime, nullable=True)
 
     owner = relationship("UserModel", back_populates="classes")
 
@@ -335,6 +338,7 @@ class SavedQuizModel(Base):
     title = Column(String, nullable=False)
     category = Column(String, nullable=False, default="General")
     description = Column(Text, nullable=True)
+    is_starred = Column(Boolean, nullable=False, default=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -345,6 +349,7 @@ class SavedQuizModel(Base):
         cascade="all, delete-orphan",
         order_by="SavedQuizQuestionModel.position.asc()",
     )
+    class_rel = relationship("ClassModel")
 
 
 class SavedQuizQuestionModel(Base):

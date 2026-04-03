@@ -35,6 +35,7 @@ import StudentPage from "./StudentPage";
 import BillingSuccessPage from "./BillingSuccessPage";
 import BillingCancelPage from "./BillingCancelPage";
 import BillingOnboardingPage from "./BillingOnboardingPage";
+import ArchivedClassesPage from "./ArchivedClassesPage";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -46,7 +47,10 @@ type ClassItem = {
   id: number;
   name: string;
   subject: string;
+  stream?: string | null;
   color?: string | null;
+  is_archived?: boolean;
+  archived_at?: string | null;
 };
 
 const API_BASE = "/api";
@@ -421,6 +425,10 @@ function Dashboard() {
   const [editSubject, setEditSubject] = useState("");
   const [editColour, setEditColour] = useState(DEFAULT_BG);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [manageClass, setManageClass] = useState<ClassItem | null>(null);
+  const [manageBusy, setManageBusy] = useState(false);
+  const [manageError, setManageError] = useState<string | null>(null);
 
   // mobile timetable quick-view
   const [ttOpen, setTtOpen] = useState(false);
@@ -1005,7 +1013,7 @@ function Dashboard() {
     try {
       const created = (await apiFetch("/classes", {
         method: "POST",
-        body: JSON.stringify({ name, subject: subj, color: pickedColour }),
+        body: JSON.stringify({ name, subject: subj, stream, color: pickedColour }),
       })) as ClassItem;
 
       console.log("CREATE /classes response:", created);
@@ -1053,6 +1061,44 @@ function Dashboard() {
     setEditSubject(c.subject || "");
     setEditColour(resolveClassTileColour(c, legacyColourRef.current, meta));
     setEditOpen(true);
+  }
+
+  function openManageClass(c: ClassItem) {
+    setManageClass(c);
+    setManageError(null);
+    setManageOpen(true);
+  }
+
+  async function archiveSelectedClass() {
+    if (!manageClass) return;
+    setManageBusy(true);
+    setManageError(null);
+    try {
+      await apiFetch(`/classes/${manageClass.id}/archive`, { method: "POST" });
+      setClasses((prev) => prev.filter((cls) => cls.id !== manageClass.id));
+      setManageOpen(false);
+      setManageClass(null);
+    } catch (e: any) {
+      setManageError(e?.message || "Could not archive class.");
+    } finally {
+      setManageBusy(false);
+    }
+  }
+
+  async function deleteSelectedClassPermanently() {
+    if (!manageClass) return;
+    setManageBusy(true);
+    setManageError(null);
+    try {
+      await apiFetch(`/classes/${manageClass.id}`, { method: "DELETE" });
+      setClasses((prev) => prev.filter((cls) => cls.id !== manageClass.id));
+      setManageOpen(false);
+      setManageClass(null);
+    } catch (e: any) {
+      setManageError(e?.message || "Could not delete class.");
+    } finally {
+      setManageBusy(false);
+    }
   }
 
   async function saveEdit() {
@@ -1361,31 +1407,18 @@ function Dashboard() {
                   >
                     ✏️
                   </button>
-
-                  {/* Delete class button */}
-                  <div
-                    onClick={async (e) => {
+                  <button
+                    type="button"
+                    onClick={(e) => {
                       e.stopPropagation();
-
-                      const confirmed = window.confirm(
-                        "Are you sure you want to delete this class?"
-                      );
-                      if (!confirmed) return;
-
-                      try {
-                        await apiFetch(`/classes/${c.id}`, { method: "DELETE" });
-
-                        // refresh tiles
-                        setClasses((prev) => prev.filter(cls => cls.id !== c.id));
-                      } catch (err) {
-                        alert("Could not delete class");
-                      }
+                      openManageClass(c);
                     }}
-                    className="absolute bottom-2 right-2 opacity-70 hover:opacity-100"
-                    title="Delete class"
+                    className="absolute bottom-2 right-2 rounded-lg border border-white/70 bg-white/90 px-2 py-1 text-[10px] font-semibold text-slate-700 shadow-sm opacity-80 transition hover:opacity-100 hover:bg-white"
+                    title="Manage class"
+                    aria-label={`Manage ${c.name}`}
                   >
-                    🗑️
-                  </div>
+                    Manage
+                  </button>
 
                   <div className="text-center">
                     <div
@@ -1408,6 +1441,16 @@ function Dashboard() {
                 </button>
               );
             })}
+        </div>
+
+        <div className="mt-5 flex items-center justify-start">
+          <button
+            type="button"
+            onClick={() => navigate("/archived-classes")}
+            className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:shadow-md"
+          >
+            Archived Classes
+          </button>
         </div>
       </main>
 
@@ -1797,6 +1840,73 @@ function Dashboard() {
           </div>
         </div>
       )}
+
+      {manageOpen && manageClass && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4">
+          <div className="w-full max-w-xl rounded-3xl border-2 border-slate-200 bg-white shadow-xl">
+            <div className="p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-xl font-extrabold tracking-tight">Manage class</div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    You can archive this class to remove it from your active dashboard, or permanently delete it.
+                    You can keep up to 20 archived classes.
+                  </div>
+                </div>
+                <button
+                  className={pill}
+                  type="button"
+                  onClick={() => {
+                    if (manageBusy) return;
+                    setManageOpen(false);
+                    setManageClass(null);
+                    setManageError(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                <span className="font-semibold text-slate-900">{manageClass.name}</span>
+                {manageClass.subject ? ` • ${manageClass.subject}` : ""}
+              </div>
+
+              {manageError && (
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  {manageError}
+                </div>
+              )}
+
+              <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+                <button
+                  className={pill}
+                  type="button"
+                  onClick={() => {
+                    if (manageBusy) return;
+                    setManageOpen(false);
+                    setManageClass(null);
+                    setManageError(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button className={btnPrimary} type="button" onClick={archiveSelectedClass} disabled={manageBusy}>
+                  {manageBusy ? "Working..." : "Archive Class"}
+                </button>
+                <button
+                  className="rounded-2xl border-2 border-rose-600 bg-white px-6 py-3 text-base font-semibold text-rose-700 shadow-sm hover:bg-rose-50 active:translate-y-[1px] disabled:opacity-50"
+                  type="button"
+                  onClick={deleteSelectedClassPermanently}
+                  disabled={manageBusy}
+                >
+                  Delete Permanently
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1889,6 +1999,7 @@ export default function App() {
         <Route path="/class/:id/collaboration" element={<CollaborationPage />} />
         <Route path="/planner" element={<TeacherPlanner />} />
         <Route path="/create-resources" element={<CreateResources />} />
+        <Route path="/archived-classes" element={<ArchivedClassesPage />} />
         <Route path="/legal" element={<LegalPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/register" element={<RegisterPage />} />
