@@ -118,6 +118,21 @@ export default function CalendarPage() {
       .catch(() => setClasses([]));
   }, []);
 
+  useEffect(() => {
+    if (!classes.length) return;
+
+    const firstClassId = classes[0]?.id;
+    if (!firstClassId) return;
+
+    if (!hasRouteClass && !classes.some((c) => c.id === filterClassId)) {
+      setFilterClassId(firstClassId);
+    }
+
+    if (!hasRouteClass && draftScope === "class" && !classes.some((c) => c.id === draftClassId)) {
+      setDraftClassId(firstClassId);
+    }
+  }, [classes, hasRouteClass, filterClassId, draftClassId, draftScope]);
+
   // If we land on /class/:id/calendar, default filter to that class
   useEffect(() => {
     if (hasRouteClass) {
@@ -404,7 +419,7 @@ export default function CalendarPage() {
                   ? "Showing: All events"
                   : filterMode === "global"
                     ? "Showing: Global only"
-                    : `Showing: Class ${filterClassId}`}
+                    : `Showing: ${classLabel(filterClassId) || `Class ${filterClassId}`}`}
             </div>
           </div>
 

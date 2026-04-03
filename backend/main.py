@@ -3043,22 +3043,28 @@ def _resolve_stored_upload_path_or_none(stored_path: str | None) -> Optional[Pat
     return None
 
 
-SAVED_WHITEBOARDS_TOPIC_NAME = "Saved Whiteboards"
+SAVED_WHITEBOARDS_TOPIC_NAME = "Whiteboards"
 
 
 def _get_or_create_saved_whiteboards_topic(class_id: int, db: Session) -> models.Topic:
+    canonical_name = f"{NOTES_PREFIX}{SAVED_WHITEBOARDS_TOPIC_NAME}"
+    legacy_name = f"{NOTES_PREFIX}Saved Whiteboards"
     topic = (
         db.query(models.Topic)
         .filter(
             models.Topic.class_id == class_id,
-            models.Topic.name == f"{NOTES_PREFIX}{SAVED_WHITEBOARDS_TOPIC_NAME}",
+            models.Topic.name.in_([canonical_name, legacy_name]),
         )
+        .order_by(models.Topic.id.asc())
         .first()
     )
     if topic:
+        if topic.name != canonical_name:
+            topic.name = canonical_name
+            db.flush()
         return topic
 
-    topic = models.Topic(class_id=class_id, name=f"{NOTES_PREFIX}{SAVED_WHITEBOARDS_TOPIC_NAME}")
+    topic = models.Topic(class_id=class_id, name=canonical_name)
     db.add(topic)
     db.flush()
     return topic
@@ -6636,14 +6642,15 @@ async def save_whiteboard(
 ):
     get_owned_class_or_404(class_id, db, user)
 
-    os.makedirs("uploads/whiteboards", exist_ok=True)
+    dest_dir = UPLOADS_DIR / "whiteboards"
+    dest_dir.mkdir(parents=True, exist_ok=True)
 
     ext = os.path.splitext(image.filename or "")[1].lower()
     if ext not in [".png", ".jpg", ".jpeg", ".webp", ""]:
         ext = ".png"
 
     filename = f"whiteboard_{class_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}{ext}"
-    disk_path = os.path.join("uploads", "whiteboards", filename)
+    disk_path = dest_dir / filename
 
     # Save file
     contents = await image.read()
@@ -7776,10 +7783,7 @@ def list_calendar_events(
         if not cls:
             raise HTTPException(status_code=404, detail="Class not found")
 
-        return q.filter(
-            (models.CalendarEvent.class_id.is_(None))
-            | (models.CalendarEvent.class_id == class_id)
-        ).all()
+        return q.filter(models.CalendarEvent.class_id == class_id).all()
 
     # Otherwise: all events for this user
     return q.all()
