@@ -2988,6 +2988,22 @@ def _internal_post_upload_relpath_or_none(link: str) -> Optional[str]:
             return value[len("/uploads/"):]
     return None
 
+def _resolve_upload_relpath_or_none(rel_path: str | None) -> Optional[Path]:
+    if not rel_path:
+        return None
+
+    normalized = str(rel_path).replace("\\", "/").lstrip("/")
+    direct_path = (UPLOADS_DIR / Path(normalized)).resolve()
+    try:
+        direct_path.relative_to(UPLOADS_DIR.resolve())
+    except ValueError:
+        direct_path = None
+    if direct_path and direct_path.exists() and direct_path.is_file():
+        return direct_path
+
+    uploads_prefixed = f"uploads/{normalized}"
+    return _resolve_stored_upload_path_or_none(uploads_prefixed)
+
 def _post_attachment_path_or_404(post: PostModel, attachment_index: int) -> tuple[Path, str]:
     links = _links_to_list(getattr(post, "links", None))
     if attachment_index < 0 or attachment_index >= len(links):
@@ -2997,8 +3013,8 @@ def _post_attachment_path_or_404(post: PostModel, attachment_index: int) -> tupl
     if not rel:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    path = UPLOADS_DIR / Path(rel)
-    if not path.exists() or not path.is_file():
+    path = _resolve_upload_relpath_or_none(rel)
+    if not path:
         raise HTTPException(status_code=404, detail="File not found")
 
     return path, path.name
@@ -3873,128 +3889,7 @@ def admin_delete_user(
 
     try:
         if class_ids:
-            assessment_ids = [
-                row.id
-                for row in db.query(ClassAssessmentModel.id)
-                .filter(ClassAssessmentModel.class_id.in_(class_ids))
-                .all()
-            ]
-            if assessment_ids:
-                db.query(AssessmentResultModel).filter(
-                    AssessmentResultModel.assessment_id.in_(assessment_ids)
-                ).delete(synchronize_session=False)
-                db.query(ClassAssessmentModel).filter(
-                    ClassAssessmentModel.id.in_(assessment_ids)
-                ).delete(synchronize_session=False)
-
-            baseline_set_ids = [
-                row.id
-                for row in db.query(Cat4BaselineSetModel.id)
-                .filter(Cat4BaselineSetModel.class_id.in_(class_ids))
-                .all()
-            ]
-            if baseline_set_ids:
-                db.query(Cat4StudentBaselineModel).filter(
-                    Cat4StudentBaselineModel.baseline_set_id.in_(baseline_set_ids)
-                ).delete(synchronize_session=False)
-                db.query(Cat4BaselineSetModel).filter(
-                    Cat4BaselineSetModel.id.in_(baseline_set_ids)
-                ).delete(synchronize_session=False)
-
-            term_set_ids = [
-                row.id
-                for row in db.query(Cat4TermResultSetModel.id)
-                .filter(Cat4TermResultSetModel.class_id.in_(class_ids))
-                .all()
-            ]
-            if term_set_ids:
-                db.query(Cat4StudentTermResultModel).filter(
-                    Cat4StudentTermResultModel.result_set_id.in_(term_set_ids)
-                ).delete(synchronize_session=False)
-                db.query(Cat4TermResultSetModel).filter(
-                    Cat4TermResultSetModel.id.in_(term_set_ids)
-                ).delete(synchronize_session=False)
-
-            db.query(Cat4WorkbookVersionModel).filter(
-                Cat4WorkbookVersionModel.class_id.in_(class_ids)
-            ).delete(synchronize_session=False)
-
-            db.query(models.Note).filter(
-                models.Note.class_id.in_(class_ids)
-            ).delete(synchronize_session=False)
-            db.query(models.Topic).filter(
-                models.Topic.class_id.in_(class_ids)
-            ).delete(synchronize_session=False)
-
-            db.query(models.TestItem).filter(
-                models.TestItem.class_id.in_(class_ids)
-            ).delete(synchronize_session=False)
-            db.query(models.TestCategory).filter(
-                models.TestCategory.class_id.in_(class_ids)
-            ).delete(synchronize_session=False)
-
-            db.query(models.StudentAccessLink).filter(
-                models.StudentAccessLink.class_id.in_(class_ids)
-            ).delete(synchronize_session=False)
-            db.query(models.CalendarEvent).filter(
-                models.CalendarEvent.class_id.in_(class_ids)
-            ).delete(synchronize_session=False)
-            db.query(models.WhiteboardStateModel).filter(
-                models.WhiteboardStateModel.class_id.in_(class_ids)
-            ).delete(synchronize_session=False)
-
-            live_session_ids = [
-                row.id
-                for row in db.query(models.LiveQuizSessionModel.id)
-                .filter(models.LiveQuizSessionModel.class_id.in_(class_ids))
-                .all()
-            ]
-            if live_session_ids:
-                db.query(models.LiveQuizAttemptModel).filter(
-                    models.LiveQuizAttemptModel.session_id.in_(live_session_ids)
-                ).delete(synchronize_session=False)
-                participant_ids = [
-                    row.id
-                    for row in db.query(models.LiveQuizParticipantModel.id)
-                    .filter(models.LiveQuizParticipantModel.session_id.in_(live_session_ids))
-                    .all()
-                ]
-                db.query(models.LiveQuizAnswerModel).filter(
-                    models.LiveQuizAnswerModel.session_id.in_(live_session_ids)
-                ).delete(synchronize_session=False)
-                if participant_ids:
-                    db.query(models.LiveQuizAnswerModel).filter(
-                        models.LiveQuizAnswerModel.participant_id.in_(participant_ids)
-                    ).delete(synchronize_session=False)
-                db.query(models.LiveQuizParticipantModel).filter(
-                    models.LiveQuizParticipantModel.session_id.in_(live_session_ids)
-                ).delete(synchronize_session=False)
-                db.query(models.LiveQuizSessionModel).filter(
-                    models.LiveQuizSessionModel.id.in_(live_session_ids)
-                ).delete(synchronize_session=False)
-
-            collab_session_ids = [
-                row.id
-                for row in db.query(models.CollabSessionModel.id)
-                .filter(models.CollabSessionModel.class_id.in_(class_ids))
-                .all()
-            ]
-            if collab_session_ids:
-                db.query(models.CollabParticipantModel).filter(
-                    models.CollabParticipantModel.session_id.in_(collab_session_ids)
-                ).delete(synchronize_session=False)
-                db.query(models.CollabSessionModel).filter(
-                    models.CollabSessionModel.id.in_(collab_session_ids)
-                ).delete(synchronize_session=False)
-
-            class_quizzes = db.query(models.SavedQuizModel).filter(
-                models.SavedQuizModel.class_id.in_(class_ids)
-            ).all()
-            for quiz in class_quizzes:
-                db.delete(quiz)
-
-            for cls in owned_classes:
-                db.delete(cls)
+            _delete_class_dependencies(db, class_ids, owned_classes)
 
         db.query(models.TeacherAdminStateModel).filter(
             models.TeacherAdminStateModel.owner_user_id == target.id
@@ -4033,6 +3928,143 @@ def admin_delete_user(
         "message": f"Deleted user {target_email}",
         "hard_deleted": hard_delete,
     }
+
+
+def _delete_class_dependencies(
+    db: Session,
+    class_ids: list[int],
+    class_rows: Optional[list[ClassModel]] = None,
+) -> None:
+    if not class_ids:
+        return
+
+    assessment_ids = [
+        row.id
+        for row in db.query(ClassAssessmentModel.id)
+        .filter(ClassAssessmentModel.class_id.in_(class_ids))
+        .all()
+    ]
+    if assessment_ids:
+        db.query(AssessmentResultModel).filter(
+            AssessmentResultModel.assessment_id.in_(assessment_ids)
+        ).delete(synchronize_session=False)
+        db.query(ClassAssessmentModel).filter(
+            ClassAssessmentModel.id.in_(assessment_ids)
+        ).delete(synchronize_session=False)
+
+    baseline_set_ids = [
+        row.id
+        for row in db.query(Cat4BaselineSetModel.id)
+        .filter(Cat4BaselineSetModel.class_id.in_(class_ids))
+        .all()
+    ]
+    if baseline_set_ids:
+        db.query(Cat4StudentBaselineModel).filter(
+            Cat4StudentBaselineModel.baseline_set_id.in_(baseline_set_ids)
+        ).delete(synchronize_session=False)
+        db.query(Cat4BaselineSetModel).filter(
+            Cat4BaselineSetModel.id.in_(baseline_set_ids)
+        ).delete(synchronize_session=False)
+
+    term_set_ids = [
+        row.id
+        for row in db.query(Cat4TermResultSetModel.id)
+        .filter(Cat4TermResultSetModel.class_id.in_(class_ids))
+        .all()
+    ]
+    if term_set_ids:
+        db.query(Cat4StudentTermResultModel).filter(
+            Cat4StudentTermResultModel.result_set_id.in_(term_set_ids)
+        ).delete(synchronize_session=False)
+        db.query(Cat4TermResultSetModel).filter(
+            Cat4TermResultSetModel.id.in_(term_set_ids)
+        ).delete(synchronize_session=False)
+
+    db.query(Cat4WorkbookVersionModel).filter(
+        Cat4WorkbookVersionModel.class_id.in_(class_ids)
+    ).delete(synchronize_session=False)
+
+    db.query(models.Note).filter(
+        models.Note.class_id.in_(class_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.Topic).filter(
+        models.Topic.class_id.in_(class_ids)
+    ).delete(synchronize_session=False)
+
+    db.query(models.TestItem).filter(
+        models.TestItem.class_id.in_(class_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.TestCategory).filter(
+        models.TestCategory.class_id.in_(class_ids)
+    ).delete(synchronize_session=False)
+
+    db.query(models.StudentAccessLink).filter(
+        models.StudentAccessLink.class_id.in_(class_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.CalendarEvent).filter(
+        models.CalendarEvent.class_id.in_(class_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.WhiteboardStateModel).filter(
+        models.WhiteboardStateModel.class_id.in_(class_ids)
+    ).delete(synchronize_session=False)
+
+    live_session_ids = [
+        row.id
+        for row in db.query(models.LiveQuizSessionModel.id)
+        .filter(models.LiveQuizSessionModel.class_id.in_(class_ids))
+        .all()
+    ]
+    if live_session_ids:
+        db.query(models.LiveQuizAttemptModel).filter(
+            models.LiveQuizAttemptModel.session_id.in_(live_session_ids)
+        ).delete(synchronize_session=False)
+        participant_ids = [
+            row.id
+            for row in db.query(models.LiveQuizParticipantModel.id)
+            .filter(models.LiveQuizParticipantModel.session_id.in_(live_session_ids))
+            .all()
+        ]
+        db.query(models.LiveQuizAnswerModel).filter(
+            models.LiveQuizAnswerModel.session_id.in_(live_session_ids)
+        ).delete(synchronize_session=False)
+        if participant_ids:
+            db.query(models.LiveQuizAnswerModel).filter(
+                models.LiveQuizAnswerModel.participant_id.in_(participant_ids)
+            ).delete(synchronize_session=False)
+        db.query(models.LiveQuizParticipantModel).filter(
+            models.LiveQuizParticipantModel.session_id.in_(live_session_ids)
+        ).delete(synchronize_session=False)
+        db.query(models.LiveQuizSessionModel).filter(
+            models.LiveQuizSessionModel.id.in_(live_session_ids)
+        ).delete(synchronize_session=False)
+
+    db.query(models.LiveQuizAttemptModel).filter(
+        models.LiveQuizAttemptModel.class_id.in_(class_ids)
+    ).delete(synchronize_session=False)
+
+    collab_session_ids = [
+        row.id
+        for row in db.query(models.CollabSessionModel.id)
+        .filter(models.CollabSessionModel.class_id.in_(class_ids))
+        .all()
+    ]
+    if collab_session_ids:
+        db.query(models.CollabParticipantModel).filter(
+            models.CollabParticipantModel.session_id.in_(collab_session_ids)
+        ).delete(synchronize_session=False)
+        db.query(models.CollabSessionModel).filter(
+            models.CollabSessionModel.id.in_(collab_session_ids)
+        ).delete(synchronize_session=False)
+
+    class_quizzes = db.query(models.SavedQuizModel).filter(
+        models.SavedQuizModel.class_id.in_(class_ids)
+    ).all()
+    for quiz in class_quizzes:
+        db.delete(quiz)
+
+    if class_rows:
+        for cls in class_rows:
+            db.delete(cls)
 
 
 @app.post("/admin/classes/transfer")
@@ -6251,13 +6283,8 @@ def legacy_upload_access(file_path: str):
     if rel.parts[0] not in LEGACY_PUBLIC_UPLOAD_DIRS:
         raise HTTPException(status_code=404, detail="File not found")
 
-    full_path = (UPLOADS_DIR / rel).resolve()
-    try:
-        full_path.relative_to(UPLOADS_DIR.resolve())
-    except Exception:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    if not full_path.exists() or not full_path.is_file():
+    full_path = _resolve_upload_relpath_or_none(str(rel))
+    if not full_path:
         raise HTTPException(status_code=404, detail="File not found")
 
     return FileResponse(
@@ -7551,9 +7578,17 @@ def delete_class(
     if not c:
         raise HTTPException(status_code=404, detail="Class not found")
 
-    db.delete(c)
-    db.commit()
-    return {"ok": True}
+    try:
+        _delete_class_dependencies(db, [c.id], [c])
+        db.commit()
+        return {"ok": True}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to permanently delete class %s", class_id)
+        raise HTTPException(status_code=500, detail="Failed to permanently delete class")
 
 @app.post("/tests", response_model=schemas.TestOut)
 def upload_test(
