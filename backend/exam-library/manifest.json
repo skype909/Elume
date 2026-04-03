@@ -1,0 +1,223 @@
+{
+
+  "items": [
+
+    {
+
+      "id": "lc-maths-hl-2025-paper-1",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "Maths",
+
+      "level": "Higher Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate Maths HL 2025 Paper 1",
+
+      "path": "senior-cycle/maths/Maths-2025-HL-P1.pdf"
+
+    },
+
+    {
+
+      "id": "lc-maths-hl-2025-paper-2",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "Maths",
+
+      "level": "Higher Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate Maths HL 2025 Paper 2",
+
+      "path": "senior-cycle/maths/Maths-2025-HL-P2.pdf"
+
+    },
+
+    {
+
+      "id": "lc-maths-ol-2025-paper-1",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "Maths",
+
+      "level": "Ordinary Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate Maths OL 2025 Paper 1",
+
+      "path": "senior-cycle/maths/Maths-2025-OL-P1.pdf"
+
+    },
+
+    {
+
+      "id": "lc-maths-ol-2025-paper-2",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "Maths",
+
+      "level": "Ordinary Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate Maths OL 2025 Paper 2",
+
+      "path": "senior-cycle/maths/Maths-2025-OL-P2.pdf"
+
+    },
+
+    {
+
+      "id": "lc-english-hl-2025-paper-1",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "English",
+
+      "level": "Higher Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate English HL 2025 Paper 1",
+
+      "path": "senior-cycle/english/English-2025-HL-P1.pdf"
+
+    },
+
+    {
+
+      "id": "lc-english-hl-2025-paper-2",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "English",
+
+      "level": "Higher Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate English HL 2025 Paper 2",
+
+      "path": "senior-cycle/english/English-2025-HL-P2.pdf"
+
+    },
+
+    {
+
+      "id": "lc-english-ol-2025-paper-1",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "English",
+
+      "level": "Ordinary Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate English OL 2025 Paper 1",
+
+      "path": "senior-cycle/english/English-2025-OL-P1.pdf"
+
+    },
+
+    {
+
+      "id": "lc-english-ol-2025-paper-2",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "English",
+
+      "level": "Ordinary Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate English OL 2025 Paper 2",
+
+      "path": "senior-cycle/english/English-2025-OL-P2.pdf"
+
+    },
+
+    {
+
+      "id": "lc-irish-hl-2025-paper-1",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "Irish",
+
+      "level": "Higher Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate Irish HL 2025 Paper 1",
+
+      "path": "senior-cycle/irish/Gaeilge-2025-HL-P1.pdf"
+
+    },
+
+    {
+
+      "id": "lc-irish-hl-2025-paper-2",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "Irish",
+
+      "level": "Higher Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate Irish HL 2025 Paper 2",
+
+      "path": "senior-cycle/irish/Gaeilge-2025-HL-P2.pdf"
+
+    },
+
+    {
+
+      "id": "lc-irish-ol-2025-paper-1",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "Irish",
+
+      "level": "Ordinary Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate Irish OL 2025 Paper 1",
+
+      "path": "senior-cycle/irish/Gaeilge-2025-OL-P1.pdf"
+
+    },
+
+    {
+
+      "id": "lc-irish-ol-2025-paper-2",
+
+      "cycle": "Senior Cycle",
+
+      "subject": "Irish",
+
+      "level": "Ordinary Level",
+
+      "year": "2025",
+
+      "title": "Leaving Certificate Irish OL 2025 Paper 2",
+
+      "path": "senior-cycle/irish/Gaeilge-2025-OL-P2.pdf"
+
+    }
+
+  ]
+
+}

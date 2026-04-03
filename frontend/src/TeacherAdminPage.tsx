@@ -553,6 +553,7 @@ export default function TeacherAdminPage() {
   const [editing, setEditing] = useState<{ day: DayKey; slotId: string } | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [resetTimetableModalOpen, setResetTimetableModalOpen] = useState(false);
   const [setupPromptDismissed, setSetupPromptDismissed] = useState(false);
 
   const [passwordForm, setPasswordForm] = useState({
@@ -925,18 +926,11 @@ export default function TeacherAdminPage() {
   }
 
   function resetTimetableFromSettings() {
-    if (
-      !window.confirm(
-        "Rebuild the timetable from your saved settings? Existing slot assignments will only stay where the slot ids still match."
-      )
-    ) {
-      return;
-    }
-
     touch({
       ...state,
       schedule: buildScheduleFromConfig(state.timetableConfig, state.schedule),
     });
+    setResetTimetableModalOpen(false);
   }
 
   async function submitPasswordChange(e: React.FormEvent) {
@@ -1555,7 +1549,7 @@ export default function TeacherAdminPage() {
                   <button className={btn} type="button" onClick={autoRankUnusedToday}>
                     Auto-rank unused (today)
                   </button>
-                  <button className={btn} type="button" onClick={resetTimetableFromSettings}>
+                  <button className={btn} type="button" onClick={() => setResetTimetableModalOpen(true)}>
                     Reset timetable
                   </button>
                 </div>
@@ -1934,6 +1928,50 @@ export default function TeacherAdminPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {resetTimetableModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 print-hide">
+          <div className="w-full max-w-lg rounded-[32px] border-2 border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-5">
+              <div>
+                <div className="text-2xl font-extrabold tracking-tight text-slate-900">
+                  Reset timetable?
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Elume will rebuild the timetable from your saved settings. Some slot assignments may be cleared or moved.
+                </div>
+                <div className="mt-2 text-sm font-semibold text-rose-700">
+                  This action cannot be undone.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className={btn}
+                onClick={() => setResetTimetableModalOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="p-5">
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  className={btn}
+                  onClick={() => setResetTimetableModalOpen(false)}
+                >
+                  Cancel
+                </button>
+
+                <button type="button" className={btnPrimary} onClick={resetTimetableFromSettings}>
+                  Reset timetable
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

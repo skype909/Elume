@@ -1496,7 +1496,7 @@ export default function ClassPage() {
             <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
               <Icon name="spark" />
             </span>
-            <div className="text-lg font-extrabold tracking-tight">Generate Resources</div>
+            <div className="text-lg font-extrabold tracking-tight">External Resources</div>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">

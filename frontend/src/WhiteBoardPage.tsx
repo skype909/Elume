@@ -1433,6 +1433,14 @@ export default function WhiteBoardPage() {
     return 1.0;
   }
 
+  function getPdfRenderDpr() {
+    const raw =
+      typeof window !== "undefined" && typeof window.devicePixelRatio === "number"
+        ? window.devicePixelRatio
+        : 1;
+    return Math.max(1, Math.min(raw, 1.75));
+  }
+
   /* ---------- Canvas sizing ---------- */
   const syncCanvasSize = () => {
     const container = containerRef.current;
@@ -2912,7 +2920,7 @@ export default function WhiteBoardPage() {
       const width = getBoardWidthCss();
       const viewport0 = page.getViewport({ scale: 1.0 });
       const fitScale = (width / viewport0.width) * pdfInsertScale;
-      const dpr = getBoardDpr();// cap to avoid huge memory use
+      const dpr = getPdfRenderDpr();
       const viewportCss = page.getViewport({ scale: fitScale });          // size you want on the board
       const viewportHiDpi = page.getViewport({ scale: fitScale * dpr });  // extra pixels for sharpness
 
@@ -3067,7 +3075,7 @@ export default function WhiteBoardPage() {
     const viewport1 = page.getViewport({ scale: 1 });
     const fitScale = (parentW / viewport1.width) * pdfViewScale;
 
-    const dpr = getBoardDpr();
+    const dpr = getPdfRenderDpr();
     const viewportCss = page.getViewport({ scale: fitScale });
     const viewportHiDpi = page.getViewport({ scale: fitScale * dpr });
 
