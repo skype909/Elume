@@ -17,3 +17,5 @@ uploads/
 Thumbs.db
 
 *.pyc.*
+
+backend/exam-library/manifest.backup*.json
