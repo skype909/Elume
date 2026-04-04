@@ -1925,6 +1925,10 @@ export default function App() {
   const navigate = useNavigate();
   // Dashboard is the root route in App.tsx
   const isDashboard = location.pathname === "/";
+  const isBillingRoute =
+    location.pathname === "/onboarding/billing" ||
+    location.pathname === "/billing/success" ||
+    location.pathname === "/billing/cancel";
 
   // Public routes should NOT require login
   const isPublicRoute =
@@ -1936,6 +1940,41 @@ export default function App() {
     location.pathname.startsWith("/join/") ||
     location.pathname.startsWith("/collab/join/") ||
     location.pathname.startsWith("/reset-password");
+
+  useEffect(() => {
+    if (!isAuthed || isPublicRoute || isBillingRoute) return;
+
+    let cancelled = false;
+
+    async function checkBilling() {
+      try {
+        const data = (await apiFetch("/billing/me")) as {
+          billing_onboarding_required?: boolean;
+          subscription_expired?: boolean;
+          requires_billing_redirect?: boolean;
+        };
+
+        if (cancelled) return;
+
+        if (
+          data?.billing_onboarding_required ||
+          data?.subscription_expired ||
+          data?.requires_billing_redirect
+        ) {
+          navigate("/onboarding/billing", { replace: true });
+        }
+      } catch {
+        // fail silently and do not block the app shell
+      }
+    }
+
+    void checkBilling();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthed, isBillingRoute, isPublicRoute, navigate]);
+
   function logout() {
     clearToken();
     setIsAuthed(false);

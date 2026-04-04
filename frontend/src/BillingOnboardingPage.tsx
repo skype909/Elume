@@ -7,6 +7,9 @@ type BillingStatus = {
   subscription_status: string;
   billing_interval: string | null;
   current_period_end: string | null;
+  subscription_expires_at?: string | null;
+  subscription_expired?: boolean;
+  requires_billing_redirect?: boolean;
   has_stripe_customer: boolean;
   billing_onboarding_required: boolean;
   trial_started_at: string | null;
@@ -81,6 +84,10 @@ export default function BillingOnboardingPage() {
   const isTrial = status === "trialing" || !!billing?.trial_active;
   const isPendingActivation = status === "pending" && !!billing?.has_stripe_customer;
   const trialDaysLeft = daysLeft(billing?.trial_ends_at || null);
+  const isExpired = Boolean(billing?.subscription_expired);
+  const subscriptionExpiresAt = billing?.subscription_expires_at ?? null;
+  const annualOfferCopy =
+    "Annual subscriptions started on or before 30 June 2026 include access through to 30 September 2027.";
 
   async function startCheckout(plan: "monthly" | "annual") {
     setBusy(true);
@@ -133,11 +140,19 @@ export default function BillingOnboardingPage() {
                 Welcome to Elume
               </div>
               <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-900">
-                Complete your Elume setup
+                {isExpired ? "Renew your Elume subscription" : "Complete your Elume setup"}
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                Choose a monthly or annual plan, enter your card details securely in Stripe, and start with a 14-day free trial. No charge is taken today.
+                {isExpired
+                  ? "Your subscription has expired. Renew now to restore full access to your account."
+                  : "Choose a monthly or annual plan, enter your card details securely in Stripe, and start with a 14-day free trial. No charge is taken today."}
               </p>
+              {isExpired && subscriptionExpiresAt && (
+                <p className="mt-2 text-sm font-medium text-slate-600">
+                  Your previous subscription expired on {new Date(subscriptionExpiresAt).toLocaleDateString("en-IE")}.
+                </p>
+              )}
+              <p className="mt-2 text-sm font-semibold text-slate-700">{annualOfferCopy}</p>
             </div>
           </div>
         </div>
@@ -217,7 +232,11 @@ export default function BillingOnboardingPage() {
                     disabled={busy}
                     className="mt-5 w-full rounded-2xl border-2 border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
                   >
-                    {busy && selectedPlan === "monthly" ? "Redirecting..." : "Continue with monthly"}
+                    {busy && selectedPlan === "monthly"
+                      ? "Redirecting..."
+                      : isExpired
+                        ? "Renew monthly plan"
+                        : "Continue with monthly"}
                   </button>
                 </div>
 
@@ -234,7 +253,11 @@ export default function BillingOnboardingPage() {
                     disabled={busy}
                     className="mt-5 w-full rounded-2xl border-2 border-cyan-600 bg-cyan-600 px-5 py-3 text-sm font-semibold text-white hover:bg-cyan-700 disabled:opacity-60"
                   >
-                    {busy && selectedPlan === "annual" ? "Redirecting..." : "Continue with annual"}
+                    {busy && selectedPlan === "annual"
+                      ? "Redirecting..."
+                      : isExpired
+                        ? "Renew annual plan"
+                        : "Continue with annual"}
                   </button>
                 </div>
               </div>

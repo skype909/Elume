@@ -26,6 +26,12 @@ class UserModel(Base):
     stripe_checkout_session_id = Column(String, nullable=True)
     subscription_started_at = Column(DateTime, nullable=True)
     current_period_end = Column(DateTime, nullable=True)
+    subscription_expires_at = Column(DateTime, nullable=True)
+    subscription_30_day_notice_sent_at = Column(DateTime, nullable=True)
+    payment_failed_at = Column(DateTime, nullable=True)
+    payment_recovery_deadline_at = Column(DateTime, nullable=True)
+    payment_failed_notice_sent_at = Column(DateTime, nullable=True)
+    payment_failed_final_notice_sent_at = Column(DateTime, nullable=True)
     launch_offer_applied = Column(Boolean, nullable=False, default=False)
     billing_onboarding_required = Column(Boolean, nullable=False, default=False)
     trial_started_at = Column(DateTime, nullable=True)
@@ -33,6 +39,8 @@ class UserModel(Base):
     ai_daily_limit = Column(Integer, nullable=False, default=0)
     ai_prompt_count = Column(Integer, nullable=False, default=0)
     ai_prompt_count_date = Column(DateTime, nullable=True)
+    storage_used_bytes = Column(Integer, nullable=False, default=0)
+    storage_warning_sent_at = Column(DateTime, nullable=True)
 
     classes = relationship("ClassModel", back_populates="owner")
 

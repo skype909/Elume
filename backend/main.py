@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import csv
 import json, os, uuid
 import hashlib
 import re
@@ -11,6 +12,7 @@ import struct
 import textwrap
 import zipfile
 import zlib
+from calendar import monthrange
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, List, Optional
@@ -51,8 +53,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from io import BytesIO
-from fastapi.responses import FileResponse, StreamingResponse
+from io import BytesIO, StringIO
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -127,6 +129,9 @@ JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
 APP_BASE_URL = (os.getenv("APP_BASE_URL") or "http://localhost:5173").strip()
 JWT_ALG = "HS256"
 JWT_EXPIRE_DAYS = 30
+STORAGE_LIMIT_BYTES = 150 * 1024 * 1024
+STORAGE_WARNING_PERCENT = 80
+STORAGE_WARNING_RESET_PERCENT = 70
 
 STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
 STRIPE_PRICE_MONTHLY_EUR = (os.getenv("STRIPE_PRICE_MONTHLY_EUR") or "").strip()
@@ -316,6 +321,182 @@ def _utcnow() -> datetime:
     return datetime.utcnow()
 
 
+def _launch_annual_offer_cutoff() -> datetime:
+    return datetime(2026, 6, 30, 23, 59, 59)
+
+
+def _launch_annual_offer_expiry() -> datetime:
+    return datetime(2027, 9, 30, 23, 59, 59)
+
+
+def _add_year_preserving_day(value: datetime) -> datetime:
+    target_year = value.year + 1
+    target_month = value.month
+    target_day = min(value.day, monthrange(target_year, target_month)[1])
+    return value.replace(year=target_year, month=target_month, day=target_day)
+
+
+def _calculate_subscription_expiry(started_at: datetime, billing_interval: str | None) -> datetime | None:
+    interval = (billing_interval or "").strip().lower()
+    if not started_at:
+        return None
+    if interval != "annual":
+        return None
+    if started_at <= _launch_annual_offer_cutoff():
+        return _launch_annual_offer_expiry()
+    standard = _add_year_preserving_day(started_at)
+    return standard.replace(hour=23, minute=59, second=59, microsecond=0)
+
+
+def _is_subscription_expired(user: models.UserModel) -> bool:
+    return bool(user.subscription_expires_at and user.subscription_expires_at <= _utcnow())
+
+
+def _is_payment_recovery_overdue(user: models.UserModel) -> bool:
+    return bool(
+        getattr(user, "payment_recovery_deadline_at", None)
+        and user.payment_recovery_deadline_at <= _utcnow()
+    )
+
+
+def _payment_recovery_hours_remaining(user: models.UserModel) -> int | None:
+    deadline = getattr(user, "payment_recovery_deadline_at", None)
+    if not deadline:
+        return None
+    delta = deadline - _utcnow()
+    hours = int(delta.total_seconds() // 3600)
+    return max(0, hours)
+
+
+def _payment_failed_email_subject() -> str:
+    return "Problem with your Elume subscription payment"
+
+
+def _payment_failed_email_body(user: models.UserModel) -> str:
+    first_name = (getattr(user, "first_name", None) or "").strip() or "there"
+    return (
+        f"Hi {first_name},\n\n"
+        "We were unable to process your latest Elume subscription payment.\n\n"
+        "Please update your payment details within the next 48 hours to avoid interruption to your access. "
+        "You can do that from your Elume billing page or billing portal.\n\n"
+        "If you need any help, you can simply reply to this email and we will do our best to help.\n\n"
+        "Best,\n"
+        "Peter\n"
+        "Elume Admin"
+    )
+
+
+def _payment_failed_final_email_subject() -> str:
+    return "Final reminder: update your Elume payment details"
+
+
+def _payment_failed_final_email_body(user: models.UserModel) -> str:
+    first_name = (getattr(user, "first_name", None) or "").strip() or "there"
+    return (
+        f"Hi {first_name},\n\n"
+        "This is a quick final reminder that we were unable to process your Elume subscription payment.\n\n"
+        "Please update your payment details as soon as possible to avoid interruption to your access.\n\n"
+        "If you need any help, you can simply reply to this email and we will do our best to help.\n\n"
+        "Best,\n"
+        "Peter\n"
+        "Elume Admin"
+    )
+
+
+def _set_payment_recovery_window(user: models.UserModel) -> None:
+    now = _utcnow()
+    user.payment_failed_at = now
+    user.payment_recovery_deadline_at = now + timedelta(hours=48)
+
+
+def _clear_payment_recovery_state(user: models.UserModel) -> None:
+    user.payment_failed_at = None
+    user.payment_recovery_deadline_at = None
+    user.payment_failed_notice_sent_at = None
+    user.payment_failed_final_notice_sent_at = None
+
+
+def _maybe_send_payment_failed_notice(user: models.UserModel) -> None:
+    if getattr(user, "payment_failed_notice_sent_at", None):
+        return
+    try:
+        _send_email(
+            user.email,
+            _payment_failed_email_subject(),
+            _payment_failed_email_body(user),
+        )
+        user.payment_failed_notice_sent_at = _utcnow()
+    except Exception:
+        logger.exception("Failed to send payment failed email to %s", user.email)
+
+
+def _maybe_send_payment_failed_final_notice(user: models.UserModel) -> None:
+    if getattr(user, "payment_failed_final_notice_sent_at", None):
+        return
+    deadline = getattr(user, "payment_recovery_deadline_at", None)
+    if not deadline:
+        return
+    hours_remaining = _payment_recovery_hours_remaining(user)
+    if hours_remaining is None or hours_remaining > 24:
+        return
+    try:
+        _send_email(
+            user.email,
+            _payment_failed_final_email_subject(),
+            _payment_failed_final_email_body(user),
+        )
+        user.payment_failed_final_notice_sent_at = _utcnow()
+    except Exception:
+        logger.exception("Failed to send final payment reminder email to %s", user.email)
+
+
+def _should_send_subscription_30_day_notice(user: models.UserModel) -> bool:
+    if (user.billing_interval or "").strip().lower() != "annual":
+        return False
+    if not user.subscription_expires_at:
+        return False
+    if user.subscription_30_day_notice_sent_at:
+        return False
+    if _is_subscription_expired(user):
+        return False
+
+    days_left = (user.subscription_expires_at.date() - _utcnow().date()).days
+    return 0 <= days_left <= 30
+
+
+def _subscription_30_day_email_subject() -> str:
+    return "Your Elume subscription will expire in 30 days"
+
+
+def _subscription_30_day_email_body(user: models.UserModel) -> str:
+    first_name = (getattr(user, "first_name", None) or "").strip() or "there"
+    return (
+        f"Hi {first_name},\n\n"
+        "Just a quick reminder that your Elume subscription is due to expire in around 30 days.\n\n"
+        "To renew now, please use the billing link in your Elume account.\n\n"
+        "If your subscription is not renewed, access to your account will move to the billing page until renewal. "
+        "Over time, accounts that remain inactive may also be considered for deletion, which could lead to data being lost.\n\n"
+        "If you need any help, you can simply reply to this email and we'll do our best to help.\n\n"
+        "Best,\n"
+        "Peter\n"
+        "Elume Admin"
+    )
+
+
+def _maybe_send_subscription_30_day_notice(user: models.UserModel) -> None:
+    if not _should_send_subscription_30_day_notice(user):
+        return
+    try:
+        _send_email(
+            user.email,
+            _subscription_30_day_email_subject(),
+            _subscription_30_day_email_body(user),
+        )
+        user.subscription_30_day_notice_sent_at = _utcnow()
+    except Exception:
+        logger.exception("Failed to send 30-day subscription expiry email to %s", user.email)
+
+
 def _is_paid_subscription_active(user: models.UserModel) -> bool:
     return (user.subscription_status or "").strip().lower() == "active"
 
@@ -355,10 +536,19 @@ def _reset_ai_prompt_counter_if_needed(user: models.UserModel) -> None:
 def _billing_status_payload(user: models.UserModel) -> dict[str, Any]:
     _refresh_ai_daily_limit(user)
     _reset_ai_prompt_counter_if_needed(user)
+    expired = _is_subscription_expired(user)
+    payment_overdue = _is_payment_recovery_overdue(user)
+    _maybe_send_payment_failed_final_notice(user)
+    _maybe_send_subscription_30_day_notice(user)
     return {
         "subscription_status": user.subscription_status or "inactive",
         "billing_interval": user.billing_interval,
         "current_period_end": user.current_period_end,
+        "subscription_expires_at": user.subscription_expires_at,
+        "subscription_expired": expired,
+        "requires_billing_redirect": expired or payment_overdue,
+        "payment_failed_at": getattr(user, "payment_failed_at", None),
+        "payment_recovery_deadline_at": getattr(user, "payment_recovery_deadline_at", None),
         "has_stripe_customer": bool(user.stripe_customer_id),
         "billing_onboarding_required": bool(user.billing_onboarding_required),
         "trial_started_at": user.trial_started_at,
@@ -486,6 +676,13 @@ def _apply_subscription_update(user: models.UserModel, subscription_obj: Any) ->
         user.subscription_started_at = created_at or datetime.utcnow()
     if status in {"active", "trialing"}:
         user.billing_onboarding_required = False
+    if status == "active":
+        effective_start = user.subscription_started_at or created_at or datetime.utcnow()
+        user.subscription_expires_at = _calculate_subscription_expiry(effective_start, billing_interval)
+        _clear_payment_recovery_state(user)
+    elif status == "trialing":
+        user.subscription_expires_at = None
+        _clear_payment_recovery_state(user)
 
     if (metadata.get("launch_offer_candidate") or "").strip().lower() == "true" and status in {"active", "trialing"}:
         user.launch_offer_applied = True
@@ -1930,6 +2127,92 @@ app.add_middleware(
 )
 
 
+def _storage_used_bytes(user: models.UserModel) -> int:
+    return max(0, int(getattr(user, "storage_used_bytes", 0) or 0))
+
+
+def _storage_used_percent(user: models.UserModel) -> int:
+    used = _storage_used_bytes(user)
+    if STORAGE_LIMIT_BYTES <= 0:
+        return 0
+    return min(100, int((used / STORAGE_LIMIT_BYTES) * 100))
+
+
+def _storage_summary(user: models.UserModel) -> dict[str, object]:
+    used_percent = _storage_used_percent(user)
+    return {
+        "used_percent": used_percent,
+        "near_limit": used_percent >= STORAGE_WARNING_PERCENT,
+        "at_limit": _storage_used_bytes(user) >= STORAGE_LIMIT_BYTES,
+    }
+
+
+def _ensure_storage_available(user: models.UserModel, incoming_size_bytes: int) -> None:
+    incoming_size_bytes = max(0, int(incoming_size_bytes or 0))
+    if _storage_used_bytes(user) + incoming_size_bytes > STORAGE_LIMIT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Storage limit reached. Delete some files before uploading another one.",
+        )
+
+
+def _increase_storage_used(user: models.UserModel, size_bytes: int) -> None:
+    user.storage_used_bytes = _storage_used_bytes(user) + max(0, int(size_bytes or 0))
+
+
+def _decrease_storage_used(user: models.UserModel, size_bytes: int) -> None:
+    user.storage_used_bytes = max(0, _storage_used_bytes(user) - max(0, int(size_bytes or 0)))
+
+
+def _measure_upload_size(upload: UploadFile) -> int:
+    current = upload.file.tell()
+    upload.file.seek(0, 2)
+    size = upload.file.tell()
+    upload.file.seek(current)
+    return int(size)
+
+
+def _storage_warning_email_subject() -> str:
+    return "Your Elume storage is nearly full"
+
+
+def _storage_warning_email_body(user: models.UserModel) -> str:
+    first_name = (getattr(user, "first_name", None) or "").strip() or "there"
+    return (
+        f"Hi {first_name},\n\n"
+        "Just a quick note to let you know that your Elume account has reached around 80% of its storage allowance.\n\n"
+        "To free up space, you may want to delete any unused or unwanted files and permanently remove any archived classes you no longer need.\n\n"
+        "If you need more space, or have any requests, you can simply reply to this email and we will do our best to help.\n\n"
+        "Best,\n"
+        "Peter\n"
+        "Elume Admin"
+    )
+
+
+def _maybe_send_storage_warning(db: Session, user: models.UserModel) -> None:
+    used_percent = _storage_used_percent(user)
+
+    if used_percent < STORAGE_WARNING_RESET_PERCENT and getattr(user, "storage_warning_sent_at", None):
+        user.storage_warning_sent_at = None
+        return
+
+    if used_percent < STORAGE_WARNING_PERCENT:
+        return
+
+    if getattr(user, "storage_warning_sent_at", None):
+        return
+
+    try:
+        _send_email(
+            user.email,
+            _storage_warning_email_subject(),
+            _storage_warning_email_body(user),
+        )
+        user.storage_warning_sent_at = datetime.utcnow()
+    except Exception:
+        logger.exception("Failed to send storage warning email to %s", user.email)
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -2191,6 +2474,33 @@ def auth_reset_password(payload: schemas.ResetPasswordRequest, db: Session = Dep
 
     return {"success": True, "message": "Password reset successful."}
 
+def _require_super_admin(user: models.UserModel) -> None:
+    if (getattr(user, "email", "") or "").strip().lower() != "admin@elume.ie":
+        raise HTTPException(status_code=403, detail="Super admin access required.")
+
+
+def _user_operational_status(user: models.UserModel) -> str:
+    if getattr(user, "payment_recovery_deadline_at", None):
+        if _is_payment_recovery_overdue(user):
+            return "payment_recovery_overdue"
+        return "payment_recovery"
+    if _is_subscription_expired(user):
+        return "expired"
+    if getattr(user, "subscription_status", "") == "past_due":
+        return "past_due"
+    if _is_trial_active(user):
+        return "trialing"
+    if getattr(user, "subscription_status", "") == "trialing":
+        return "trialing"
+    if getattr(user, "subscription_status", "") == "active":
+        if getattr(user, "subscription_expires_at", None):
+            days_left = (user.subscription_expires_at.date() - _utcnow().date()).days
+            if 0 <= days_left <= 30:
+                return "renews_soon"
+        return "active"
+    return getattr(user, "subscription_status", None) or "inactive"
+
+
 def get_current_user(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
@@ -2367,6 +2677,13 @@ def confirm_checkout_session(
         user.subscription_started_at = datetime.utcnow()
     if user.subscription_status in {"active", "trialing"}:
         user.billing_onboarding_required = False
+    if user.subscription_status == "active":
+        effective_start = user.subscription_started_at or datetime.utcnow()
+        user.subscription_expires_at = _calculate_subscription_expiry(effective_start, billing_interval)
+        _clear_payment_recovery_state(user)
+    elif user.subscription_status == "trialing":
+        user.subscription_expires_at = None
+        _clear_payment_recovery_state(user)
     if (metadata.get("launch_offer_candidate") or "").strip().lower() == "true" and user.subscription_status in {"active", "trialing"}:
         user.launch_offer_applied = True
 
@@ -2459,16 +2776,20 @@ async def stripe_billing_webhook(request: Request, db: Session = Depends(get_db)
         if user.subscription_status == "active":
             user.trial_started_at = None
             user.trial_ends_at = None
+            effective_start = user.subscription_started_at or datetime.utcnow()
+            user.subscription_expires_at = _calculate_subscription_expiry(effective_start, billing_interval)
+            _clear_payment_recovery_state(user)
 
         if (metadata.get("launch_offer_candidate") or "").strip().lower() == "true" and user.subscription_status == "active":
             user.launch_offer_applied = True
 
     elif event_type in {"customer.subscription.created", "customer.subscription.updated"}:
         _apply_subscription_update(user, stripe_obj)
-    if _is_paid_subscription_active(user):
-        user.trial_started_at = None
-        user.trial_ends_at = None
-        user.billing_onboarding_required = False
+        if _is_paid_subscription_active(user):
+            user.trial_started_at = None
+            user.trial_ends_at = None
+            user.billing_onboarding_required = False
+            _clear_payment_recovery_state(user)
 
     elif event_type == "customer.subscription.deleted":
         _apply_subscription_update(user, stripe_obj)
@@ -2482,6 +2803,8 @@ async def stripe_billing_webhook(request: Request, db: Session = Depends(get_db)
         if subscription_id:
             user.stripe_subscription_id = str(subscription_id)
         user.subscription_status = "past_due"
+        _set_payment_recovery_window(user)
+        _maybe_send_payment_failed_notice(user)
 
     elif event_type == "invoice.paid":
         customer_id = _stripe_obj_get(stripe_obj, "customer")
@@ -2502,10 +2825,18 @@ async def stripe_billing_webhook(request: Request, db: Session = Depends(get_db)
 
         if not refreshed:
             user.subscription_status = "active"
+            if not user.subscription_started_at:
+                user.subscription_started_at = datetime.utcnow()
+            user.subscription_expires_at = _calculate_subscription_expiry(
+                user.subscription_started_at or datetime.utcnow(),
+                user.billing_interval,
+            )
+            _clear_payment_recovery_state(user)
         if _is_paid_subscription_active(user):
             user.trial_started_at = None
             user.trial_ends_at = None
             user.billing_onboarding_required = False
+            _clear_payment_recovery_state(user)
 
     _refresh_ai_daily_limit(user)
     db.commit()
@@ -2520,6 +2851,77 @@ def billing_me(
     payload = _billing_status_payload(user)
     db.commit()
     return payload
+
+
+@app.get("/storage/me")
+def storage_me(user: models.UserModel = Depends(get_current_user)):
+    return _storage_summary(user)
+
+
+@app.get("/admin/users/export.csv")
+def export_users_csv(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    _require_super_admin(user)
+
+    users = db.query(models.UserModel).order_by(models.UserModel.id.asc()).all()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "id",
+        "email",
+        "first_name",
+        "surname",
+        "subscription_status",
+        "billing_interval",
+        "subscription_started_at",
+        "subscription_expires_at",
+        "current_period_end",
+        "subscription_expired",
+        "requires_billing_redirect",
+        "payment_failed_at",
+        "payment_recovery_deadline_at",
+        "storage_used_bytes",
+        "storage_warning_sent_at",
+        "trial_started_at",
+        "trial_ends_at",
+        "created_at",
+        "operational_status",
+    ])
+
+    for item in users:
+        expired = _is_subscription_expired(item)
+        payment_overdue = _is_payment_recovery_overdue(item)
+        writer.writerow([
+            getattr(item, "id", None),
+            getattr(item, "email", None),
+            getattr(item, "first_name", None),
+            getattr(item, "last_name", None),
+            getattr(item, "subscription_status", None),
+            getattr(item, "billing_interval", None),
+            getattr(item, "subscription_started_at", None),
+            getattr(item, "subscription_expires_at", None),
+            getattr(item, "current_period_end", None),
+            expired,
+            expired or payment_overdue,
+            getattr(item, "payment_failed_at", None),
+            getattr(item, "payment_recovery_deadline_at", None),
+            getattr(item, "storage_used_bytes", None),
+            getattr(item, "storage_warning_sent_at", None),
+            getattr(item, "trial_started_at", None),
+            getattr(item, "trial_ends_at", None),
+            getattr(item, "created_at", None),
+            _user_operational_status(item),
+        ])
+
+    csv_bytes = output.getvalue()
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="elume_users_export.csv"'},
+    )
 
 def get_owned_class_or_404(
     class_id: int,
@@ -4602,6 +5004,24 @@ def ensure_columns():
         if "current_period_end" not in user_col_names:
             conn.execute(text("ALTER TABLE users ADD COLUMN current_period_end DATETIME"))
             conn.commit()
+        if "subscription_expires_at" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN subscription_expires_at DATETIME"))
+            conn.commit()
+        if "subscription_30_day_notice_sent_at" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN subscription_30_day_notice_sent_at DATETIME"))
+            conn.commit()
+        if "payment_failed_at" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN payment_failed_at DATETIME"))
+            conn.commit()
+        if "payment_recovery_deadline_at" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN payment_recovery_deadline_at DATETIME"))
+            conn.commit()
+        if "payment_failed_notice_sent_at" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN payment_failed_notice_sent_at DATETIME"))
+            conn.commit()
+        if "payment_failed_final_notice_sent_at" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN payment_failed_final_notice_sent_at DATETIME"))
+            conn.commit()
 
         if "launch_offer_applied" not in user_col_names:
             conn.execute(text("ALTER TABLE users ADD COLUMN launch_offer_applied BOOLEAN DEFAULT 0 NOT NULL"))
@@ -4635,6 +5055,12 @@ def ensure_columns():
             conn.commit()
         if "ai_prompt_count_date" not in user_col_names:
             conn.execute(text("ALTER TABLE users ADD COLUMN ai_prompt_count_date DATETIME"))
+            conn.commit()
+        if "storage_used_bytes" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN storage_used_bytes INTEGER DEFAULT 0 NOT NULL"))
+            conn.commit()
+        if "storage_warning_sent_at" not in user_col_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN storage_warning_sent_at DATETIME"))
             conn.commit()
 
         # -------------------------
@@ -7558,12 +7984,16 @@ def upload_note(
     if topic.class_id != class_id:
         raise HTTPException(status_code=400, detail="Topic does not belong to this class")
 
+    incoming_size_bytes = _measure_upload_size(file)
+    _ensure_storage_available(user, incoming_size_bytes)
+
     dest_dir = UPLOADS_DIR / "notes" / str(class_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     safe_name = (file.filename or "file.pdf").replace("\\", "/").split("/")[-1]
     dest_path = dest_dir / f"{int(datetime.utcnow().timestamp())}_{safe_name}"
 
+    file.file.seek(0)
     with dest_path.open("wb") as f:
         shutil.copyfileobj(file.file, f)
 
@@ -7572,8 +8002,11 @@ def upload_note(
         topic_id=topic_id,
         filename=safe_name,
         stored_path=str(dest_path),
+        size_bytes=incoming_size_bytes,
     )
     db.add(n)
+    _increase_storage_used(user, incoming_size_bytes)
+    _maybe_send_storage_warning(db, user)
     db.commit()
     db.refresh(n)
 
@@ -7606,6 +8039,7 @@ def delete_note(
         except Exception:
             pass
 
+    _decrease_storage_used(user, getattr(n, "size_bytes", 0))
     db.delete(n)
     db.commit()
     return {"message": "Note deleted"}
@@ -7828,12 +8262,16 @@ def upload_test(
         if category.class_id != class_id:
             raise HTTPException(status_code=400, detail="Category does not belong to this class")
 
+    incoming_size_bytes = _measure_upload_size(file)
+    _ensure_storage_available(user, incoming_size_bytes)
+
     dest_dir = UPLOADS_DIR / "tests" / str(class_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     safe_name = (file.filename or "test.pdf").replace("\\", "/").split("/")[-1]
     dest_path = dest_dir / f"{int(datetime.utcnow().timestamp())}_{safe_name}"
 
+    file.file.seek(0)
     with dest_path.open("wb") as f:
         shutil.copyfileobj(file.file, f)
 
@@ -7844,8 +8282,11 @@ def upload_test(
         description=(description or "").strip() or None,
         filename=safe_name,
         stored_path=str(dest_path),
+        size_bytes=incoming_size_bytes,
     )
     db.add(t)
+    _increase_storage_used(user, incoming_size_bytes)
+    _maybe_send_storage_warning(db, user)
     db.commit()
     db.refresh(t)
 
@@ -7924,6 +8365,7 @@ def delete_test(
         except Exception:
             pass
 
+    _decrease_storage_used(user, getattr(t, "size_bytes", 0))
     db.delete(t)
     db.commit()
     return {"message": "Test deleted"}

@@ -315,7 +315,7 @@ export default function ClassAdminPage() {
                 body: JSON.stringify({ names }),
             });
             if (Array.isArray(created) && created.length) {
-                setStudents((prev) => [...created, ...prev]);
+                setStudents((prev) => [...created.slice().reverse(), ...prev]);
             }
             setBulkNames("");
         } catch (e: any) {
@@ -1777,12 +1777,13 @@ export default function ClassAdminPage() {
                                             <div className="col-span-3">
                                                 <input
                                                     type="number"
+                                                    inputMode="numeric"
                                                     min={0}
                                                     max={100}
                                                     disabled={r.absent}
                                                     value={r.score_percent ?? ""}
                                                     onChange={(e) => setRowScore(r.student_id, e.target.value)}
-                                                    className="w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-sm disabled:bg-slate-100"
+                                                    className="hide-number-spin w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-sm disabled:bg-slate-100"
                                                     placeholder="0-100"
                                                 />
                                             </div>

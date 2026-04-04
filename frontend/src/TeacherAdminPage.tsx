@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiFetch } from "./api";
+import { apiFetch, apiFetchBlob } from "./api";
 import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
 
@@ -89,6 +89,11 @@ type BillingStatus = {
   subscription_status: string;
   billing_interval: string | null;
   current_period_end: string | null;
+  subscription_expires_at?: string | null;
+  subscription_expired?: boolean;
+  requires_billing_redirect?: boolean;
+  payment_failed_at?: string | null;
+  payment_recovery_deadline_at?: string | null;
   has_stripe_customer: boolean;
   trial_started_at: string | null;
   trial_ends_at: string | null;
@@ -144,6 +149,75 @@ function billingDaysLeft(value: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 0;
   return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 86400000));
+}
+
+function billingStatusMessage(billing: BillingStatus | null) {
+  if (!billing) {
+    return {
+      title: "Billing setup needed",
+      body: "Choose or manage your plan from the billing step.",
+      note: "If your subscription ends, your workspace may be removed after 30 days. Please export important materials before then.",
+    };
+  }
+
+  if (billing.trial_active) {
+    const days = billingDaysLeft(billing.trial_ends_at || null);
+    return {
+      title: `Trial active • ${days} day${days === 1 ? "" : "s"} left`,
+      body: "Choose or manage your plan from Teacher Admin.",
+      note: "Your trial is active. You can choose a plan at any time from View plans.",
+    };
+  }
+
+  if (billing.subscription_status === "past_due") {
+    return {
+      title: "Payment issue • action needed",
+      body: "We could not process your latest payment. Please update your billing details within 48 hours to avoid interruption to access.",
+      note: billing.payment_recovery_deadline_at
+        ? `Recovery deadline: ${formatBillingDate(billing.payment_recovery_deadline_at) || "soon"}.`
+        : "Please update your billing details as soon as possible.",
+    };
+  }
+
+  if (billing.subscription_expired) {
+    return {
+      title: "Subscription expired",
+      body: "Your access is currently limited until renewal. Please renew your plan to restore full access.",
+      note: "If your subscription remains inactive, your workspace may later be removed. Please export important materials you may need.",
+    };
+  }
+
+  if (billing.subscription_status === "active") {
+    const annual = billing.billing_interval === "annual";
+    const renewDate = formatBillingDate(billing.subscription_expires_at || billing.current_period_end || null) || "soon";
+    const daysLeft = billingDaysLeft(billing.subscription_expires_at || billing.current_period_end || null);
+    if (annual && daysLeft > 0 && daysLeft <= 30) {
+      return {
+        title: "Annual • renews soon",
+        body: "Your annual subscription is due to expire soon. You can manage or renew your plan here.",
+        note: `Access currently runs until ${renewDate}.`,
+      };
+    }
+    return {
+      title: `${annual ? "Annual" : "Monthly"} • renews ${renewDate}`,
+      body: "Manage your subscription from Teacher Admin.",
+      note: "Manage your subscription from Teacher Admin.",
+    };
+  }
+
+  if (billing.subscription_status === "canceled") {
+    return {
+      title: `Canceled • access ends ${formatBillingDate(billing.current_period_end || null) || "soon"}`,
+      body: "Your subscription has been canceled and will end on the date shown.",
+      note: "Please export important materials before access ends.",
+    };
+  }
+
+  return {
+    title: "Billing setup needed",
+    body: "Choose or manage your plan from the billing step.",
+    note: "If your subscription ends, your workspace may be removed after 30 days. Please export important materials before then.",
+  };
 }
 
 function nowLocalMinutes() {
@@ -732,6 +806,22 @@ export default function TeacherAdminPage() {
     }
   }
 
+  async function exportUsersCsv() {
+    try {
+      const blob = await apiFetchBlob("/admin/users/export.csv", { method: "GET" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "elume_users_export.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setBillingError(e?.message || "Could not export users CSV.");
+    }
+  }
+
   function touch(next: StoredAdminState) {
     saveState({ ...next, updatedAt: new Date().toISOString() });
   }
@@ -1104,6 +1194,7 @@ export default function TeacherAdminPage() {
   }, [today]);
 
   const setupIncomplete = !state.timetableConfig.setupComplete;
+  const billingUi = billingStatusMessage(billing);
   const teacherDisplayShort = useMemo(() => {
     const title = (state.profile.title || "").trim();
     const surname = (state.profile.surname || "").trim();
@@ -1173,6 +1264,13 @@ export default function TeacherAdminPage() {
                     onClick={() => navigate("/admin-stats")}
                   >
                     Platform Stats
+                  </button>
+
+                  <button
+                    className="rounded-full border-2 border-purple-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-purple-100"
+                    onClick={exportUsersCsv}
+                  >
+                    Export users CSV
                   </button>
                 </div>
 
@@ -1450,23 +1548,13 @@ export default function TeacherAdminPage() {
                       Billing
                     </div>
                     <div className="mt-1 text-lg font-extrabold tracking-tight text-slate-900">
-                      {billing?.trial_active
-                        ? `Trial active • ${billingDaysLeft(billing?.trial_ends_at || null)} day${billingDaysLeft(billing?.trial_ends_at || null) === 1 ? "" : "s"} left`
-                        : billing?.subscription_status === "active"
-                          ? `${billing?.billing_interval === "annual" ? "Annual" : "Monthly"} • renews ${formatBillingDate(billing?.current_period_end || null) || "soon"}`
-                          : billing?.subscription_status === "canceled"
-                            ? `Canceled • access ends ${formatBillingDate(billing?.current_period_end || null) || "soon"}`
-                            : billing?.subscription_status === "past_due"
-                              ? "Past due"
-                              : "Billing setup needed"}
+                      {billingUi.title}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      {billing?.subscription_status === "active" || billing?.trial_active
-                        ? "Manage your subscription from Teacher Admin."
-                        : "Choose or manage your plan from the billing step."}
+                      {billingUi.body}
                     </div>
                     <div className="mt-2 text-xs leading-5 text-slate-500">
-                      If your subscription ends, your workspace may be removed after 30 days. Please export important materials before then.
+                      {billingUi.note}
                     </div>
                   </div>
 

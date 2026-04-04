@@ -277,6 +277,11 @@ class BillingStatusOut(BaseModel):
     subscription_status: str
     billing_interval: Optional[str] = None
     current_period_end: Optional[datetime] = None
+    subscription_expires_at: Optional[datetime] = None
+    subscription_expired: bool = False
+    requires_billing_redirect: bool = False
+    payment_failed_at: Optional[datetime] = None
+    payment_recovery_deadline_at: Optional[datetime] = None
     has_stripe_customer: bool = False
     billing_onboarding_required: bool = False
     trial_started_at: Optional[datetime] = None
