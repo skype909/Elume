@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 
@@ -77,9 +77,11 @@ function isPdfFilename(name: string) {
 
 function filenameToQuizTitle(name: string) {
   const trimmed = String(name || "").trim();
-  if (!trimmed) return "Quiz";
+  if (!trimmed) return "Untitled PDF Quiz";
   const dot = trimmed.lastIndexOf(".");
-  return (dot > 0 ? trimmed.slice(0, dot) : trimmed).trim() || "Quiz";
+  const base = (dot > 0 ? trimmed.slice(0, dot) : trimmed).trim().replace(/\s+/g, " ");
+  if (!base) return "Untitled PDF Quiz";
+  return /\bquiz$/i.test(base) ? base : `${base} Quiz`;
 }
 
 function resolveFileUrl(fileUrl: string) {
@@ -423,7 +425,7 @@ export default function QuizzesPage() {
   async function saveQuizMeta() {
     resetError();
     const title = quizTitle.trim();
-    if (!title) return setError("Quiz title can’t be empty.");
+    if (!title) return setError("Quiz title canâ€™t be empty.");
 
     const category = clampCategory(quizCategory);
     const description = quizDescription.trim();
@@ -519,7 +521,7 @@ export default function QuizzesPage() {
     if (!editingQuizId) return setError("No quiz selected.");
 
     const prompt = qPrompt.trim();
-    if (!prompt) return setError("Question text can’t be empty.");
+    if (!prompt) return setError("Question text canâ€™t be empty.");
 
     const a = qA.trim();
     const b = qB.trim();
@@ -745,6 +747,7 @@ export default function QuizzesPage() {
   }, [genNotes]);
 
   const selectedNote = genNotes.find((x) => x.id === genNoteId) || null;
+  const suggestedQuizTitle = selectedNote ? filenameToQuizTitle(selectedNote.filename) : "";
   const selectablePdfCount = useMemo(
     () => genNotes.filter((note) => isPdfFilename(note.filename)).length,
     [genNotes]
@@ -1568,7 +1571,7 @@ export default function QuizzesPage() {
       {/* Generate Modal */}
       {showGenerate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-4">
-          <div className="w-full max-w-5xl rounded-[30px] border-2 border-slate-200 bg-white p-5 shadow-2xl">
+          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col rounded-[30px] border-2 border-slate-200 bg-white p-5 shadow-2xl">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.24em] text-violet-800">
@@ -1600,8 +1603,8 @@ export default function QuizzesPage() {
               </button>
             </div>
 
-            <div className="mt-5 grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-              <div className="rounded-[26px] border-2 border-slate-200 bg-slate-50 p-4">
+            <div className="mt-5 grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[0.95fr_1.05fr]">
+              <div className="flex min-h-0 flex-col rounded-[26px] border-2 border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
@@ -1649,7 +1652,7 @@ export default function QuizzesPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-[22px] border-2 border-slate-200 bg-white p-3">
+                <div className="mt-4 flex min-h-0 flex-1 flex-col rounded-[22px] border-2 border-slate-200 bg-white p-3">
                   <div className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
                     Select PDF {genLoading ? "• loading..." : ""}
                   </div>
@@ -1660,9 +1663,9 @@ export default function QuizzesPage() {
                     </div>
                   )}
 
-                  <div className="mt-3 max-h-[430px] space-y-4 overflow-auto pr-1">
+                  <div className="mt-3 min-h-0 flex-1 space-y-4 overflow-auto pr-1">
                     {genLoading ? (
-                      <div className="text-sm text-slate-600">Loading PDFs…</div>
+                      <div className="text-sm text-slate-600">Loading PDFsâ€¦</div>
                     ) : selectablePdfCount === 0 ? (
                       <div className="rounded-[18px] border-2 border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                         No PDFs found in this section yet.
@@ -1707,21 +1710,28 @@ export default function QuizzesPage() {
                 </div>
               </div>
 
-              <div className="rounded-[26px] border-2 border-slate-200 bg-white p-4">
-                <div className="grid gap-4">
+              <div className="flex min-h-0 flex-col rounded-[26px] border-2 border-slate-200 bg-white p-4">
+                <div className="grid min-h-0 gap-3">
                   <div>
-                    <label className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                      Quiz title
-                    </label>
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <label className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
+                        Quiz title
+                      </label>
+                      <div className="text-[11px] text-slate-500">
+                        {selectedNote
+                          ? `Leave blank to save as ${suggestedQuizTitle}.`
+                          : "Choose a PDF to preview the fallback title."}
+                      </div>
+                    </div>
                     <input
                       className="mt-2 w-full rounded-[18px] border-2 border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
                       value={genQuizTitle}
                       onChange={(e) => setGenQuizTitle(e.target.value)}
-                      placeholder="e.g. Algebra quiz - Fractions"
+                      placeholder="Name this quiz, or use the PDF filename"
                     />
                   </div>
 
-                  <div>
+                  <div className="flex min-h-0 flex-col">
                     <div className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
                       Preview
                     </div>
@@ -1731,11 +1741,11 @@ export default function QuizzesPage() {
                           <iframe
                             title="PDF Preview"
                             src={genPreviewUrl}
-                            className="h-[390px] w-full"
+                            className="h-[400px] w-full lg:h-[440px]"
                           />
                         ) : (
-                          <div className="grid h-[390px] place-items-center bg-slate-50 text-sm text-slate-600">
-                            Loading preview…
+                          <div className="grid h-[400px] place-items-center bg-slate-50 text-sm text-slate-600 lg:h-[440px]">
+                            Loading preview...
                           </div>
                         )}
                       </div>
@@ -1744,15 +1754,6 @@ export default function QuizzesPage() {
                         Select a PDF to preview it here.
                       </div>
                     )}
-                  </div>
-
-                  <div className="rounded-[22px] border-2 border-cyan-200 bg-cyan-50 p-4">
-                    <div className="text-sm font-extrabold text-slate-900">What happens next</div>
-                    <ul className="mt-2 space-y-2 text-sm leading-6 text-slate-600">
-                      <li>• Elume creates a quiz and saves it to this class.</li>
-                      <li>• You can edit the questions straight away.</li>
-                      <li>• When ready, run it through the Live Quiz page.</li>
-                    </ul>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1788,3 +1789,5 @@ export default function QuizzesPage() {
     </div>
   );
 }
+
+

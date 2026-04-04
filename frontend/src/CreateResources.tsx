@@ -1,11 +1,12 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 
 type ClassItem = { id: number; name: string; subject: string; color?: string | null };
 type BrandingChoice = "none" | "elume" | "school";
 
 type ScopeMode = "general" | "single" | "group";
+type CreateResourcesLocationState = { classId?: number };
 
 type Scope = {
   mode: ScopeMode;
@@ -69,6 +70,17 @@ type GeneratedDoc = {
   brandingChoice?: BrandingChoice;
   worksheetIncludeAnswers?: boolean;
   content: string;
+};
+
+type SavedGeneratedResource = {
+  id: string;
+  kind: "lesson_plan" | "worksheet";
+  title: string;
+  content: string;
+  createdAt: string;
+  destinationFolder: "Lesson Plans" | "Worksheets";
+  scopeLabel: string;
+  savedFrom: "create_resources";
 };
 
 type DocumentBlock =
@@ -181,6 +193,27 @@ function scopeToKey(scope: Scope): string {
   if (scope.mode === "single") return `class:${scope.classId ?? "unknown"}`;
   const ids = (scope.classIds ?? []).slice().sort((a, b) => a - b);
   return `group:${ids.join(",")}:${(scope.groupName || "").trim() || "Unnamed"}`;
+}
+
+function generatedResourcesStorageKey(classId: number) {
+  return `elume:generated-resources:class:${classId}`;
+}
+
+function readGeneratedResourcesForClass(classId: number) {
+  try {
+    const raw = localStorage.getItem(generatedResourcesStorageKey(classId));
+    if (!raw) return [] as SavedGeneratedResource[];
+    const parsed = JSON.parse(raw) as SavedGeneratedResource[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [] as SavedGeneratedResource[];
+  }
+}
+
+function saveGeneratedResourcesForClass(classId: number, items: SavedGeneratedResource[]) {
+  try {
+    localStorage.setItem(generatedResourcesStorageKey(classId), JSON.stringify(items));
+  } catch {}
 }
 
 const CLASS_TILE_COLOURS: { bg: string; ring: string }[] = [
@@ -573,6 +606,7 @@ function RenderDoc({
 
 export default function CreateResources() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [loadingClasses, setLoadingClasses] = useState(true);
@@ -645,6 +679,7 @@ export default function CreateResources() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState<string | null>(null);
   const [preview, setPreview] = useState<GeneratedDoc | null>(null);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [postingIdeaId, setPostingIdeaId] = useState<string | null>(null);
   const [ideaPostStatus, setIdeaPostStatus] = useState<string | null>(null);
 
@@ -746,6 +781,22 @@ export default function CreateResources() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const incomingClassId = Number((location.state as CreateResourcesLocationState | null)?.classId);
+    if (!Number.isFinite(incomingClassId) || !classById.has(incomingClassId)) return;
+
+    const nextScope: Scope = { mode: "single", classId: incomingClassId };
+    setScope(nextScope);
+    setScopeMode("single");
+    setScopeClassId(incomingClassId);
+    setScopeGroupIds([incomingClassId]);
+    setScopeGroupName("");
+    setScopeOpen(false);
+    try {
+      localStorage.setItem(scopeStoreKey, JSON.stringify(nextScope));
+    } catch {}
+  }, [classById, location.state, scopeStoreKey]);
 
   useEffect(() => {
     setManualSources(safeJsonParse<ManualSource[]>(localStorage.getItem(storeKey("sources")), []));
@@ -1257,6 +1308,7 @@ export default function CreateResources() {
     setAiBusy(true);
     setAiErr(null);
     setPreview(null);
+    setSaveStatus(null);
     setIdeaPostStatus(null);
 
     const payload = {
@@ -1370,6 +1422,36 @@ export default function CreateResources() {
   function savePreview() {
     if (!preview) return;
     setHistory((prev) => [preview, ...prev]);
+    setSaveStatus(
+      `Saved to ${displayLabelForBucket(preview.saveBucket)}${preview.saveFolder ? ` / ${preview.saveFolder}` : ""}`
+    );
+
+    if (
+      scope.mode !== "single" ||
+      !scope.classId ||
+      (preview.kind !== "lesson_plan" && preview.kind !== "worksheet") ||
+      preview.saveBucket !== "links" ||
+      (preview.saveFolder !== "Lesson Plans" && preview.saveFolder !== "Worksheets") ||
+      !preview.title.trim() ||
+      !preview.content.trim()
+    ) {
+      return;
+    }
+
+    const nextItem: SavedGeneratedResource = {
+      id: preview.id,
+      kind: preview.kind,
+      title: preview.title.trim(),
+      content: preview.content,
+      createdAt: preview.createdAt,
+      destinationFolder: preview.saveFolder,
+      scopeLabel: preview.scopeLabel,
+      savedFrom: "create_resources",
+    };
+
+    const existing = readGeneratedResourcesForClass(scope.classId);
+    if (existing.some((item) => item.id === nextItem.id)) return;
+    saveGeneratedResourcesForClass(scope.classId, [nextItem, ...existing]);
   }
 
   async function postIdeaToClassTimeline(idea: IdeaPreviewBlock) {
@@ -1972,7 +2054,7 @@ export default function CreateResources() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                <button type="button" className={btn} onClick={() => { setPrompt(""); setAiErr(null); setPreview(null); }}>
+                <button type="button" className={btn} onClick={() => { setPrompt(""); setAiErr(null); setPreview(null); setSaveStatus(null); }}>
                   Clear
                 </button>
                   <button type="button" className={btnPrimary} onClick={runGenerate} disabled={aiBusy || !prompt.trim()}>
@@ -2012,7 +2094,7 @@ export default function CreateResources() {
                         Copy
                       </button>
                       <button type="button" className={btnPrimary} onClick={savePreview}>
-                        Save draft
+                        Save
                       </button>
                       <button type="button" className={btn} onClick={exportPreviewPdfFile}>
                         Export PDF
@@ -2022,6 +2104,12 @@ export default function CreateResources() {
                       </button>
                     </div>
                   </div>
+
+                  {saveStatus && (
+                    <div className="rounded-[20px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+                      {saveStatus}
+                    </div>
+                  )}
 
                   {preview.kind === "ideas" && (
                     <div className="space-y-3">

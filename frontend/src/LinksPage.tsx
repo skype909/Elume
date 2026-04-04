@@ -18,6 +18,17 @@ type LinkCategory = {
   links: LinkItem[];
 };
 
+type SavedGeneratedResource = {
+  id: string;
+  kind: "lesson_plan" | "worksheet";
+  title: string;
+  content: string;
+  createdAt: string;
+  destinationFolder: "Lesson Plans" | "Worksheets";
+  scopeLabel: string;
+  savedFrom: "create_resources";
+};
+
 const DEFAULT_RESOURCE_SECTIONS = [
   {
     name: "Lesson Plans",
@@ -61,6 +72,21 @@ function normalizeCategoryName(name: string) {
   return name.trim().toLowerCase();
 }
 
+function generatedResourcesStorageKey(classId: number) {
+  return `elume:generated-resources:class:${classId}`;
+}
+
+function readGeneratedResourcesForClass(classId: number) {
+  try {
+    const raw = localStorage.getItem(generatedResourcesStorageKey(classId));
+    if (!raw) return [] as SavedGeneratedResource[];
+    const parsed = JSON.parse(raw) as SavedGeneratedResource[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [] as SavedGeneratedResource[];
+  }
+}
+
 function faviconUrl(url: string) {
   const domain = getDomain(url);
   if (!domain) return "";
@@ -91,8 +117,10 @@ export default function LinksPage() {
   const { id } = useParams<{ id: string }>();
   const classId = Number(id);
   const storageKey = `elume:links:class:${classId}`;
+  const generatedStorageKey = generatedResourcesStorageKey(classId);
 
   const [categories, setCategories] = useState<LinkCategory[]>([]);
+  const [generatedResources, setGeneratedResources] = useState<SavedGeneratedResource[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [showNewCategory, setShowNewCategory] = useState(false);
@@ -107,6 +135,7 @@ export default function LinksPage() {
   const [linkUrl, setLinkUrl] = useState("");
   const [linkTitle, setLinkTitle] = useState("");
   const [linkNote, setLinkNote] = useState("");
+  const [viewingGenerated, setViewingGenerated] = useState<SavedGeneratedResource | null>(null);
 
   useEffect(() => {
     try {
@@ -121,6 +150,10 @@ export default function LinksPage() {
       setCategories([]);
     }
   }, [storageKey]);
+
+  useEffect(() => {
+    setGeneratedResources(readGeneratedResourcesForClass(classId));
+  }, [classId, generatedStorageKey]);
 
   useEffect(() => {
     try {
@@ -139,6 +172,20 @@ export default function LinksPage() {
     }
     return map;
   }, [categories]);
+
+  const generatedByFolder = useMemo(() => {
+    const map = new Map<string, SavedGeneratedResource[]>();
+    for (const item of generatedResources) {
+      const key = normalizeCategoryName(item.destinationFolder);
+      const current = map.get(key) ?? [];
+      current.push(item);
+      map.set(key, current);
+    }
+    for (const value of map.values()) {
+      value.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+    return map;
+  }, [generatedResources]);
 
   function resetError() {
     setError(null);
@@ -297,6 +344,17 @@ export default function LinksPage() {
     );
   }
 
+  function removeGeneratedResource(resourceId: string) {
+    setGeneratedResources((prev) => {
+      const next = prev.filter((item) => item.id !== resourceId);
+      try {
+        localStorage.setItem(generatedStorageKey, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    setViewingGenerated((prev) => (prev?.id === resourceId ? null : prev));
+  }
+
   const card =
     "rounded-[30px] border border-white/70 bg-white/90 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl";
   const pill =
@@ -344,11 +402,11 @@ export default function LinksPage() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:min-w-[420px] sm:flex-row sm:items-start sm:justify-end sm:gap-4">
                 <button
-                  className={btnCreateResources}
+                  className={`${btnCreateResources} justify-center self-start sm:mt-0.5`}
                   type="button"
-                  onClick={() => navigate("/create-resources")}
+                  onClick={() => navigate("/create-resources", { state: { classId } })}
                 >
                   <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white/20">
                     <span className="absolute inline-flex h-5 w-5 rounded-full bg-white/25 opacity-70 animate-[ping_2.2s_ease-out_infinite]" />
@@ -360,13 +418,15 @@ export default function LinksPage() {
                   </span>
                 </button>
 
-                <button className={pill} type="button" onClick={() => openAddLinkModal()}>
-                  + Add Resource
-                </button>
+                <div className="flex flex-col items-stretch gap-2 sm:w-[260px] sm:items-stretch">
+                  <button className={btnPrimary} type="button" onClick={openCreateCategory}>
+                    + New Resource Category
+                  </button>
 
-                <button className={btnPrimary} type="button" onClick={openCreateCategory}>
-                  + New Resource Category
-                </button>
+                  <button className={pill} type="button" onClick={() => openAddLinkModal()}>
+                    + Add Resource
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -383,18 +443,19 @@ export default function LinksPage() {
                   Lesson Plans and Worksheets
                 </h2>
                 <div className="mt-2 text-sm leading-6 text-slate-600">
-                  These are the natural home sections for generated teaching resources. They are shown here now, but automatic saving from Create Resources is not wired into this page yet.
+                  Lesson Plans and Worksheets saved from Create Resources now appear here automatically for single-class saves. Website links and resource categories continue to work separately below.
                 </div>
               </div>
               <div className="text-xs font-semibold text-slate-500">
-                Current Resources stays truthful to saved categories only.
+                Auto-save is currently wired for lesson plans and worksheets only.
               </div>
             </div>
 
             <div className="mt-5 grid gap-4 lg:grid-cols-2">
               {DEFAULT_RESOURCE_SECTIONS.map((section) => {
                 const existing = categoryLookup.get(normalizeCategoryName(section.name));
-                const count = existing?.links.length ?? 0;
+                const generatedItems = generatedByFolder.get(normalizeCategoryName(section.name)) ?? [];
+                const count = generatedItems.length;
                 return (
                   <div
                     key={section.name}
@@ -442,6 +503,51 @@ export default function LinksPage() {
                         </button>
                       )}
                     </div>
+
+                    {generatedItems.length > 0 ? (
+                      <div className="mt-4 space-y-3">
+                        {generatedItems.map((item) => (
+                          <div
+                            key={item.id}
+                            className="rounded-[22px] border border-white/80 bg-white/90 p-4 shadow-sm"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-extrabold text-slate-900">
+                                  {item.title}
+                                </div>
+                                <div className="mt-1 text-[11px] text-slate-500">
+                                  Saved {new Date(item.createdAt).toLocaleString("en-IE")}
+                                </div>
+                              </div>
+                              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-600">
+                                Generated in Create Resources
+                              </span>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                className={pill}
+                                type="button"
+                                onClick={() => setViewingGenerated(item)}
+                              >
+                                View
+                              </button>
+                              <button
+                                className="rounded-full border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50"
+                                type="button"
+                                onClick={() => removeGeneratedResource(item.id)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-[22px] border border-dashed border-slate-200 bg-white/70 p-4 text-sm text-slate-600">
+                        No generated {section.name.toLowerCase()} saved here yet.
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -461,7 +567,7 @@ export default function LinksPage() {
                   <button className={btnPrimary} type="button" onClick={openCreateCategory}>
                     + New Resource Category
                   </button>
-                  <button className={pill} type="button" onClick={() => navigate("/create-resources")}>
+                  <button className={pill} type="button" onClick={() => navigate("/create-resources", { state: { classId } })}>
                     Open Create Resources
                   </button>
                 </div>
@@ -721,6 +827,37 @@ export default function LinksPage() {
                   {editingLink ? "Save changes" : "Add"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewingGenerated && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-xl">
+            <div className="border-b border-slate-200 px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-xl font-extrabold tracking-tight text-slate-900">
+                    {viewingGenerated.title}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    Saved {new Date(viewingGenerated.createdAt).toLocaleString("en-IE")} in {viewingGenerated.destinationFolder}
+                  </div>
+                </div>
+                <button
+                  className={pill}
+                  type="button"
+                  onClick={() => setViewingGenerated(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[calc(88vh-88px)] overflow-auto px-5 py-4">
+              <pre className="whitespace-pre-wrap break-words text-sm leading-7 text-slate-700">
+                {viewingGenerated.content}
+              </pre>
             </div>
           </div>
         </div>
