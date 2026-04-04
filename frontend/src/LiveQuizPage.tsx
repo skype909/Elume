@@ -146,6 +146,27 @@ type PollResultsModalState = {
   sourceLabel: string;
 };
 
+type LiveQuizReviewQuestion = {
+  question_id: string;
+  prompt: string;
+  choices: Record<ChoiceKey, string>;
+  selected_answer?: ChoiceKey | null;
+  correct_answer?: ChoiceKey | null;
+  status: "correct" | "wrong" | "unanswered" | "answered";
+};
+
+type LiveQuizAttemptReview = {
+  session_code: string;
+  title: string;
+  participant_name: string;
+  attempt_id: number;
+  score: number;
+  percent?: number | null;
+  completed: boolean;
+  total_questions: number;
+  questions: LiveQuizReviewQuestion[];
+};
+
 function uid(prefix = "q") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
 }
@@ -406,6 +427,10 @@ export default function LiveQuizPage() {
   const [pollResultsModal, setPollResultsModal] = useState<PollResultsModalState | null>(null);
   const [pollResultsBusy, setPollResultsBusy] = useState(false);
   const [pollResultsError, setPollResultsError] = useState<string | null>(null);
+  const [attemptReviewModalOpen, setAttemptReviewModalOpen] = useState(false);
+  const [attemptReviewLoading, setAttemptReviewLoading] = useState(false);
+  const [attemptReviewError, setAttemptReviewError] = useState<string | null>(null);
+  const [attemptReview, setAttemptReview] = useState<LiveQuizAttemptReview | null>(null);
   const previousStatusRef = useRef<LiveStatus | null>(null);
 
   useEffect(() => {
@@ -900,6 +925,28 @@ export default function LiveQuizPage() {
     } finally {
       setUpdatingAttemptId(null);
     }
+  }
+
+  async function openAttemptReview(attemptId: number) {
+    setAttemptReviewModalOpen(true);
+    setAttemptReviewLoading(true);
+    setAttemptReviewError(null);
+    setAttemptReview(null);
+    try {
+      const data = (await apiFetch(`${API_BASE}/livequiz/attempts/${attemptId}/review`)) as LiveQuizAttemptReview;
+      setAttemptReview(data);
+    } catch (e: any) {
+      setAttemptReviewError(e?.message || "Could not load this review.");
+    } finally {
+      setAttemptReviewLoading(false);
+    }
+  }
+
+  function closeAttemptReview() {
+    setAttemptReviewModalOpen(false);
+    setAttemptReviewLoading(false);
+    setAttemptReviewError(null);
+    setAttemptReview(null);
   }
 
   function deleteHistoryItem(saved_at: string, session_code: string) {
@@ -1724,7 +1771,17 @@ export default function LiveQuizPage() {
                       <div key={student.group_key} className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 shadow-sm">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div>
-                            <div className="text-lg font-black text-slate-900">{student.display_name}</div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const latestAttemptId = student.attempts[0]?.id;
+                                if (!latestAttemptId) return;
+                                void openAttemptReview(latestAttemptId);
+                              }}
+                              className="text-left text-lg font-black text-slate-900 underline-offset-4 hover:underline"
+                            >
+                              {student.display_name}
+                            </button>
                             <div className="mt-1 text-sm text-slate-600">
                               {student.average_percent === null ? "No counted attempts yet" : `Average ${student.average_percent}%`} | {student.counted_attempts} counted
                             </div>
@@ -1751,6 +1808,13 @@ export default function LiveQuizPage() {
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void openAttemptReview(attempt.id)}
+                                    className="rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-sky-800 transition hover:bg-sky-100"
+                                  >
+                                    Review
+                                  </button>
                                   {attempt.excluded_from_average ? (
                                     <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-amber-800">Excluded</span>
                                   ) : (
@@ -1914,6 +1978,104 @@ export default function LiveQuizPage() {
             {pollResultsError ? (
               <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 {pollResultsError}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {attemptReviewModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-5xl rounded-[36px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.97))] p-6 shadow-[0_32px_100px_rgba(15,23,42,0.24)] md:p-8">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-sky-700">
+                  Student review
+                </div>
+                <div className="mt-4 break-words text-3xl font-black tracking-tight text-slate-900">
+                  {attemptReview?.participant_name || "Loading review"}
+                </div>
+                {attemptReview ? (
+                  <div className="mt-3 text-sm font-semibold text-slate-600">
+                    {attemptReview.title} | {attemptReview.percent ?? 0}% | {attemptReview.score}/{attemptReview.total_questions} | {attemptReview.completed ? "Completed" : "Incomplete"}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={closeAttemptReview}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+
+            {attemptReviewLoading ? (
+              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
+                Loading review...
+              </div>
+            ) : attemptReviewError ? (
+              <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {attemptReviewError}
+              </div>
+            ) : attemptReview ? (
+              <div className="mt-6 space-y-4">
+                {attemptReview.questions.map((question, index) => (
+                  <div key={question.question_id} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Question {index + 1}</div>
+                        <div className="mt-2 whitespace-pre-wrap text-base font-black leading-7 text-slate-900">
+                          {question.prompt}
+                        </div>
+                      </div>
+                      <div className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] ${
+                        question.status === "correct"
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                          : question.status === "wrong"
+                            ? "border-rose-200 bg-rose-50 text-rose-700"
+                            : question.status === "answered"
+                              ? "border-cyan-200 bg-cyan-50 text-cyan-800"
+                              : "border-slate-200 bg-slate-100 text-slate-700"
+                      }`}>
+                        {question.status}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-2 md:grid-cols-2">
+                      {(["A", "B", "C", "D"] as ChoiceKey[]).map((choice) => {
+                        const isSelected = question.selected_answer === choice;
+                        const isCorrect = question.correct_answer === choice;
+                        return (
+                          <div
+                            key={choice}
+                            className={`rounded-2xl border px-4 py-3 text-sm shadow-sm ${
+                              isCorrect
+                                ? "border-emerald-200 bg-emerald-50"
+                                : isSelected
+                                  ? "border-sky-200 bg-sky-50"
+                                  : "border-slate-200 bg-slate-50"
+                            }`}
+                          >
+                            <div className="font-black text-slate-700">{choice}</div>
+                            <div className="mt-1 text-slate-700">{question.choices[choice] || "No option text"}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                        <span className="font-black text-slate-900">Selected answer:</span>{" "}
+                        {question.selected_answer || "Unanswered"}
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                        <span className="font-black text-slate-900">Correct answer:</span>{" "}
+                        {question.correct_answer || "No correct answer"}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : null}
           </div>

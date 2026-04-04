@@ -60,6 +60,7 @@ export default function StudentCollabRoomPage() {
 
   const [tool, setTool] = useState<"pen" | "highlighter" | "eraser">("pen");
   const [viewportMode, setViewportMode] = useState<"fixed" | "pan">("fixed");
+  const [penColor, setPenColor] = useState<"black" | "red">("black");
   const [penSize, setPenSize] = useState<1 | 2 | 3>(1);
   const [roomMembers, setRoomMembers] = useState<ParticipantListItem[]>([]);
   const [membersExpanded, setMembersExpanded] = useState(true);
@@ -389,6 +390,29 @@ export default function StudentCollabRoomPage() {
               >
                 Pan
               </button>
+              {tool === "pen" && (
+                <div className="ml-1 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
+                  <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Colour</span>
+                  {([
+                    { value: "black" as const, label: "Black", dot: "bg-slate-900" },
+                    { value: "red" as const, label: "Red", dot: "bg-red-500" },
+                  ]).map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setPenColor(option.value)}
+                      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-black ${
+                        penColor === option.value
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-200 bg-slate-50 text-slate-700"
+                      }`}
+                    >
+                      <span className={`h-2.5 w-2.5 rounded-full ${option.dot}`} />
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="ml-1 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
                 <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Size</span>
                 {([1, 2, 3] as const).map((size) => (
@@ -447,7 +471,7 @@ export default function StudentCollabRoomPage() {
             roomKey={`room-${roomNumber}`}
             participantId={anonId}
             tool={viewportMode === "pan" ? "select" : tool}
-            penColor="black"
+            penColor={penColor}
             penSize={penSize}
             highlighterColor="yellow"
             eraserSize={2}

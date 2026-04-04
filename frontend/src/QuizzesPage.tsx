@@ -64,6 +64,24 @@ type GenerateQuizResponse = {
 /** ---------------- Helpers ---------------- */
 const API_BASE = "/api";
 
+function getFileExtension(name: string) {
+  const trimmed = String(name || "").trim();
+  const dot = trimmed.lastIndexOf(".");
+  if (dot < 0) return "";
+  return trimmed.slice(dot).toLowerCase();
+}
+
+function isPdfFilename(name: string) {
+  return getFileExtension(name) === ".pdf";
+}
+
+function filenameToQuizTitle(name: string) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return "Quiz";
+  const dot = trimmed.lastIndexOf(".");
+  return (dot > 0 ? trimmed.slice(0, dot) : trimmed).trim() || "Quiz";
+}
+
 function resolveFileUrl(fileUrl: string) {
   if (!fileUrl) return "";
   if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
@@ -267,6 +285,7 @@ export default function QuizzesPage() {
   const [genLoading, setGenLoading] = useState(false);
   const [genNoteId, setGenNoteId] = useState<number | null>(null);
   const [genPreviewUrl, setGenPreviewUrl] = useState<string | null>(null);
+  const [genQuizTitle, setGenQuizTitle] = useState("");
   const [genNum, setGenNum] = useState<number>(10);
   const [genBusy, setGenBusy] = useState(false);
 
@@ -625,8 +644,10 @@ export default function QuizzesPage() {
     setError(null);
     try {
       const data = (await apiFetch(`${API_BASE}/notes/${classId}?kind=${kind}`)) as NoteItem[];
-      setGenNotes(Array.isArray(data) ? data : []);
-      setGenNoteId(Array.isArray(data) && data.length ? data[0].id : null);
+      const notes = Array.isArray(data) ? data : [];
+      setGenNotes(notes);
+      const firstPdf = notes.find((note) => isPdfFilename(note.filename));
+      setGenNoteId(firstPdf ? firstPdf.id : null);
     } catch (e: any) {
       setError(e?.message || "Failed to load PDFs.");
       setGenNotes([]);
@@ -640,6 +661,7 @@ export default function QuizzesPage() {
     setShowGenerate(true);
     setGenKind("notes");
     setGenNum(10);
+    setGenQuizTitle("");
     setGenNotes([]);
     setGenNoteId(null);
     setError(null);
@@ -651,6 +673,14 @@ export default function QuizzesPage() {
       setError("Select a PDF first.");
       return;
     }
+
+    const selected = genNotes.find((note) => note.id === genNoteId) || null;
+    if (!selected || !isPdfFilename(selected.filename)) {
+      setError("Please choose a PDF to generate a quiz.");
+      return;
+    }
+
+    const title = genQuizTitle.trim() || filenameToQuizTitle(selected.filename);
 
     setGenBusy(true);
     setError(null);
@@ -682,7 +712,7 @@ export default function QuizzesPage() {
       const savedQuiz = (await apiFetch(`${API_BASE}/classes/${classId}/quizzes`, {
         method: "POST",
         body: JSON.stringify({
-          title: (data.title || "Generated Quiz").trim(),
+          title,
           category: clampCategory(data.category || "General"),
           description: (data.description || "Generated from PDF").trim(),
           questions: safeQuestions,
@@ -715,13 +745,21 @@ export default function QuizzesPage() {
   }, [genNotes]);
 
   const selectedNote = genNotes.find((x) => x.id === genNoteId) || null;
+  const selectablePdfCount = useMemo(
+    () => genNotes.filter((note) => isPdfFilename(note.filename)).length,
+    [genNotes]
+  );
+  const hasNonPdfChoices = useMemo(
+    () => genNotes.some((note) => !isPdfFilename(note.filename)),
+    [genNotes]
+  );
 
   useEffect(() => {
     let cancelled = false;
     let objectUrl: string | null = null;
 
     async function loadPreview() {
-      if (!selectedNote?.file_url) {
+      if (!selectedNote?.file_url || !isPdfFilename(selectedNote.filename)) {
         setGenPreviewUrl(null);
         return;
       }
@@ -1551,6 +1589,7 @@ export default function QuizzesPage() {
                 type="button"
                 onClick={() => {
                   setShowGenerate(false);
+                  setGenQuizTitle("");
                   setGenNotes([]);
                   setGenNoteId(null);
                   setGenBusy(false);
@@ -1601,7 +1640,7 @@ export default function QuizzesPage() {
                       value={genNum}
                       onChange={(e) => setGenNum(Number(e.target.value))}
                     >
-                      {[5, 8, 10, 12, 15, 20, 25, 30].map((n) => (
+                      {[5, 10, 20, 30].map((n) => (
                         <option key={n} value={n}>
                           {n}
                         </option>
@@ -1615,10 +1654,16 @@ export default function QuizzesPage() {
                     Select PDF {genLoading ? "• loading..." : ""}
                   </div>
 
+                  {hasNonPdfChoices && (
+                    <div className="mt-3 rounded-[18px] border-2 border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+                      You can store DOCX and PPTX files in Notes, but quiz generation currently works with PDF files only. Please export documents or presentations as PDF first.
+                    </div>
+                  )}
+
                   <div className="mt-3 max-h-[430px] space-y-4 overflow-auto pr-1">
                     {genLoading ? (
                       <div className="text-sm text-slate-600">Loading PDFs…</div>
-                    ) : genNotes.length === 0 ? (
+                    ) : selectablePdfCount === 0 ? (
                       <div className="rounded-[18px] border-2 border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                         No PDFs found in this section yet.
                       </div>
@@ -1629,19 +1674,28 @@ export default function QuizzesPage() {
                           <div className="mt-2 space-y-2">
                             {group.items.map((n) => {
                               const active = genNoteId === n.id;
+                              const pdf = isPdfFilename(n.filename);
                               return (
                                 <button
                                   key={n.id}
                                   type="button"
-                                  onClick={() => setGenNoteId(n.id)}
+                                  onClick={() => {
+                                    if (!pdf) return;
+                                    setGenNoteId(n.id);
+                                  }}
+                                  disabled={!pdf}
                                   className={`w-full rounded-[18px] border-2 px-3 py-3 text-left text-sm ${
                                     active
                                       ? "border-emerald-600 bg-emerald-50"
-                                      : "border-slate-200 bg-white hover:bg-slate-50"
+                                      : pdf
+                                        ? "border-slate-200 bg-white hover:bg-slate-50"
+                                        : "border-slate-200 bg-slate-100 text-slate-500"
                                   }`}
                                 >
-                                  <div className="font-semibold text-slate-900 truncate">{n.filename}</div>
-                                  <div className="mt-1 text-xs text-slate-500">ID: {n.id}</div>
+                                  <div className={`truncate font-semibold ${pdf ? "text-slate-900" : "text-slate-500"}`}>{n.filename}</div>
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    {pdf ? `ID: ${n.id}` : "Stored in Notes only. Export as PDF to use this for quiz generation."}
+                                  </div>
                                 </button>
                               );
                             })}
@@ -1656,10 +1710,22 @@ export default function QuizzesPage() {
               <div className="rounded-[26px] border-2 border-slate-200 bg-white p-4">
                 <div className="grid gap-4">
                   <div>
+                    <label className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
+                      Quiz title
+                    </label>
+                    <input
+                      className="mt-2 w-full rounded-[18px] border-2 border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
+                      value={genQuizTitle}
+                      onChange={(e) => setGenQuizTitle(e.target.value)}
+                      placeholder="e.g. Algebra quiz - Fractions"
+                    />
+                  </div>
+
+                  <div>
                     <div className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
                       Preview
                     </div>
-                    {selectedNote ? (
+                    {selectedNote && isPdfFilename(selectedNote.filename) ? (
                       <div className="mt-3 rounded-[22px] border-2 border-slate-200 overflow-hidden">
                         {genPreviewUrl ? (
                           <iframe

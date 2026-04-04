@@ -29,6 +29,32 @@ type NoteItem = {
   topic_name: string;
 };
 
+function getFileExtension(name: string) {
+  const trimmed = String(name || "").trim();
+  const dot = trimmed.lastIndexOf(".");
+  if (dot < 0) return "";
+  return trimmed.slice(dot).toLowerCase();
+}
+
+function buildNotesUploadWarning(files: File[]) {
+  if (!files.length) return null;
+
+  const exts = new Set(files.map((file) => getFileExtension(file.name)));
+  const hasPdf = exts.has(".pdf");
+  const hasDocx = exts.has(".docx") || exts.has(".doc");
+  const hasPptx = exts.has(".pptx") || exts.has(".ppt");
+  const hasOtherNonPdf = Array.from(exts).some((ext) => ext && ext !== ".pdf" && ext !== ".docx" && ext !== ".doc" && ext !== ".pptx" && ext !== ".ppt");
+
+  if (!hasDocx && !hasPptx && !hasOtherNonPdf) return null;
+  if (hasPptx) {
+    return "You can store these files in Notes, but quiz generation currently works with PDF files only. PPTX files are not supported for quiz generation yet. Please export the presentation as a PDF.";
+  }
+  if (hasDocx && !hasPdf && !hasOtherNonPdf) {
+    return "DOCX files can be stored in Notes, but they cannot be used to generate a quiz yet. Please export the document as a PDF if you want to use it for quiz generation.";
+  }
+  return "You can store these files in Notes, but quiz generation currently works with PDF files only. Please export documents or presentations as PDF if you want to use them for quiz generation.";
+}
+
 function resolveFileUrl(u: string) {
   if (!u) return "";
   if (u.startsWith("http://") || u.startsWith("https://")) return u;
@@ -224,6 +250,7 @@ export default function NotesPage() {
   }, [notes, selectedTopicId, search]);
 
   const cols = getTileCols(topicCards.length || 1);
+  const uploadWarning = useMemo(() => buildNotesUploadWarning(pickedFiles), [pickedFiles]);
 
   async function createTopicIfNeeded(): Promise<number> {
     if (uploadMode === "existing") {
@@ -751,6 +778,12 @@ export default function NotesPage() {
                         📎 {f.name}
                       </span>
                     ))}
+                  </div>
+                )}
+
+                {uploadWarning && (
+                  <div className="mt-3 rounded-2xl border-2 border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                    {uploadWarning}
                   </div>
                 )}
               </div>

@@ -37,6 +37,27 @@ type StoredParticipant = {
   nickname?: string;
 };
 
+type ParticipantReportQuestion = {
+  question_id: string;
+  prompt: string;
+  choices: Record<ChoiceKey, string>;
+  selected_answer?: ChoiceKey | null;
+  correct_answer?: ChoiceKey | null;
+  status: "correct" | "wrong" | "unanswered" | "answered";
+};
+
+type ParticipantReport = {
+  session_code: string;
+  title: string;
+  participant_name: string;
+  attempt_id: number;
+  score: number;
+  percent?: number | null;
+  completed: boolean;
+  total_questions: number;
+  questions: ParticipantReportQuestion[];
+};
+
 function hashStringToInt(s: string) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -119,6 +140,9 @@ export default function StudentJoinQuizPage() {
 
   const [current, setCurrent] = useState<CurrentResponse | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
+  const [participantReport, setParticipantReport] = useState<ParticipantReport | null>(null);
+  const [participantReportLoading, setParticipantReportLoading] = useState(false);
+  const [participantReportError, setParticipantReportError] = useState<string | null>(null);
 
   const [selectedChoice, setSelectedChoice] = useState<ChoiceKey | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
@@ -315,6 +339,25 @@ export default function StudentJoinQuizPage() {
     }
   }
 
+  async function fetchParticipantReport() {
+    if (!sessionCode || !anonId) return;
+    setParticipantReportLoading(true);
+    setParticipantReportError(null);
+    try {
+      const res = await fetch(`${API_BASE}/livequiz/${sessionCode}/participant-report?anon_id=${encodeURIComponent(anonId)}`);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Could not load your report.");
+      }
+      const data = (await res.json()) as ParticipantReport;
+      setParticipantReport(data);
+    } catch (e: any) {
+      setParticipantReportError(e?.message || "Could not load your report.");
+    } finally {
+      setParticipantReportLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!sessionCode) {
       setFatalError("Missing session code.");
@@ -368,15 +411,10 @@ export default function StudentJoinQuizPage() {
 
   useEffect(() => {
     if (state !== "ended") return;
-
     stopPolling();
-
-    const t = window.setTimeout(() => {
-      navigate("/student?mode=quiz", { replace: true });
-    }, 1800);
-
-    return () => window.clearTimeout(t);
-  }, [state, navigate]);
+    if (!anonId) return;
+    void fetchParticipantReport();
+  }, [state, anonId]);
 
 
   async function joinWithName() {
@@ -736,24 +774,142 @@ export default function StudentJoinQuizPage() {
           )}
 
           {state === "ended" && (
-            <div className="rounded-[32px] border border-white/70 bg-white/85 p-6 text-center shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-8">
-              <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-slate-200 bg-slate-50 shadow-sm">
-                <img src={elumeLogo} alt="Elume" className="h-10 w-10 object-contain" />
+            <div className="rounded-[32px] border border-white/70 bg-white/85 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-8">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-start gap-4">
+                  <div className="grid h-16 w-16 shrink-0 place-items-center rounded-3xl border border-slate-200 bg-slate-50 shadow-sm">
+                    <img src={elumeLogo} alt="Elume" className="h-10 w-10 object-contain" />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-black tracking-tight text-slate-900">
+                      Quiz report
+                    </div>
+                    <div className="mt-2 text-sm leading-6 text-slate-600">
+                      The teacher has ended the quiz. Your final report is below.
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50"
+                  onClick={() => navigate("/student?mode=quiz", { replace: true })}
+                >
+                  Return to Student Hub
+                </button>
               </div>
 
-              <div className="mt-5 text-2xl font-black tracking-tight text-slate-900">
-                Session finished
-              </div>
-              <div className="mt-2 text-sm leading-6 text-slate-600">
-                The teacher has ended the quiz. Returning you to Student Hub…
-              </div>
+              {participantReportLoading ? (
+                <div className="mt-6 rounded-[28px] border border-slate-200 bg-white px-5 py-6 text-sm font-semibold text-slate-600 shadow-sm">
+                  Loading your report...
+                </div>
+              ) : participantReportError ? (
+                <div className="mt-6 rounded-[28px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-semibold text-amber-900 shadow-sm">
+                  {participantReportError}
+                </div>
+              ) : participantReport ? (
+                <div className="mt-6 space-y-5">
+                  <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="text-xl font-black text-slate-900">
+                      {participantReport.title || "Live Quiz"}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">
+                        {participantReport.participant_name || displayName || "Student"}
+                      </span>
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-800">
+                        {participantReport.percent}% scored
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">
+                        {participantReport.score}/{participantReport.total_questions}
+                      </span>
+                      <span
+                        className={`rounded-full border px-3 py-1.5 ${
+                          participantReport.completed
+                            ? "border-cyan-200 bg-cyan-50 text-cyan-800"
+                            : "border-slate-200 bg-slate-100 text-slate-700"
+                        }`}
+                      >
+                        {participantReport.completed ? "Completed" : "Incomplete"}
+                      </span>
+                    </div>
+                  </div>
 
-              <button
-                className="mt-6 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 shadow-sm hover:bg-slate-50"
-                onClick={() => navigate("/student?mode=quiz", { replace: true })}
-              >
-                Return now
-              </button>
+                  <div className="space-y-4">
+                    {participantReport.questions.map((question, index) => (
+                      <div
+                        key={`${question.question_id ?? index}`}
+                        className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="text-base font-black leading-7 text-slate-900">
+                            {index + 1}. {question.prompt || "Question"}
+                          </div>
+                          <span
+                            className={`inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-black uppercase tracking-[0.18em] ${
+                              question.status === "correct"
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                : question.status === "wrong"
+                                  ? "border-rose-200 bg-rose-50 text-rose-700"
+                                  : question.status === "answered"
+                                    ? "border-cyan-200 bg-cyan-50 text-cyan-800"
+                                    : "border-slate-200 bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {question.status}
+                          </span>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          {(["A", "B", "C", "D"] as ChoiceKey[]).map((key) => {
+                            const label = question.choices?.[key];
+                            if (!label) return null;
+                            const isSelected = question.selected_answer === key;
+                            const isCorrect = question.correct_answer === key;
+                            return (
+                              <div
+                                key={key}
+                                className={`rounded-2xl border px-4 py-3 text-sm leading-6 ${
+                                  isCorrect
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                                    : isSelected
+                                      ? "border-sky-200 bg-sky-50 text-sky-900"
+                                      : "border-slate-200 bg-slate-50 text-slate-700"
+                                }`}
+                              >
+                                <span className="mr-2 font-black">{key}.</span>
+                                {label}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="mt-4 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <div className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
+                              Your answer
+                            </div>
+                            <div className="mt-1 font-semibold text-slate-900">
+                              {question.selected_answer || "Unanswered"}
+                            </div>
+                          </div>
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <div className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
+                              Correct answer
+                            </div>
+                            <div className="mt-1 font-semibold text-slate-900">
+                              {question.correct_answer || "No correct answer"}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-6 rounded-[28px] border border-slate-200 bg-white px-5 py-6 text-sm font-semibold text-slate-600 shadow-sm">
+                  Your report will appear here once it is ready.
+                </div>
+              )}
             </div>
           )}
 

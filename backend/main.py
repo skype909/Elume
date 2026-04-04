@@ -5995,6 +5995,113 @@ def _build_livequiz_results(db: Session, s: LiveQuizSessionModel) -> dict:
     }
 
 
+def _resolve_livequiz_attempt_participant(
+    db: Session,
+    session_id: int,
+    attempt: LiveQuizAttemptModel,
+) -> Optional[LiveQuizParticipantModel]:
+    if attempt.participant_id is not None:
+        participant = (
+            db.query(LiveQuizParticipantModel)
+            .filter(
+                LiveQuizParticipantModel.id == attempt.participant_id,
+                LiveQuizParticipantModel.session_id == session_id,
+            )
+            .first()
+        )
+        if participant:
+            return participant
+
+    identifier = str(attempt.participant_identifier or "").strip()
+    if not identifier:
+        return None
+
+    return (
+        db.query(LiveQuizParticipantModel)
+        .filter(
+            LiveQuizParticipantModel.session_id == session_id,
+            LiveQuizParticipantModel.anon_id == identifier,
+        )
+        .first()
+    )
+
+
+def _build_livequiz_attempt_review(
+    db: Session,
+    session: LiveQuizSessionModel,
+    attempt: LiveQuizAttemptModel,
+) -> dict:
+    participant = _resolve_livequiz_attempt_participant(db, session.id, attempt)
+    answers_by_question: dict[str, str] = {}
+
+    if participant:
+        answer_rows = (
+            db.query(LiveQuizAnswerModel)
+            .filter(
+                LiveQuizAnswerModel.session_id == session.id,
+                LiveQuizAnswerModel.participant_id == participant.id,
+            )
+            .all()
+        )
+        for row in answer_rows:
+            qid = str(row.question_id or "").strip()
+            choice = str(row.choice or "").strip().upper()
+            if qid and choice in {"A", "B", "C", "D"}:
+                answers_by_question[qid] = choice
+
+    review_questions: list[dict[str, Any]] = []
+    for q in _load_questions(session):
+        qid = str(q.get("id", "")).strip()
+        if not qid:
+            continue
+
+        raw_choices = q.get("choices") if isinstance(q.get("choices"), dict) else {}
+        choices = {
+            "A": str(raw_choices.get("A", "")).strip(),
+            "B": str(raw_choices.get("B", "")).strip(),
+            "C": str(raw_choices.get("C", "")).strip(),
+            "D": str(raw_choices.get("D", "")).strip(),
+        }
+
+        selected_answer = answers_by_question.get(qid)
+        raw_correct = q.get("correct")
+        correct_answer = str(raw_correct).strip().upper() if raw_correct is not None else None
+        if correct_answer not in {"A", "B", "C", "D"}:
+            correct_answer = None
+
+        if correct_answer is None:
+            status = "answered" if selected_answer else "unanswered"
+        elif not selected_answer:
+            status = "unanswered"
+        elif selected_answer == correct_answer:
+            status = "correct"
+        else:
+            status = "wrong"
+
+        review_questions.append(
+            {
+                "question_id": qid,
+                "prompt": str(q.get("prompt", "")).strip(),
+                "choices": choices,
+                "selected_answer": selected_answer,
+                "correct_answer": correct_answer,
+                "status": status,
+            }
+        )
+
+    return {
+        "session_code": session.session_code,
+        "title": session.title,
+        "participant_name": attempt.participant_display_name,
+        "attempt_id": attempt.id,
+        "score": attempt.score,
+        "percent": attempt.score_percent,
+        "completed": bool(attempt.completed),
+        "total_questions": attempt.total_questions,
+        "questions": review_questions,
+    }
+
+
 @app.get("/livequiz/{code}/results")
 def livequiz_results(
     code: str,
@@ -6006,6 +6113,30 @@ def livequiz_results(
         _sync_livequiz_attempts(db, s)
         db.commit()
     return _build_livequiz_results(db, s)
+
+
+@app.get("/livequiz/attempts/{attempt_id}/review")
+def livequiz_attempt_review(
+    attempt_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    attempt = db.query(LiveQuizAttemptModel).filter(LiveQuizAttemptModel.id == attempt_id).first()
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+
+    get_owned_class_or_404(attempt.class_id, db, user)
+
+    session = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.id == attempt.session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if session.state == "ended":
+        _sync_livequiz_attempts(db, session)
+        db.commit()
+        db.refresh(attempt)
+
+    return _build_livequiz_attempt_review(db, session, attempt)
 
 @app.get("/classes/{class_id}/livequiz/insights")
 def class_livequiz_insights(
@@ -6072,6 +6203,53 @@ def class_livequiz_insights(
         },
         "students": list(grouped.values()),
     }
+
+
+@app.get("/livequiz/{code}/participant-report")
+def livequiz_participant_report(
+    code: str,
+    anon_id: str,
+    db: Session = Depends(get_db),
+):
+    session = db.query(LiveQuizSessionModel).filter(LiveQuizSessionModel.session_code == code).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session = _maybe_progress_livequiz_session(db, session)
+    if session.state != "ended":
+        raise HTTPException(status_code=400, detail="Report is available after the session ends")
+
+    clean_anon_id = (anon_id or "").strip()
+    if not clean_anon_id:
+        raise HTTPException(status_code=400, detail="anon_id is required")
+
+    participant = (
+        db.query(LiveQuizParticipantModel)
+        .filter(
+            LiveQuizParticipantModel.session_id == session.id,
+            LiveQuizParticipantModel.anon_id == clean_anon_id,
+        )
+        .first()
+    )
+    if not participant:
+        raise HTTPException(status_code=404, detail="Participant not found")
+
+    _sync_livequiz_attempts(db, session)
+    db.commit()
+
+    attempt = (
+        db.query(LiveQuizAttemptModel)
+        .filter(
+            LiveQuizAttemptModel.session_id == session.id,
+            LiveQuizAttemptModel.participant_id == participant.id,
+        )
+        .order_by(LiveQuizAttemptModel.finished_at.desc(), LiveQuizAttemptModel.id.desc())
+        .first()
+    )
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+
+    return _build_livequiz_attempt_review(db, session, attempt)
 
 @app.post("/livequiz/attempts/{attempt_id}/exclude")
 def livequiz_attempt_exclude(
