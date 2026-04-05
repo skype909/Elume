@@ -80,8 +80,8 @@ export default function BillingOnboardingPage() {
   }, [navigate]);
 
   const status = useMemo(() => (billing?.subscription_status || "inactive").toLowerCase(), [billing]);
-  const isPaid = status === "active" || status === "trialing";
-  const isTrial = status === "trialing" || !!billing?.trial_active;
+  const isTrial = (status === "trialing" || !!billing?.trial_active) && !billing?.billing_onboarding_required;
+  const isPaid = status === "active" || isTrial;
   const isPendingActivation = status === "pending" && !!billing?.has_stripe_customer;
   const trialDaysLeft = daysLeft(billing?.trial_ends_at || null);
   const isExpired = Boolean(billing?.subscription_expired);

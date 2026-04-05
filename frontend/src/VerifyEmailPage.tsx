@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiFetch, setToken } from "./api";
 
 export default function VerifyEmailPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const token = useMemo(() => new URLSearchParams(location.search).get("token") || "", [location.search]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("Verifying your email…");
@@ -29,9 +30,7 @@ export default function VerifyEmailPage() {
           localStorage.setItem("elume_token", accessToken);
           setToken(accessToken);
           setMessage(data?.message || "Email verified. Taking you into Elume setup...");
-          window.setTimeout(() => {
-            window.location.assign(`/#${nextPath.startsWith("/") ? nextPath : `/${nextPath}`}`);
-          }, 800);
+          navigate(nextPath.startsWith("/") ? nextPath : `/${nextPath}`, { replace: true });
           return;
         }
         setMessage(data?.message || "Email verified. You can now sign in to Elume.");

@@ -126,7 +126,11 @@ export default function LoginPage({ onLoggedIn }: Props) {
 
             try {
                 const billing = await apiFetch("/billing/me");
-                if (billing?.billing_onboarding_required) {
+                if (
+                    billing?.billing_onboarding_required ||
+                    billing?.subscription_expired ||
+                    billing?.requires_billing_redirect
+                ) {
                     onLoggedIn();
                     navigate("/onboarding/billing", { replace: true });
                     return;

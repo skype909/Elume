@@ -512,9 +512,7 @@ def _has_billing_access(user: models.UserModel) -> bool:
 def _is_trial_active(user: models.UserModel) -> bool:
     if _is_subscription_trialing(user):
         return bool(user.trial_ends_at and user.trial_ends_at > _utcnow())
-    if _is_paid_subscription_active(user):
-        return False
-    return bool(user.trial_ends_at and user.trial_ends_at > _utcnow())
+    return False
 
 
 def _refresh_ai_daily_limit(user: models.UserModel) -> int:
@@ -2379,7 +2377,10 @@ def auth_verify_email(payload: VerifyEmailPayload, db: Session = Depends(get_db)
     try:
         user.email_verified = True
         token_row.used_at = datetime.utcnow()
-        _seed_demo_class(db, user)
+        try:
+            _seed_demo_class(db, user)
+        except Exception:
+            logger.exception("Demo seeding failed during email verification for %s", user.email)
         db.commit()
     except HTTPException:
         db.rollback()
