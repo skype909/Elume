@@ -905,7 +905,7 @@ export default function ClassAdminPage() {
                                     onClick={() => setShowCreateTest(true)}
                                     className="shrink-0 rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                                 >
-                                    Create Test
+                                    Input Results
                                 </button>
                             </div>
                         )}

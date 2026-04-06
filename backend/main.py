@@ -37,7 +37,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 load_dotenv(BASE_DIR / ".env")
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -54,7 +54,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from io import BytesIO, StringIO
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -2721,127 +2721,149 @@ def start_billing_trial(
     }
 
 
+def _process_stripe_billing_webhook_event(event: dict[str, Any]) -> None:
+    db = SessionLocal()
+    try:
+        event_type = (event.get("type") or "").strip()
+        logger.info("Stripe billing webhook event: %s", event_type)
+        stripe_obj = event.get("data", {}).get("object", {})
+
+        if event_type not in {
+            "checkout.session.completed",
+            "customer.subscription.created",
+            "customer.subscription.updated",
+            "customer.subscription.deleted",
+            "invoice.paid",
+            "invoice.payment_failed",
+        }:
+            return
+
+        user = _find_billing_user(db, stripe_obj)
+        if not user:
+            logger.warning("Stripe webhook could not match user for event %s", event_type)
+            return
+
+        if event_type == "checkout.session.completed":
+            session_customer = _stripe_obj_get(stripe_obj, "customer")
+            session_subscription = _stripe_obj_get(stripe_obj, "subscription")
+            session_status = (_stripe_obj_get(stripe_obj, "payment_status") or "").strip().lower()
+            billing_interval = _resolve_billing_interval(stripe_obj, user.billing_interval)
+            metadata = _stripe_obj_get(stripe_obj, "metadata") or {}
+
+            if session_customer:
+                user.stripe_customer_id = str(session_customer)
+            if session_subscription:
+                user.stripe_subscription_id = str(session_subscription)
+
+            user.stripe_checkout_session_id = str(_stripe_obj_get(stripe_obj, "id") or user.stripe_checkout_session_id or "")
+            user.billing_interval = billing_interval
+            user.subscription_status = "active" if session_status == "paid" else "pending"
+
+            if user.subscription_status == "active" and not user.subscription_started_at:
+                user.subscription_started_at = datetime.utcnow()
+            if user.subscription_status == "active":
+                user.trial_started_at = None
+                user.trial_ends_at = None
+                effective_start = user.subscription_started_at or datetime.utcnow()
+                user.subscription_expires_at = _calculate_subscription_expiry(effective_start, billing_interval)
+                _clear_payment_recovery_state(user)
+
+            if (metadata.get("launch_offer_candidate") or "").strip().lower() == "true" and user.subscription_status == "active":
+                user.launch_offer_applied = True
+
+        elif event_type in {"customer.subscription.created", "customer.subscription.updated"}:
+            _apply_subscription_update(user, stripe_obj)
+            if _is_paid_subscription_active(user):
+                user.trial_started_at = None
+                user.trial_ends_at = None
+                user.billing_onboarding_required = False
+                _clear_payment_recovery_state(user)
+
+        elif event_type == "customer.subscription.deleted":
+            _apply_subscription_update(user, stripe_obj)
+            user.subscription_status = "canceled"
+
+        elif event_type == "invoice.payment_failed":
+            customer_id = _stripe_obj_get(stripe_obj, "customer")
+            subscription_id = _stripe_obj_get(stripe_obj, "subscription")
+            if customer_id:
+                user.stripe_customer_id = str(customer_id)
+            if subscription_id:
+                user.stripe_subscription_id = str(subscription_id)
+            user.subscription_status = "past_due"
+            _set_payment_recovery_window(user)
+            _maybe_send_payment_failed_notice(user)
+
+        elif event_type == "invoice.paid":
+            customer_id = _stripe_obj_get(stripe_obj, "customer")
+            subscription_id = _stripe_obj_get(stripe_obj, "subscription")
+            if customer_id:
+                user.stripe_customer_id = str(customer_id)
+            if subscription_id:
+                user.stripe_subscription_id = str(subscription_id)
+
+            refreshed = False
+            if subscription_id:
+                try:
+                    subscription = stripe.Subscription.retrieve(str(subscription_id))
+                    _apply_subscription_update(user, subscription)
+                    refreshed = True
+                except Exception:
+                    logger.warning("Failed to refresh subscription %s after invoice.paid", subscription_id)
+
+            if not refreshed:
+                user.subscription_status = "active"
+                if not user.subscription_started_at:
+                    user.subscription_started_at = datetime.utcnow()
+                user.subscription_expires_at = _calculate_subscription_expiry(
+                    user.subscription_started_at or datetime.utcnow(),
+                    user.billing_interval,
+                )
+                _clear_payment_recovery_state(user)
+            if _is_paid_subscription_active(user):
+                user.trial_started_at = None
+                user.trial_ends_at = None
+                user.billing_onboarding_required = False
+                _clear_payment_recovery_state(user)
+
+        _refresh_ai_daily_limit(user)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Stripe webhook background processing failed")
+    finally:
+        db.close()
+
+
 @app.post("/billing/webhook")
-async def stripe_billing_webhook(request: Request, db: Session = Depends(get_db)):
+async def stripe_billing_webhook(request: Request, background_tasks: BackgroundTasks):
     if not STRIPE_SECRET_KEY or not STRIPE_WEBHOOK_SECRET:
         raise HTTPException(status_code=500, detail="Stripe webhook is not configured")
 
+    logger.info("Stripe billing webhook hit")
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
-    if not sig_header:
+    try:
+        sig_header = request.headers["stripe-signature"]
+    except KeyError:
         raise HTTPException(status_code=400, detail="Missing Stripe signature")
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError:
+        logger.warning("Stripe billing webhook verification failed: invalid payload")
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
     except stripe.error.SignatureVerificationError:
+        logger.warning("Stripe billing webhook verification failed: invalid signature")
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
-    event_type = (event.get("type") or "").strip()
-    stripe_obj = event.get("data", {}).get("object", {})
-
-    if event_type not in {
-        "checkout.session.completed",
-        "customer.subscription.created",
-        "customer.subscription.updated",
-        "customer.subscription.deleted",
-        "invoice.paid",
-        "invoice.payment_failed",
-    }:
-        return {"received": True}
-
-    user = _find_billing_user(db, stripe_obj)
-    if not user:
-        logger.warning("Stripe webhook could not match user for event %s", event_type)
-        return {"received": True}
-
-    if event_type == "checkout.session.completed":
-        session_customer = _stripe_obj_get(stripe_obj, "customer")
-        session_subscription = _stripe_obj_get(stripe_obj, "subscription")
-        session_status = (_stripe_obj_get(stripe_obj, "payment_status") or "").strip().lower()
-        billing_interval = _resolve_billing_interval(stripe_obj, user.billing_interval)
-        metadata = _stripe_obj_get(stripe_obj, "metadata") or {}
-
-        if session_customer:
-            user.stripe_customer_id = str(session_customer)
-        if session_subscription:
-            user.stripe_subscription_id = str(session_subscription)
-
-        user.stripe_checkout_session_id = str(_stripe_obj_get(stripe_obj, "id") or user.stripe_checkout_session_id or "")
-        user.billing_interval = billing_interval
-        user.subscription_status = "active" if session_status == "paid" else "pending"
-
-        if user.subscription_status == "active" and not user.subscription_started_at:
-            user.subscription_started_at = datetime.utcnow()
-        if user.subscription_status == "active":
-            user.trial_started_at = None
-            user.trial_ends_at = None
-            effective_start = user.subscription_started_at or datetime.utcnow()
-            user.subscription_expires_at = _calculate_subscription_expiry(effective_start, billing_interval)
-            _clear_payment_recovery_state(user)
-
-        if (metadata.get("launch_offer_candidate") or "").strip().lower() == "true" and user.subscription_status == "active":
-            user.launch_offer_applied = True
-
-    elif event_type in {"customer.subscription.created", "customer.subscription.updated"}:
-        _apply_subscription_update(user, stripe_obj)
-        if _is_paid_subscription_active(user):
-            user.trial_started_at = None
-            user.trial_ends_at = None
-            user.billing_onboarding_required = False
-            _clear_payment_recovery_state(user)
-
-    elif event_type == "customer.subscription.deleted":
-        _apply_subscription_update(user, stripe_obj)
-        user.subscription_status = "canceled"
-
-    elif event_type == "invoice.payment_failed":
-        customer_id = _stripe_obj_get(stripe_obj, "customer")
-        subscription_id = _stripe_obj_get(stripe_obj, "subscription")
-        if customer_id:
-            user.stripe_customer_id = str(customer_id)
-        if subscription_id:
-            user.stripe_subscription_id = str(subscription_id)
-        user.subscription_status = "past_due"
-        _set_payment_recovery_window(user)
-        _maybe_send_payment_failed_notice(user)
-
-    elif event_type == "invoice.paid":
-        customer_id = _stripe_obj_get(stripe_obj, "customer")
-        subscription_id = _stripe_obj_get(stripe_obj, "subscription")
-        if customer_id:
-            user.stripe_customer_id = str(customer_id)
-        if subscription_id:
-            user.stripe_subscription_id = str(subscription_id)
-
-        refreshed = False
-        if subscription_id:
-            try:
-                subscription = stripe.Subscription.retrieve(str(subscription_id))
-                _apply_subscription_update(user, subscription)
-                refreshed = True
-            except Exception:
-                logger.warning("Failed to refresh subscription %s after invoice.paid", subscription_id)
-
-        if not refreshed:
-            user.subscription_status = "active"
-            if not user.subscription_started_at:
-                user.subscription_started_at = datetime.utcnow()
-            user.subscription_expires_at = _calculate_subscription_expiry(
-                user.subscription_started_at or datetime.utcnow(),
-                user.billing_interval,
-            )
-            _clear_payment_recovery_state(user)
-        if _is_paid_subscription_active(user):
-            user.trial_started_at = None
-            user.trial_ends_at = None
-            user.billing_onboarding_required = False
-            _clear_payment_recovery_state(user)
-
-    _refresh_ai_daily_limit(user)
-    db.commit()
-    return {"received": True}
+    event_payload = event.to_dict_recursive() if hasattr(event, "to_dict_recursive") else dict(event)
+    logger.info(
+        "Stripe billing webhook verified: id=%s type=%s",
+        event_payload.get("id"),
+        event_payload.get("type"),
+    )
+    background_tasks.add_task(_process_stripe_billing_webhook_event, event_payload)
+    return Response(content="ok", media_type="text/plain", status_code=200)
 
 
 @app.get("/billing/me", response_model=schemas.BillingStatusOut)

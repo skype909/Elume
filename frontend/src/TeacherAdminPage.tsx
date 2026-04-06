@@ -1803,7 +1803,7 @@ export default function TeacherAdminPage() {
                 className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
                 onClick={() => setEditing(null)}
               >
-                Close
+                Save
               </button>
             </div>
 

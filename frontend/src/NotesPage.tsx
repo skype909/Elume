@@ -29,6 +29,8 @@ type NoteItem = {
   topic_name: string;
 };
 
+const MAX_NOTES_UPLOAD_FILES = 5;
+
 function getFileExtension(name: string) {
   const trimmed = String(name || "").trim();
   const dot = trimmed.lastIndexOf(".");
@@ -126,6 +128,7 @@ export default function NotesPage() {
   const [uploadTopicId, setUploadTopicId] = useState<number | "">("");
   const [newTopicName, setNewTopicName] = useState("");
   const [pickedFiles, setPickedFiles] = useState<File[]>([]);
+  const [uploadFileLimitWarning, setUploadFileLimitWarning] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -278,6 +281,10 @@ export default function NotesPage() {
       setError("Pick at least one file");
       return;
     }
+    if (pickedFiles.length > MAX_NOTES_UPLOAD_FILES) {
+      setError(`You can upload up to ${MAX_NOTES_UPLOAD_FILES} files at a time.`);
+      return;
+    }
 
     try {
       setBusy(true);
@@ -394,6 +401,17 @@ export default function NotesPage() {
     setUploadTopicId(topicId ?? (topics[0]?.id ?? ""));
     setNewTopicName("");
     setPickedFiles([]);
+    setUploadFileLimitWarning(null);
+  }
+
+  function handlePickedFilesChange(nextFiles: File[]) {
+    if (nextFiles.length > MAX_NOTES_UPLOAD_FILES) {
+      setPickedFiles(nextFiles.slice(0, MAX_NOTES_UPLOAD_FILES));
+      setUploadFileLimitWarning(`You can upload up to ${MAX_NOTES_UPLOAD_FILES} files at a time. Only the first ${MAX_NOTES_UPLOAD_FILES} files have been selected.`);
+      return;
+    }
+    setPickedFiles(nextFiles);
+    setUploadFileLimitWarning(null);
   }
 
   const pageTitle = loadingClass
@@ -675,13 +693,14 @@ export default function NotesPage() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setShowUploadModal(false);
-                  setPickedFiles([]);
-                  setNewTopicName("");
-                }}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUploadModal(false);
+                    setPickedFiles([]);
+                    setNewTopicName("");
+                    setUploadFileLimitWarning(null);
+                  }}
                 className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
               >
                 Close
@@ -752,13 +771,13 @@ export default function NotesPage() {
                   Files
                 </label>
 
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => setPickedFiles(Array.from(e.target.files || []))}
-                />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => handlePickedFilesChange(Array.from(e.target.files || []))}
+                  />
 
                 <button
                   type="button"
@@ -786,12 +805,18 @@ export default function NotesPage() {
                     {uploadWarning}
                   </div>
                 )}
+
+                {uploadFileLimitWarning && (
+                  <div className="mt-3 rounded-2xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-800">
+                    {uploadFileLimitWarning}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowUploadModal(false)}
+                  <button
+                    type="button"
+                    onClick={() => setShowUploadModal(false)}
                   className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
                   disabled={busy}
                 >
