@@ -3512,6 +3512,12 @@ def user_has_cat4_access(user: models.UserModel) -> bool:
     if email == "admin@elume.ie":
         return True
 
+    fallback_allowlist = {
+        "peter@elume.ie",
+        "lisa@elume.ie",
+        "sandra@elume.ie",
+    }
+
     raw = (
         os.getenv("CAT4_ACCESS_EMAILS")
         or os.getenv("CAT4_ALLOWLIST_EMAILS")
@@ -3522,7 +3528,7 @@ def user_has_cat4_access(user: models.UserModel) -> bool:
         for item in raw.split(",")
         if item.strip()
     }
-    return email in allowlist
+    return email in allowlist or email in fallback_allowlist
 
 
 def require_cat4_access(user: models.UserModel):
