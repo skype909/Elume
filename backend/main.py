@@ -12,6 +12,7 @@ import struct
 import textwrap
 import zipfile
 import zlib
+import math
 from calendar import monthrange
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -3023,6 +3024,8 @@ def _build_cat4_meta_payload(class_id: int, db: Session) -> dict[str, Any]:
     for row in term_rows:
         term_rows_by_set[row.result_set_id].append(row)
 
+    overall_match_counts = _cat4_match_counts_for_rows(baseline_rows, term_rows)
+
     return {
         "feature_enabled": True,
         "active_workbook": next(
@@ -3076,11 +3079,112 @@ def _build_cat4_meta_payload(class_id: int, db: Session) -> dict[str, Any]:
             for item in term_sets
         ],
         "matched_counts": {
-            "baseline_rows": sum(1 for row in baseline_rows if row.student_id),
-            "baseline_unmatched": sum(1 for row in baseline_rows if not row.student_id),
-            "term_rows": sum(1 for row in term_rows if row.student_id),
-            "term_unmatched": sum(1 for row in term_rows if not row.student_id),
+            "baseline_rows": overall_match_counts["baseline_rows"],
+            "baseline_unmatched": overall_match_counts["baseline_unmatched"],
+            "term_rows": overall_match_counts["term_rows"],
+            "term_unmatched": overall_match_counts["term_unmatched"],
         },
+    }
+
+
+def _build_cat4_term_entry_payload(
+    class_id: int,
+    db: Session,
+    baseline_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+) -> dict[str, Any]:
+    baseline_sets = _cat4_baseline_sets_for_class(class_id, db)
+    term_sets = _cat4_term_sets_for_class(class_id, db)
+
+    if not baseline_sets:
+        return {
+            "feature_enabled": True,
+            "baseline_set": None,
+            "term_set": next((item for item in term_sets if item.id == term_set_id), None) if term_set_id else (term_sets[0] if term_sets else None),
+            "rows": [],
+        }
+
+    selected_baseline = next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]) if baseline_id else baseline_sets[0]
+    selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_set_id else (term_sets[0] if term_sets else None)
+
+    baseline_rows = (
+        db.query(Cat4StudentBaselineModel)
+        .filter(Cat4StudentBaselineModel.baseline_set_id == selected_baseline.id)
+        .all()
+    )
+    term_rows = (
+        db.query(Cat4StudentTermResultModel)
+        .filter(Cat4StudentTermResultModel.result_set_id == selected_term.id)
+        .all()
+        if selected_term
+        else []
+    )
+
+    term_rows_by_identity = {
+        _cat4_identity_key(str(row.raw_name or "")): row
+        for row in term_rows
+        if _cat4_identity_key(str(row.raw_name or ""))
+    }
+
+    rows: list[dict[str, Any]] = []
+    used_term_keys: set[str] = set()
+
+    for baseline_row in sorted(baseline_rows, key=lambda item: (str(item.raw_name or "").lower(), item.id)):
+        identity_key = _cat4_identity_key(str(baseline_row.raw_name or ""))
+        term_row = term_rows_by_identity.get(identity_key)
+        if term_row and identity_key:
+            used_term_keys.add(identity_key)
+        rows.append(
+            {
+                "raw_name": baseline_row.raw_name,
+                "matched_name": baseline_row.matched_name,
+                "profile_label": baseline_row.profile_label,
+                "confidence_note": baseline_row.confidence_note,
+                "average_percent": term_row.average_percent if term_row else None,
+                "subject_count": term_row.subject_count if term_row else None,
+                "subject_scores": _parse_cat4_subject_scores(term_row.raw_subjects_json if term_row else None),
+                "has_baseline": True,
+            }
+        )
+
+    for term_row in sorted(term_rows, key=lambda item: (str(item.raw_name or "").lower(), item.id)):
+        identity_key = _cat4_identity_key(str(term_row.raw_name or ""))
+        if identity_key and identity_key in used_term_keys:
+            continue
+        rows.append(
+            {
+                "raw_name": term_row.raw_name,
+                "matched_name": term_row.matched_name,
+                "profile_label": None,
+                "confidence_note": "Present in this term set but not in the selected CAT4 baseline.",
+                "average_percent": term_row.average_percent,
+                "subject_count": term_row.subject_count,
+                "subject_scores": _parse_cat4_subject_scores(term_row.raw_subjects_json),
+                "has_baseline": False,
+            }
+        )
+
+    return {
+        "feature_enabled": True,
+        "baseline_set": {
+            "id": selected_baseline.id,
+            "title": selected_baseline.title,
+            "test_date": selected_baseline.test_date.date().isoformat() if selected_baseline.test_date else None,
+            "is_locked": bool(selected_baseline.is_locked),
+            "locked_at": selected_baseline.locked_at.isoformat() if selected_baseline.locked_at else None,
+        },
+        "term_set": (
+            {
+                "id": selected_term.id,
+                "title": selected_term.title,
+                "academic_year": selected_term.academic_year,
+                "term_key": selected_term.term_key,
+                "created_at": selected_term.created_at.isoformat() if selected_term.created_at else None,
+            }
+            if selected_term
+            else None
+        ),
+        "rows": rows,
     }
 
 
@@ -3104,10 +3208,15 @@ def _build_cat4_report_payload(
             "excelling": [],
             "within_expected_range": [],
             "all_matched_students": [],
+            "bottom_10_percent": [],
+            "top_5_percent": [],
+            "biggest_downward_movers": [],
+            "biggest_upward_movers": [],
             "unmatched_cat4_rows": [],
             "unmatched_term_rows": [],
             "profile_distribution": [],
             "domain_commentary": [],
+            "domain_concern_summary": [],
         }
 
     selected_baseline = next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]) if baseline_id else baseline_sets[0]
@@ -3132,47 +3241,48 @@ def _build_cat4_report_payload(
         else []
     )
 
-    students = (
-        db.query(StudentModel)
-        .filter(StudentModel.class_id == class_id)
-        .order_by(StudentModel.first_name.asc())
-        .all()
-    )
-    student_name_by_id = {student.id: student.first_name for student in students}
-
-    baseline_by_student = {row.student_id: row for row in baseline_rows if row.student_id}
-    latest_by_student = {
-        row.student_id: row
-        for row in latest_rows
-        if row.student_id and row.average_percent is not None
+    baseline_by_identity = {
+        _cat4_identity_key(str(row.raw_name or "")): row
+        for row in baseline_rows
+        if _cat4_identity_key(str(row.raw_name or ""))
     }
-    previous_by_student = {
-        row.student_id: row
+    latest_rows_by_identity = {
+        _cat4_identity_key(str(row.raw_name or "")): row
+        for row in latest_rows
+        if _cat4_identity_key(str(row.raw_name or ""))
+    }
+    latest_by_identity = {
+        _cat4_identity_key(str(row.raw_name or "")): row
+        for row in latest_rows
+        if _cat4_identity_key(str(row.raw_name or "")) and row.average_percent is not None
+    }
+    previous_by_identity = {
+        _cat4_identity_key(str(row.raw_name or "")): row
         for row in previous_rows
-        if row.student_id and row.average_percent is not None
+        if _cat4_identity_key(str(row.raw_name or "")) and row.average_percent is not None
     }
 
     latest_percentiles = _build_percentile_map(
-        [(student_id, float(row.average_percent)) for student_id, row in latest_by_student.items()]
+        [(identity_key, float(row.average_percent)) for identity_key, row in latest_by_identity.items()]
     )
     previous_percentiles = _build_percentile_map(
-        [(student_id, float(row.average_percent)) for student_id, row in previous_by_student.items()]
+        [(identity_key, float(row.average_percent)) for identity_key, row in previous_by_identity.items()]
     )
 
-    matched_student_ids = sorted(set(baseline_by_student.keys()) & set(latest_by_student.keys()))
+    matched_identity_keys = sorted(set(baseline_by_identity.keys()) & set(latest_by_identity.keys()))
     matched_students: list[dict[str, Any]] = []
 
     domain_baseline_maps = {
-        "verbal_domain_score": _build_percentile_map([(student_id, float(row.verbal_sas)) for student_id, row in baseline_by_student.items() if row.verbal_sas is not None]),
-        "quantitative_domain_score": _build_percentile_map([(student_id, float(row.quantitative_sas)) for student_id, row in baseline_by_student.items() if row.quantitative_sas is not None]),
-        "non_verbal_domain_score": _build_percentile_map([(student_id, float(row.non_verbal_sas)) for student_id, row in baseline_by_student.items() if row.non_verbal_sas is not None]),
-        "spatial_domain_score": _build_percentile_map([(student_id, float(row.spatial_sas)) for student_id, row in baseline_by_student.items() if row.spatial_sas is not None]),
+        "verbal_domain_score": _build_percentile_map([(identity_key, float(row.verbal_sas)) for identity_key, row in baseline_by_identity.items() if row.verbal_sas is not None]),
+        "quantitative_domain_score": _build_percentile_map([(identity_key, float(row.quantitative_sas)) for identity_key, row in baseline_by_identity.items() if row.quantitative_sas is not None]),
+        "non_verbal_domain_score": _build_percentile_map([(identity_key, float(row.non_verbal_sas)) for identity_key, row in baseline_by_identity.items() if row.non_verbal_sas is not None]),
+        "spatial_domain_score": _build_percentile_map([(identity_key, float(row.spatial_sas)) for identity_key, row in baseline_by_identity.items() if row.spatial_sas is not None]),
     }
     domain_term_maps = {
-        "verbal_domain_score": _build_percentile_map([(student_id, float(row.verbal_domain_score)) for student_id, row in latest_by_student.items() if row.verbal_domain_score is not None]),
-        "quantitative_domain_score": _build_percentile_map([(student_id, float(row.quantitative_domain_score)) for student_id, row in latest_by_student.items() if row.quantitative_domain_score is not None]),
-        "non_verbal_domain_score": _build_percentile_map([(student_id, float(row.non_verbal_domain_score)) for student_id, row in latest_by_student.items() if row.non_verbal_domain_score is not None]),
-        "spatial_domain_score": _build_percentile_map([(student_id, float(row.spatial_domain_score)) for student_id, row in latest_by_student.items() if row.spatial_domain_score is not None]),
+        "verbal_domain_score": _build_percentile_map([(identity_key, float(row.verbal_domain_score)) for identity_key, row in latest_by_identity.items() if row.verbal_domain_score is not None]),
+        "quantitative_domain_score": _build_percentile_map([(identity_key, float(row.quantitative_domain_score)) for identity_key, row in latest_by_identity.items() if row.quantitative_domain_score is not None]),
+        "non_verbal_domain_score": _build_percentile_map([(identity_key, float(row.non_verbal_domain_score)) for identity_key, row in latest_by_identity.items() if row.non_verbal_domain_score is not None]),
+        "spatial_domain_score": _build_percentile_map([(identity_key, float(row.spatial_domain_score)) for identity_key, row in latest_by_identity.items() if row.spatial_domain_score is not None]),
     }
     domain_labels = {
         "verbal_domain_score": "Verbal",
@@ -3181,21 +3291,21 @@ def _build_cat4_report_payload(
         "spatial_domain_score": "Spatial",
     }
 
-    for student_id in matched_student_ids:
-        baseline_row = baseline_by_student[student_id]
-        latest_row = latest_by_student[student_id]
-        previous_row = previous_by_student.get(student_id)
+    for identity_key in matched_identity_keys:
+        baseline_row = baseline_by_identity[identity_key]
+        latest_row = latest_by_identity[identity_key]
+        previous_row = previous_by_identity.get(identity_key)
 
-        latest_term_percentile = latest_percentiles.get(student_id)
-        previous_term_percentile = previous_percentiles.get(student_id)
+        latest_term_percentile = latest_percentiles.get(identity_key)
+        previous_term_percentile = previous_percentiles.get(identity_key)
         latest_average = float(latest_row.average_percent) if latest_row.average_percent is not None else None
         previous_average = float(previous_row.average_percent) if previous_row and previous_row.average_percent is not None else None
         trend_delta = round(latest_average - previous_average, 1) if latest_average is not None and previous_average is not None else None
         domain_movements: dict[str, Optional[float]] = {}
         domain_components: list[float] = []
         for domain_key, label in domain_labels.items():
-            baseline_pct = domain_baseline_maps[domain_key].get(student_id)
-            latest_pct = domain_term_maps[domain_key].get(student_id)
+            baseline_pct = domain_baseline_maps[domain_key].get(identity_key)
+            latest_pct = domain_term_maps[domain_key].get(identity_key)
             if baseline_pct is None or latest_pct is None:
                 domain_movements[label] = None
                 continue
@@ -3205,13 +3315,14 @@ def _build_cat4_report_payload(
 
         movement_score = round(sum(domain_components) / len(domain_components), 1) if domain_components else None
         value_added_delta = movement_score
+        domain_extremes = _cat4_domain_extremes(domain_movements)
 
         matched_students.append(
             {
-                "student_id": student_id,
-                "student_name": latest_row.matched_name or baseline_row.matched_name or student_name_by_id.get(student_id) or latest_row.raw_name,
+                "student_id": latest_row.student_id or baseline_row.student_id,
+                "student_name": latest_row.raw_name or baseline_row.raw_name or latest_row.matched_name or baseline_row.matched_name,
                 "profile_label": baseline_row.profile_label,
-                "baseline_percentile": round(sum(domain_baseline_maps[key].get(student_id, 0.0) for key in domain_labels if domain_baseline_maps[key].get(student_id) is not None) / max(1, sum(1 for key in domain_labels if domain_baseline_maps[key].get(student_id) is not None)), 1) if any(domain_baseline_maps[key].get(student_id) is not None for key in domain_labels) else None,
+                "baseline_percentile": round(sum(domain_baseline_maps[key].get(identity_key, 0.0) for key in domain_labels if domain_baseline_maps[key].get(identity_key) is not None) / max(1, sum(1 for key in domain_labels if domain_baseline_maps[key].get(identity_key) is not None)), 1) if any(domain_baseline_maps[key].get(identity_key) is not None for key in domain_labels) else None,
                 "latest_term_percentile": latest_term_percentile,
                 "previous_term_percentile": previous_term_percentile,
                 "value_added_delta": value_added_delta,
@@ -3220,6 +3331,8 @@ def _build_cat4_report_payload(
                 "previous_average_percent": previous_average,
                 "movement_score": movement_score,
                 "domain_movements": domain_movements,
+                **domain_extremes,
+                "cohort_key": identity_key,
                 "status": "within_expected_range",
                 "reasons": [],
             }
@@ -3231,18 +3344,19 @@ def _build_cat4_report_payload(
     )
     count = len(ranked)
     if count > 1:
-        band_size = max(1, int(round(count * 0.1)))
-        bottom_ids = {row["student_id"] for row in ranked[:band_size]}
-        top_ids = {row["student_id"] for row in ranked[-band_size:]}
+        bottom_band_size = max(1, int(math.ceil(count * 0.10)))
+        top_band_size = max(1, int(math.ceil(count * 0.05)))
+        bottom_ids = {row["cohort_key"] for row in ranked[:bottom_band_size]}
+        top_ids = {row["cohort_key"] for row in ranked[-top_band_size:]}
     else:
         bottom_ids = set()
         top_ids = set()
 
     for row in matched_students:
-        if row["student_id"] in bottom_ids:
+        if row["cohort_key"] in bottom_ids:
             row["status"] = "at_risk"
             row["reasons"] = ["Movement score is in the bottom cohort band"]
-        elif row["student_id"] in top_ids:
+        elif row["cohort_key"] in top_ids:
             row["status"] = "excelling"
             row["reasons"] = ["Movement score is in the top cohort band"]
         else:
@@ -3250,6 +3364,70 @@ def _build_cat4_report_payload(
             row["reasons"] = ["Performance is within the expected cohort range"]
 
     matched_students.sort(key=lambda row: ({"at_risk": 0, "excelling": 1, "within_expected_range": 2}.get(str(row.get("status")), 3), (row.get("student_name") or "").lower()))
+
+    movement_ranked_asc = sorted(
+        [row for row in matched_students if row.get("movement_score") is not None],
+        key=lambda row: (float(row.get("movement_score") or 0), str(row.get("student_name") or "").lower()),
+    )
+    movement_ranked_desc = list(reversed(movement_ranked_asc))
+    attainment_ranked_asc = sorted(
+        [row for row in matched_students if row.get("latest_average_percent") is not None],
+        key=lambda row: (float(row.get("latest_average_percent") or 0), str(row.get("student_name") or "").lower()),
+    )
+    attainment_ranked_desc = list(reversed(attainment_ranked_asc))
+    bottom_10_percent = attainment_ranked_asc[: max(1, int(math.ceil(len(attainment_ranked_asc) * 0.10)))] if attainment_ranked_asc else []
+    top_5_percent = attainment_ranked_desc[: max(1, int(math.ceil(len(attainment_ranked_desc) * 0.05)))] if attainment_ranked_desc else []
+    biggest_downward_movers = [row for row in movement_ranked_asc if float(row.get("movement_score") or 0) < 0][:10]
+    biggest_upward_movers = [row for row in movement_ranked_desc if float(row.get("movement_score") or 0) > 0][:10]
+
+    domain_concern_summary = []
+    for domain_key, domain_label in domain_labels.items():
+        affected = [
+            row
+            for row in matched_students
+            if row.get("primary_concern_domain") == domain_label and row.get("largest_negative_domain_delta") is not None
+        ]
+        overall_values = _cat4_all_domain_values(matched_students, domain_key, domain_label)
+        overall_average_movement = (
+            round(sum(overall_values) / len(overall_values), 1)
+            if overall_values
+            else None
+        )
+        negative_values = _cat4_negative_domain_values(matched_students, domain_key, domain_label)
+        average_negative_movement = (
+            round(sum(negative_values) / len(negative_values), 1)
+            if negative_values
+            else None
+        )
+        most_affected = sorted(
+            affected,
+            key=lambda row: (
+                float(row.get("largest_negative_domain_delta") or 0),
+                str(row.get("student_name") or "").lower(),
+            ),
+        )[:5]
+        domain_concern_summary.append(
+            {
+                "domain": domain_label,
+                "primary_concern_count": len(affected),
+                "average_movement": average_negative_movement,
+                "overall_average_movement": overall_average_movement,
+                "average_negative_movement": average_negative_movement,
+                "most_affected_students": [
+                    {
+                        "student_id": row.get("student_id"),
+                        "student_name": row.get("student_name"),
+                        "movement_score": row.get("movement_score"),
+                        "largest_negative_domain_delta": row.get("largest_negative_domain_delta"),
+                        "latest_average_percent": row.get("latest_average_percent"),
+                    }
+                    for row in most_affected
+                ],
+            }
+        )
+
+    for row in matched_students:
+        row.pop("cohort_key", None)
 
     profile_distribution = Counter(
         row.profile_label.strip()
@@ -3259,18 +3437,29 @@ def _build_cat4_report_payload(
 
     domain_commentary = []
     for domain_key, label in domain_labels.items():
-        values = [row["domain_movements"].get(label) for row in matched_students if isinstance(row.get("domain_movements"), dict)]
-        values = [float(value) for value in values if value is not None]
-        if not values:
+        overall_values = _cat4_all_domain_values(matched_students, domain_key, label)
+        negative_values = _cat4_negative_domain_values(matched_students, domain_key, label)
+        if not overall_values and not negative_values:
             continue
-        avg_delta = round(sum(values) / len(values), 1)
-        if avg_delta >= 8:
-            comment = f"{label} performance is trending clearly above CAT4 baseline expectations."
-        elif avg_delta <= -8:
-            comment = f"{label} performance is trending below CAT4 baseline expectations."
-        else:
-            comment = f"{label} performance is broadly in line with CAT4 baseline expectations."
-        domain_commentary.append({"domain": label, "average_movement": avg_delta, "commentary": comment})
+        overall_avg = round(sum(overall_values) / len(overall_values), 1) if overall_values else None
+        avg_negative = round(sum(negative_values) / len(negative_values), 1) if negative_values else None
+        comment = (
+            f"{label} shows an overall average movement of {overall_avg} and "
+            f"an average negative movement of {avg_negative} relative to CAT4 baseline."
+            if overall_avg is not None and avg_negative is not None
+            else f"{label} shows an overall average movement of {overall_avg} relative to CAT4 baseline."
+            if overall_avg is not None
+            else f"{label} shows an average negative movement of {avg_negative} relative to CAT4 baseline."
+        )
+        domain_commentary.append(
+            {
+                "domain": label,
+                "average_movement": avg_negative,
+                "overall_average_movement": overall_avg,
+                "average_negative_movement": avg_negative,
+                "commentary": comment,
+            }
+        )
 
     return {
         "feature_enabled": True,
@@ -3307,35 +3496,40 @@ def _build_cat4_report_payload(
         "excelling": [row for row in matched_students if row["status"] == "excelling"],
         "within_expected_range": [row for row in matched_students if row["status"] == "within_expected_range"],
         "all_matched_students": matched_students,
+        "bottom_10_percent": bottom_10_percent,
+        "top_5_percent": top_5_percent,
+        "biggest_downward_movers": biggest_downward_movers,
+        "biggest_upward_movers": biggest_upward_movers,
         "unmatched_cat4_rows": [
             {
                 "id": row.id,
                 "raw_name": row.raw_name,
                 "matched_name": row.matched_name,
-                "confidence_note": row.confidence_note,
+                "confidence_note": "No corresponding row found in the selected term set.",
                 "overall_sas": row.overall_sas,
                 "profile_label": row.profile_label,
             }
             for row in baseline_rows
-            if not row.student_id
+            if _cat4_identity_key(str(row.raw_name or "")) not in latest_rows_by_identity
         ],
         "unmatched_term_rows": [
             {
                 "id": row.id,
                 "raw_name": row.raw_name,
                 "matched_name": row.matched_name,
-                "confidence_note": None,
+                "confidence_note": "No corresponding CAT4 baseline row found.",
                 "average_percent": row.average_percent,
                 "subject_count": row.subject_count,
             }
             for row in latest_rows
-            if not row.student_id
+            if _cat4_identity_key(str(row.raw_name or "")) not in baseline_by_identity
         ],
         "profile_distribution": [
             {"label": label, "count": count}
             for label, count in sorted(profile_distribution.items(), key=lambda item: (-item[1], item[0].lower()))
         ],
         "domain_commentary": domain_commentary,
+        "domain_concern_summary": domain_concern_summary,
     }
 
 def get_owned_livequiz_session_or_404(
@@ -3669,6 +3863,10 @@ def _calculate_cat4_term_metrics(
     return average_percent, subject_count, domain_scores, raw_json
 
 
+def _cat4_identity_key(value: str) -> str:
+    return _normalise_student_name(value)
+
+
 def _xlsx_col_index(cell_ref: str) -> int:
     letters = "".join(ch for ch in (cell_ref or "") if ch.isalpha()).upper()
     index = 0
@@ -3966,12 +4164,12 @@ def _replace_cat4_data_from_workbook_payload(class_id: int, payload: dict[str, A
             )
 
 
-def _build_percentile_map(pairs: list[tuple[int, float]]) -> dict[int, float]:
+def _build_percentile_map(pairs: list[tuple[Any, float]]) -> dict[Any, float]:
     if not pairs:
         return {}
 
     ordered = sorted(pairs, key=lambda item: (item[1], item[0]))
-    result: dict[int, float] = {}
+    result: dict[Any, float] = {}
     n = len(ordered)
     i = 0
     while i < n:
@@ -4025,6 +4223,90 @@ def _cat4_set_summary(rows: list[Any]) -> dict[str, int]:
         "matched_count": matched,
         "unmatched_count": len(rows) - matched,
     }
+
+
+def _cat4_match_counts_for_rows(
+    baseline_rows: list[Cat4StudentBaselineModel],
+    term_rows: list[Cat4StudentTermResultModel],
+) -> dict[str, int]:
+    baseline_keys = {
+        _cat4_identity_key(str(row.raw_name or ""))
+        for row in baseline_rows
+        if _cat4_identity_key(str(row.raw_name or ""))
+    }
+    term_keys = {
+        _cat4_identity_key(str(row.raw_name or ""))
+        for row in term_rows
+        if _cat4_identity_key(str(row.raw_name or ""))
+    }
+    matched_keys = baseline_keys & term_keys
+    return {
+        "baseline_rows": len(matched_keys),
+        "baseline_unmatched": len(baseline_keys - matched_keys),
+        "term_rows": len(matched_keys),
+        "term_unmatched": len(term_keys - matched_keys),
+    }
+
+
+def _cat4_domain_extremes(domain_movements: dict[str, Optional[float]]) -> dict[str, Any]:
+    present = [(label, float(value)) for label, value in domain_movements.items() if value is not None]
+    if not present:
+        return {
+            "primary_concern_domain": None,
+            "primary_strength_domain": None,
+            "largest_negative_domain_delta": None,
+            "largest_positive_domain_delta": None,
+        }
+
+    concern_label, concern_value = min(present, key=lambda item: (item[1], item[0].lower()))
+    strength_label, strength_value = max(present, key=lambda item: (item[1], item[0].lower()))
+    return {
+        "primary_concern_domain": concern_label,
+        "primary_strength_domain": strength_label,
+        "largest_negative_domain_delta": round(concern_value, 1),
+        "largest_positive_domain_delta": round(strength_value, 1),
+    }
+
+
+def _cat4_domain_movement_value(
+    row: dict[str, Any],
+    domain_key: str,
+    domain_label: str,
+) -> Optional[float]:
+    domain_movements = row.get("domain_movements")
+    if not isinstance(domain_movements, dict):
+        return None
+
+    value = domain_movements.get(domain_label)
+    if value is None:
+        value = domain_movements.get(domain_key)
+    return float(value) if value is not None else None
+
+
+def _cat4_negative_domain_values(
+    matched_students: list[dict[str, Any]],
+    domain_key: str,
+    domain_label: str,
+) -> list[float]:
+    values = []
+    for row in matched_students:
+        value = _cat4_domain_movement_value(row, domain_key, domain_label)
+        if value is not None and value < 0:
+            values.append(float(value))
+    return values
+
+
+def _cat4_all_domain_values(
+    matched_students: list[dict[str, Any]],
+    domain_key: str,
+    domain_label: str,
+) -> list[float]:
+    values = []
+    for row in matched_students:
+        value = _cat4_domain_movement_value(row, domain_key, domain_label)
+        if value is not None:
+            values.append(float(value))
+    return values
 
 
 # =========================================================
@@ -9353,6 +9635,18 @@ def upsert_cat4_term_rows(
     }
 
 
+@app.get("/classes/{class_id}/cat4/term-entry")
+def cat4_term_entry(
+    class_id: int,
+    baseline_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    _get_owned_class_for_cat4_or_403(class_id, db, user)
+    return _build_cat4_term_entry_payload(class_id, db, baseline_id=baseline_id, term_set_id=term_set_id)
+
+
 @app.post("/classes/{class_id}/cat4/workbook/validate")
 async def validate_cat4_workbook(
     class_id: int,
@@ -9367,7 +9661,7 @@ async def validate_cat4_workbook(
         raise HTTPException(status_code=400, detail="Please upload an .xlsx workbook")
 
     try:
-        preview = _build_cat4_workbook_preview(await file.read())
+        preview = _build_cat4_workbook_preview(_read_xlsx_workbook(await file.read()))
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="The workbook file could not be opened")
     except Exception:
@@ -9477,6 +9771,24 @@ def restore_cat4_workbook_version(
     db.refresh(version)
 
     return {"ok": True, "restored_version_id": version.id, "version_number": version.version_number}
+
+
+@app.post("/classes/{class_id}/cat4/reset")
+def reset_cat4_for_class(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    _get_owned_class_for_cat4_or_403(class_id, db, user)
+
+    db.query(Cat4StudentBaselineModel).filter(Cat4StudentBaselineModel.class_id == class_id).delete()
+    db.query(Cat4StudentTermResultModel).filter(Cat4StudentTermResultModel.class_id == class_id).delete()
+    db.query(Cat4BaselineSetModel).filter(Cat4BaselineSetModel.class_id == class_id).delete()
+    db.query(Cat4TermResultSetModel).filter(Cat4TermResultSetModel.class_id == class_id).delete()
+    db.query(Cat4WorkbookVersionModel).filter(Cat4WorkbookVersionModel.class_id == class_id).delete()
+    db.commit()
+
+    return {"ok": True, "class_id": class_id, "reset": True}
 
 
 @app.post("/classes/{class_id}/cat4/baselines/{baseline_id}/reset")

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
 
-type ClassItem = { id: number; name: string; subject: string };
+type ClassItem = { id: number; name: string; subject: string; color?: string | null };
 
 type CalendarEvent = {
     id: number;
@@ -74,6 +74,22 @@ type TeacherAdminState = {
 };
 
 const DAYS: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+const MAX_BELL_PREVIEW_EVENTS = 4;
+const PLANNER_CLASS_COLOURS = [
+    { bg: "bg-emerald-500", badge: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+    { bg: "bg-teal-500", badge: "border-teal-200 bg-teal-50 text-teal-700" },
+    { bg: "bg-cyan-500", badge: "border-cyan-200 bg-cyan-50 text-cyan-700" },
+    { bg: "bg-sky-500", badge: "border-sky-200 bg-sky-50 text-sky-700" },
+    { bg: "bg-blue-500", badge: "border-blue-200 bg-blue-50 text-blue-700" },
+    { bg: "bg-indigo-500", badge: "border-indigo-200 bg-indigo-50 text-indigo-700" },
+    { bg: "bg-violet-500", badge: "border-violet-200 bg-violet-50 text-violet-700" },
+    { bg: "bg-fuchsia-500", badge: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700" },
+    { bg: "bg-rose-500", badge: "border-rose-200 bg-rose-50 text-rose-700" },
+    { bg: "bg-red-500", badge: "border-red-200 bg-red-50 text-red-700" },
+    { bg: "bg-orange-500", badge: "border-orange-200 bg-orange-50 text-orange-700" },
+    { bg: "bg-amber-400", badge: "border-amber-200 bg-amber-50 text-amber-800" },
+] as const;
+const DEFAULT_PLANNER_BADGE = "border-slate-200 bg-slate-100 text-slate-600";
 
 function pad2(n: number) {
     return String(n).padStart(2, "0");
@@ -243,6 +259,43 @@ function getPlannerSlotHeadingForDay(
     return truncateOneLine(descriptor, 24) || "FREE";
 }
 
+function plannerClassBadgeClass(classId: number | null, liveClass?: ClassItem) {
+    const configuredColour = (liveClass?.color || "").trim();
+    const configuredMatch = PLANNER_CLASS_COLOURS.find((item) => item.bg === configuredColour);
+    if (configuredMatch) return configuredMatch.badge;
+    if (typeof classId === "number" && classId > 0) {
+        return PLANNER_CLASS_COLOURS[(classId - 1) % PLANNER_CLASS_COLOURS.length]?.badge ?? DEFAULT_PLANNER_BADGE;
+    }
+    return DEFAULT_PLANNER_BADGE;
+}
+
+function getPlannerSlotMetaForDay(
+    teacherAdminState: TeacherAdminState | null,
+    classes: ClassItem[],
+    day: DayKey,
+    slotIndex: number
+) {
+    const periodSlot = periodSlotsForDay(teacherAdminState, day)[slotIndex];
+    if (!periodSlot) return { heading: "FREE", badgeClass: DEFAULT_PLANNER_BADGE };
+
+    const entry = teacherAdminState?.schedule?.[day]?.entries?.[periodSlot.id];
+    const classId = entry?.classId ?? null;
+    const liveClass =
+        typeof classId === "number" && classId > 0 ? classes.find((c) => c.id === classId) : undefined;
+
+    const descriptor = liveClass
+        ? classShortLabelFromParts(liveClass.name, liveClass.subject)
+        : entry?.classLabel?.trim()
+            ? parseStoredClassLabel(entry.classLabel)
+            : "FREE";
+    const heading = truncateOneLine(descriptor, 24) || "FREE";
+
+    return {
+        heading,
+        badgeClass: heading === "FREE" ? DEFAULT_PLANNER_BADGE : plannerClassBadgeClass(classId, liveClass),
+    };
+}
+
 async function loadPlanner(): Promise<{ notes: PlannerNote[]; tasks: TaskItem[]; settings: PlannerSettings }> {
     const data = await apiFetch("/teacher-planner");
 
@@ -331,8 +384,7 @@ export default function TeacherPlanner() {
         open: false,
         dayISO: null,
     });
-
-    const popoverRef = useRef<HTMLDivElement | null>(null);
+    const [eventsPreviewDayISO, setEventsPreviewDayISO] = useState<string | null>(null);
 
     useEffect(() => {
         apiFetch("/classes")
@@ -663,6 +715,7 @@ export default function TeacherPlanner() {
         const iso = toYMD(d);
         const evs = eventsByDay.get(iso) || [];
         const hasEvents = evs.length > 0;
+        const previewEvents = evs.slice(0, MAX_BELL_PREVIEW_EVENTS);
 
         return (
             <div className="flex items-start justify-between gap-3">
@@ -682,24 +735,72 @@ export default function TeacherPlanner() {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div
+                    className="relative flex items-center gap-2"
+                    onMouseEnter={() => {
+                        if (hasEvents) setEventsPreviewDayISO(iso);
+                    }}
+                    onMouseLeave={() => {
+                        if (eventsPreviewDayISO === iso) setEventsPreviewDayISO(null);
+                    }}
+                    onFocusCapture={() => {
+                        if (hasEvents) setEventsPreviewDayISO(iso);
+                    }}
+                    onBlurCapture={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node | null) && eventsPreviewDayISO === iso) {
+                            setEventsPreviewDayISO(null);
+                        }
+                    }}
+                >
                     {loadingEvents ? (
                         <div className="text-[11px] text-slate-400">…</div>
                     ) : (
+                        <>
                         <button
                             type="button"
-                            title={hasEvents ? "View events" : "No events"}
+                            title={hasEvents ? "Open calendar" : "No events"}
                             onClick={() => {
                                 if (!hasEvents) return;
-                                setEventsPopover({ open: true, dayISO: iso });
+                                navigate("/calendar");
                             }}
+                            aria-label={hasEvents ? `Open calendar for ${iso}` : `No events for ${iso}`}
                             className={[
-                                "mt-8 grid h-6 w-6 place-items-center rounded-full border shadow-sm",
-                                hasEvents ? "border-emerald-400 bg-white hover:bg-emerald-50" : "border-slate-200 bg-slate-50",
+                                "relative mt-8 grid h-8 w-8 place-items-center rounded-full border shadow-sm transition",
+                                hasEvents
+                                    ? "border-rose-200 bg-rose-50 text-rose-700 hover:border-rose-300 hover:bg-rose-100"
+                                    : "border-slate-200 bg-slate-50 text-slate-400",
                             ].join(" ")}
                         >
                             <span className="text-[12px] leading-none">🔔</span>
+                            {hasEvents ? <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-rose-500" /> : null}
                         </button>
+                        {hasEvents && eventsPreviewDayISO === iso ? (
+                            <div className="absolute right-0 top-10 z-30 w-72 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-[0_16px_36px_rgba(15,23,42,0.14)] backdrop-blur-xl">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">Calendar Events</div>
+                                    <div className="text-[11px] font-semibold text-slate-500">{evs.length}</div>
+                                </div>
+                                <div className="mt-2 space-y-2">
+                                    {previewEvents.map((e) => (
+                                        <div key={e.id} className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2">
+                                            <div className="truncate text-sm font-semibold text-slate-900">{e.title}</div>
+                                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                                                {!e.all_day ? <span>{fmtTime12h(e.event_date)}</span> : <span>All day</span>}
+                                                <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-semibold text-slate-600">
+                                                    {eventTypeLabel(e.event_type)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {evs.length > previewEvents.length ? (
+                                        <div className="px-1 text-[11px] font-semibold text-slate-500">
+                                            +{evs.length - previewEvents.length} more
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </div>
+                        ) : null}
+                        </>
                     )}
                 </div>
             </div>
@@ -832,7 +933,7 @@ export default function TeacherPlanner() {
                                         <div className="mt-4 grid gap-2.5">
                                             {Array.from({ length: settings.slotsPerDay }).map((_, slotIndex) => {
                                                 const note = notesByCell.get(`${dayIndex}:${slotIndex}`);
-                                                const heading = getPlannerSlotHeadingForDay(teacherAdminState, classes, dayKey, slotIndex);
+                                                const slotMeta = getPlannerSlotMetaForDay(teacherAdminState, classes, dayKey, slotIndex);
 
                                                 return (
                                                     <button
@@ -847,8 +948,15 @@ export default function TeacherPlanner() {
                                                         ].join(" ")}
                                                     >
                                                         <div className="flex min-w-0 items-start justify-between gap-2">
-                                                            <div className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                                                <span className="block w-full overflow-hidden text-ellipsis whitespace-nowrap">{heading}</span>
+                                                            <div className="min-w-0 flex-1">
+                                                                <span
+                                                                    className={[
+                                                                        "inline-flex max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide",
+                                                                        slotMeta.badgeClass,
+                                                                    ].join(" ")}
+                                                                >
+                                                                    {slotMeta.heading}
+                                                                </span>
                                                             </div>
                                                             <div className="shrink-0">
                                                                 {note ? (
@@ -889,10 +997,7 @@ export default function TeacherPlanner() {
                             onClick={() => setEventsPopover({ open: false, dayISO: null })}
                         />
                         <div className="absolute left-1/2 top-24 w-[min(620px,92vw)] -translate-x-1/2">
-                            <div
-                                ref={popoverRef}
-                                className="rounded-[30px] border border-white/70 bg-white/90 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.18)] backdrop-blur-xl"
-                            >
+                            <div className="rounded-[30px] border border-white/70 bg-white/90 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.18)] backdrop-blur-xl">
                                 <div className="flex items-center justify-between gap-3">
                                     <div>
                                         <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">Events</div>

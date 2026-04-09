@@ -61,7 +61,7 @@ type Cat4MetaPayload = {
 };
 
 type Cat4StudentReportRow = {
-  student_id: number;
+  student_id?: number | null;
   student_name: string;
   profile_label?: string | null;
   baseline_percentile?: number | null;
@@ -71,8 +71,14 @@ type Cat4StudentReportRow = {
   trend_delta?: number | null;
   latest_average_percent?: number | null;
   previous_average_percent?: number | null;
+  movement_score?: number | null;
+  primary_concern_domain?: string | null;
+  primary_strength_domain?: string | null;
+  largest_negative_domain_delta?: number | null;
+  largest_positive_domain_delta?: number | null;
   status: "at_risk" | "excelling" | "within_expected_range";
   reasons: string[];
+  domain_movements?: Record<string, number | null>;
 };
 
 type Cat4ReportPayload = {
@@ -85,6 +91,10 @@ type Cat4ReportPayload = {
   excelling: Cat4StudentReportRow[];
   within_expected_range: Cat4StudentReportRow[];
   all_matched_students: Cat4StudentReportRow[];
+  bottom_10_percent?: Cat4StudentReportRow[];
+  top_5_percent?: Cat4StudentReportRow[];
+  biggest_downward_movers?: Cat4StudentReportRow[];
+  biggest_upward_movers?: Cat4StudentReportRow[];
   unmatched_cat4_rows: {
     id: number;
     raw_name: string;
@@ -101,7 +111,27 @@ type Cat4ReportPayload = {
     subject_count?: number | null;
   }[];
   profile_distribution: { label: string; count: number }[];
-  domain_commentary: { domain: string; average_movement: number; commentary: string }[];
+  domain_commentary: {
+    domain: string;
+    average_movement?: number | null;
+    overall_average_movement?: number | null;
+    average_negative_movement?: number | null;
+    commentary: string;
+  }[];
+  domain_concern_summary?: {
+    domain: string;
+    primary_concern_count: number;
+    average_movement?: number | null;
+    overall_average_movement?: number | null;
+    average_negative_movement?: number | null;
+    most_affected_students?: {
+      student_id?: number | null;
+      student_name: string;
+      movement_score?: number | null;
+      largest_negative_domain_delta?: number | null;
+      latest_average_percent?: number | null;
+    }[];
+  }[];
 };
 
 type Cat4WorkbookPreview = {
@@ -142,6 +172,24 @@ type ClassStudent = {
   active: boolean;
 };
 
+type Cat4TermEntryRow = {
+  raw_name: string;
+  matched_name?: string | null;
+  profile_label?: string | null;
+  confidence_note?: string | null;
+  average_percent?: number | null;
+  subject_count?: number | null;
+  subject_scores: Record<string, number | null>;
+  has_baseline: boolean;
+};
+
+type Cat4TermEntryPayload = {
+  feature_enabled: boolean;
+  baseline_set: { id: number; title: string; test_date?: string | null; is_locked?: boolean; locked_at?: string | null } | null;
+  term_set: { id: number; title: string; academic_year?: string | null; term_key?: string | null; created_at?: string | null } | null;
+  rows: Cat4TermEntryRow[];
+};
+
 type ImportPreviewRow = {
   raw_name: string;
   matched_name: string | null;
@@ -177,6 +225,23 @@ const CSV_HEADER_ALIASES: Record<string, string> = {
   art: "visual_art",
 };
 
+const TERM_SUBJECT_LABELS: Record<string, string> = {
+  irish: "Irish",
+  english: "English",
+  mathematics: "Maths",
+  history: "History",
+  geography: "Geog",
+  french: "French",
+  spanish: "Spanish",
+  business_studies: "Business",
+  music: "Music",
+  home_economics: "Home Ec",
+  science: "Science",
+  graphics: "Graphics",
+  learning_support: "Support",
+  visual_art: "Art",
+};
+
 function parseCsvLine(line: string): string[] {
   const values: string[] = [];
   let current = "";
@@ -207,7 +272,7 @@ function parseCsvLine(line: string): string[] {
 
 function parseDelimitedRows(raw: string): string[][] {
   return raw
-    .split(/\r?\n/)
+    .split(/\r|\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
@@ -372,11 +437,11 @@ function convertBaselineCsvToNormalizedText(raw: string) {
   const rows = maybeSkipHeader(parseCsvFileRows(raw))
     .map((parts) => [
       parts[0] || "",
-      parseOptionalInt(parts[1]) ?? "",
-      parseOptionalInt(parts[2]) ?? "",
-      parseOptionalInt(parts[3]) ?? "",
-      parseOptionalInt(parts[4]) ?? "",
-      parseOptionalInt(parts[5]) ?? "",
+      parseOptionalInt(parts[1]) || "",
+      parseOptionalInt(parts[2]) || "",
+      parseOptionalInt(parts[3]) || "",
+      parseOptionalInt(parts[4]) || "",
+      parseOptionalInt(parts[5]) || "",
       parts[6] || "",
       parts[7] || "",
     ])
@@ -397,9 +462,9 @@ function parseWideTermCsv(raw: string) {
 
   const normalizedRows = dataRows
     .map((parts) => {
-      const studentName = parts[headerMap.get("student_name") ?? 0] || "";
-      const academicYear = (parts[headerMap.get("academic_year") ?? -1] || "").trim();
-      const termKey = (parts[headerMap.get("term_key") ?? -1] || "").trim();
+      const studentName = parts[headerMap.get("student_name") || 0] || "";
+      const academicYear = (parts[headerMap.get("academic_year") || -1] || "").trim();
+      const termKey = (parts[headerMap.get("term_key") || -1] || "").trim();
       if (academicYear) academicYears.add(academicYear);
       if (termKey) termKeys.add(termKey);
 
@@ -445,13 +510,45 @@ function downloadTextFile(filename: string, contents: string) {
   URL.revokeObjectURL(url);
 }
 
+function buildEmptySubjectScores() {
+  return Object.fromEntries(TERM_SUBJECT_COLUMNS.map((subject) => [subject, null])) as Record<string, number | null>;
+}
+
+function mergeSubjectScores(value: Record<string, number | null> | null | undefined) {
+  return {
+    ...buildEmptySubjectScores(),
+    ...(value || {}),
+  };
+}
+
+function termMetricsFromSubjectScores(subjectScores: Record<string, number | null>) {
+  const values = Object.values(subjectScores).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return {
+    average_percent: values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null,
+    subject_count: values.length || null,
+  };
+}
+
+function prepareTermEntryRows(rows: Cat4TermEntryRow[]) {
+  return rows.map((row) => {
+    const subject_scores = mergeSubjectScores(row.subject_scores);
+    const metrics = termMetricsFromSubjectScores(subject_scores);
+    return {
+      ...row,
+      subject_scores,
+      average_percent: metrics.average_percent ?? row.average_percent ?? null,
+      subject_count: metrics.subject_count ?? row.subject_count ?? null,
+    };
+  });
+}
+
 function pct(value?: number | null) {
-  if (value == null || Number.isNaN(value)) return "—";
+  if (value == null || Number.isNaN(value)) return "-";
   return `${Math.round(value)}%`;
 }
 
 function signed(value?: number | null) {
-  if (value == null || Number.isNaN(value)) return "—";
+  if (value == null || Number.isNaN(value)) return "-";
   const rounded = Math.round(value);
   return rounded > 0 ? `+${rounded}` : `${rounded}`;
 }
@@ -483,15 +580,17 @@ function StudentTable({
             <th className="px-4 py-3 font-semibold">Latest</th>
             <th className="px-4 py-3 font-semibold">Previous</th>
             <th className="px-4 py-3 font-semibold">Trend</th>
+            <th className="px-4 py-3 font-semibold">Movement</th>
             <th className="px-4 py-3 font-semibold">Baseline %ile</th>
             <th className="px-4 py-3 font-semibold">Latest %ile</th>
             <th className="px-4 py-3 font-semibold">Value Added</th>
+            <th className="px-4 py-3 font-semibold">Primary Domains</th>
             <th className="px-4 py-3 font-semibold">Reasons</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200">
           {rows.map((row) => (
-            <tr key={`${row.student_id}-${row.status}`}>
+            <tr key={`${row.student_id || row.student_name}-${row.status}`}>
               <td className="px-4 py-3">
                 <div className="font-semibold text-slate-900">{row.student_name}</div>
                 {!!row.profile_label && <div className="text-xs text-slate-500">{row.profile_label}</div>}
@@ -504,14 +603,104 @@ function StudentTable({
               <td className="px-4 py-3 text-slate-900">{pct(row.latest_average_percent)}</td>
               <td className="px-4 py-3 text-slate-600">{pct(row.previous_average_percent)}</td>
               <td className="px-4 py-3 font-semibold text-slate-900">{signed(row.trend_delta)}</td>
+              <td className="px-4 py-3 font-semibold text-slate-900">{signedOneDecimal(row.movement_score || row.value_added_delta)}</td>
               <td className="px-4 py-3 text-slate-600">{pct(row.baseline_percentile)}</td>
               <td className="px-4 py-3 text-slate-600">{pct(row.latest_term_percentile)}</td>
               <td className="px-4 py-3 font-semibold text-slate-900">{signed(row.value_added_delta)}</td>
-              <td className="px-4 py-3 text-slate-600">{row.reasons.join(" • ") || "—"}</td>
+              <td className="px-4 py-3">
+                <div className="flex min-w-[220px] flex-wrap gap-2">
+                  {row.primary_concern_domain ? (
+                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(row.primary_concern_domain)}`}>
+                      Concern: {row.primary_concern_domain} {signedOneDecimal(row.largest_negative_domain_delta)}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-400">-</span>
+                  )}
+                  {row.primary_strength_domain ? (
+                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(row.primary_strength_domain)}`}>
+                      Strength: {row.primary_strength_domain} {signedOneDecimal(row.largest_positive_domain_delta)}
+                    </span>
+                  ) : null}
+                </div>
+              </td>
+              <td className="px-4 py-3 text-slate-600">{row.reasons.join(" | ") || "-"}</td>
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function signedOneDecimal(value?: number | null) {
+  if (value == null || Number.isNaN(value)) return "-";
+  const rounded = Math.round(value * 10) / 10;
+  return rounded > 0 ? `+${rounded}` : `${rounded}`;
+}
+
+function domainPillTone(domain?: string | null) {
+  const normalized = (domain || "").trim().toLowerCase();
+  if (normalized === "verbal") return "border-indigo-200 bg-indigo-50 text-indigo-800";
+  if (normalized === "quantitative") return "border-blue-200 bg-blue-50 text-blue-800";
+  if (normalized === "non-verbal") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (normalized === "spatial") return "border-amber-200 bg-amber-50 text-amber-900";
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function compactStudentInsight(row: Cat4StudentReportRow) {
+  const parts = [
+    `Latest ${pct(row.latest_average_percent)}`,
+    `Trend ${signed(row.trend_delta)}`,
+    `Movement ${signedOneDecimal(row.movement_score || row.value_added_delta)}`,
+  ];
+  if (row.primary_concern_domain) {
+    parts.push(`${row.primary_concern_domain} ${signedOneDecimal(row.largest_negative_domain_delta)}`);
+  }
+  if (row.primary_strength_domain) {
+    parts.push(`${row.primary_strength_domain} ${signedOneDecimal(row.largest_positive_domain_delta)}`);
+  }
+  return parts.join(" | ");
+}
+
+function RankedStudentCards({
+  rows,
+  empty,
+}: {
+  rows: Cat4StudentReportRow[];
+  empty: string;
+}) {
+  if (!rows.length) {
+    return <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">{empty}</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {rows.map((row, index) => (
+        <div key={`${row.student_id || row.student_name}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="font-semibold text-slate-900">{row.student_name}</div>
+              {!!row.profile_label && <div className="mt-1 text-xs text-slate-500">{row.profile_label}</div>}
+              <div className="mt-2 text-sm text-slate-600">{compactStudentInsight(row)}</div>
+            </div>
+            <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusPill(row.status)}`}>
+              {row.status.replace("_", " ")}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {row.primary_concern_domain ? (
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(row.primary_concern_domain)}`}>
+                Primary concern: {row.primary_concern_domain}
+              </span>
+            ) : null}
+            {row.primary_strength_domain ? (
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(row.primary_strength_domain)}`}>
+                Primary strength: {row.primary_strength_domain}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -542,7 +731,13 @@ export default function Cat4InsightsPage() {
   const [termRowsText, setTermRowsText] = useState("");
   const [savingBaseline, setSavingBaseline] = useState(false);
   const [savingTerm, setSavingTerm] = useState(false);
+  const [loadingTermEntry, setLoadingTermEntry] = useState(false);
+  const [savingNativeTermRows, setSavingNativeTermRows] = useState(false);
+  const [termEntryCollapsed, setTermEntryCollapsed] = useState(true);
   const [workbookPreview, setWorkbookPreview] = useState<Cat4WorkbookPreview | null>(null);
+  const [termEntryRows, setTermEntryRows] = useState<Cat4TermEntryRow[]>([]);
+  const [termEntryStatus, setTermEntryStatus] = useState<string | null>(null);
+  const [termPasteText, setTermPasteText] = useState("");
   const [validatingWorkbook, setValidatingWorkbook] = useState(false);
   const [importingWorkbook, setImportingWorkbook] = useState(false);
   const baselineCsvInputRef = useRef<HTMLInputElement | null>(null);
@@ -558,8 +753,8 @@ export default function Cat4InsightsPage() {
     if (!validClassId) return null;
     const data = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/meta`)) as Cat4MetaPayload;
     setMeta(data);
-    setSelectedBaselineId((prev) => prev || data.baseline_sets[0]?.id || "");
-    setSelectedTermSetId((prev) => prev || data.term_sets[0]?.id || "");
+    setSelectedBaselineId((prev) => (prev && data.baseline_sets.some((item) => item.id === prev) ? prev : data.baseline_sets[0]?.id || ""));
+    setSelectedTermSetId((prev) => (prev && data.term_sets.some((item) => item.id === prev) ? prev : data.term_sets[0]?.id || ""));
     return data;
   }
 
@@ -575,6 +770,27 @@ export default function Cat4InsightsPage() {
     setReport(data);
   }
 
+  async function loadTermEntry(nextBaselineId?: number | "", nextTermSetId?: number | "") {
+    if (!validClassId) return;
+    const baselineId = nextBaselineId === undefined ? selectedBaselineId : nextBaselineId;
+    const termSetId = nextTermSetId === undefined ? selectedTermSetId : nextTermSetId;
+    if (!baselineId) {
+      setTermEntryRows([]);
+      return;
+    }
+
+    setLoadingTermEntry(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("baseline_id", String(baselineId));
+      if (termSetId) params.set("term_set_id", String(termSetId));
+      const data = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/term-entry?${params.toString()}`)) as Cat4TermEntryPayload;
+      setTermEntryRows(prepareTermEntryRows(data.rows || []));
+    } finally {
+      setLoadingTermEntry(false);
+    }
+  }
+
   useEffect(() => {
     if (!validClassId) return;
     setLoading(true);
@@ -587,11 +803,13 @@ export default function Cat4InsightsPage() {
         ]);
         setStudents(Array.isArray(studentsData) ? studentsData : []);
         await loadReport(metaData?.baseline_sets[0]?.id || "", metaData?.term_sets[0]?.id || "");
+        await loadTermEntry(metaData?.baseline_sets[0]?.id || "", metaData?.term_sets[0]?.id || "");
       } catch (e: any) {
         setError(e?.message || "Failed to load CAT4 insights");
         setMeta(null);
         setReport(null);
         setStudents([]);
+        setTermEntryRows([]);
       } finally {
         setLoading(false);
       }
@@ -603,6 +821,7 @@ export default function Cat4InsightsPage() {
     if (!selectedBaselineId && !selectedTermSetId) return;
     if (!meta) return;
     void loadReport();
+    void loadTermEntry();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBaselineId, selectedTermSetId]);
 
@@ -692,6 +911,31 @@ export default function Cat4InsightsPage() {
     }
   }
 
+  async function resetCat4Data() {
+    if (!validClassId) return;
+    const confirmed = window.confirm(
+      "Reset CAT4 data for this cohort... This will remove workbook uploads, baseline sets, term sets, and generated CAT4 results for this cohort."
+    );
+    if (!confirmed) return;
+
+    setError(null);
+    try {
+      setImportingWorkbook(true);
+      await apiFetch(`${API_BASE}/classes/${classId}/cat4/reset`, {
+        method: "POST",
+      });
+      setWorkbookPreview(null);
+      setSelectedBaselineId("");
+      setSelectedTermSetId("");
+      const metaData = await loadMeta();
+      await loadReport(metaData?.baseline_sets[0]?.id || "", metaData?.term_sets[0]?.id || "");
+    } catch (e: any) {
+      setError(e?.message || "Could not reset CAT4 data");
+    } finally {
+      setImportingWorkbook(false);
+    }
+  }
+
   function exportPdfReport() {
     if (!report) return;
     const doc = new jsPDF({ unit: "pt", format: "a4" });
@@ -716,23 +960,44 @@ export default function Cat4InsightsPage() {
     writeLine("");
     report.summary_cards.forEach((item) => writeLine(`${item.label}: ${item.value}`, 12, "bold"));
     writeLine("");
+    const writeStudentSection = (title: string, rows?: Cat4StudentReportRow[]) => {
+      writeLine(title, 14, "bold");
+      (
+        rows?.length
+          ? rows
+          : [
+              {
+                student_name: "None",
+                reasons: [],
+                status: "within_expected_range" as const,
+              },
+            ]
+      ).forEach((row) =>
+        writeLine(
+          `${row.student_name} - ${compactStudentInsight(row)}${row.reasons?.length ? ` - ${row.reasons.join("; ")}` : ""}`
+        )
+      );
+      writeLine("");
+    };
+
+    writeStudentSection("Bottom 10% by Latest Attainment", report.bottom_10_percent);
+    writeStudentSection("Top 5% by Latest Attainment", report.top_5_percent);
+    writeStudentSection("Biggest Downward Movers vs CAT4 Baseline", report.biggest_downward_movers);
+    writeStudentSection("Biggest Upward Movers vs CAT4 Baseline", report.biggest_upward_movers);
+
+    writeLine("Domain Concern Summary", 14, "bold");
+    (report.domain_concern_summary?.length ? report.domain_concern_summary : [{ domain: "None", primary_concern_count: 0, most_affected_students: [] }] as any[]).forEach((item: any) => {
+      writeLine(`${item.domain}: ${item.primary_concern_count || 0} primary concerns, avg movement ${signedOneDecimal(item.average_movement)}`);
+      (item.most_affected_students || []).slice(0, 3).forEach((student: any) =>
+        writeLine(`  ${student.student_name} - latest ${pct(student.latest_average_percent)}, domain ${signedOneDecimal(student.largest_negative_domain_delta)}`)
+      );
+    });
+    writeLine("");
+
     writeLine("Domain Commentary", 14, "bold");
-    report.domain_commentary.forEach((item) => writeLine(`${item.domain}: ${item.commentary} (avg movement ${item.average_movement})`));
+    (report.domain_commentary || []).forEach((item) => writeLine(`${item.domain}: ${item.commentary} (avg movement ${item.average_movement})`));
     writeLine("");
-    writeLine("At Risk", 14, "bold");
-    (report.at_risk.length ? report.at_risk : [{ student_name: "None", reasons: [] }] as any[]).forEach((row: any) =>
-      writeLine(`${row.student_name}${row.reasons?.length ? ` - ${row.reasons.join("; ")}` : ""}`)
-    );
-    writeLine("");
-    writeLine("Excelling", 14, "bold");
-    (report.excelling.length ? report.excelling : [{ student_name: "None", reasons: [] }] as any[]).forEach((row: any) =>
-      writeLine(`${row.student_name}${row.reasons?.length ? ` - ${row.reasons.join("; ")}` : ""}`)
-    );
-    writeLine("");
-    writeLine("Within Expected Range", 14, "bold");
-    (report.within_expected_range.length ? report.within_expected_range : [{ student_name: "None", reasons: [] }] as any[]).forEach((row: any) =>
-      writeLine(`${row.student_name}${row.reasons?.length ? ` - ${row.reasons.join("; ")}` : ""}`)
-    );
+    writeStudentSection("Appendix: Full Student Comparison", report.all_matched_students);
 
     doc.save(`elume-cat4-report-class-${classId}.pdf`);
   }
@@ -781,6 +1046,7 @@ export default function Cat4InsightsPage() {
     if (!termTitle.trim()) return;
     setSavingTerm(true);
     setError(null);
+    setTermEntryStatus(null);
     try {
       const created = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/term-sets`, {
         method: "POST",
@@ -806,10 +1072,134 @@ export default function Cat4InsightsPage() {
       const metaData = await loadMeta();
       setSelectedTermSetId(created.id);
       await loadReport(selectedBaselineId || metaData?.baseline_sets[0]?.id || "", created.id);
+      await loadTermEntry(selectedBaselineId || metaData?.baseline_sets[0]?.id || "", created.id);
+      setTermEntryStatus("Term set created. You can enter results below.");
     } catch (e: any) {
       setError(e?.message || "Failed to save term results");
     } finally {
       setSavingTerm(false);
+    }
+  }
+
+  function updateTermEntryScore(rowIndex: number, subject: string, value: string) {
+    const trimmed = value.trim();
+    const numeric = trimmed === "" ? null : Number(trimmed);
+    setTermEntryRows((prev) =>
+      prev.map((row, index) => {
+        if (index !== rowIndex) return row;
+        const nextValue = trimmed === "" || numeric == null || Number.isNaN(numeric) ? null : Math.round(numeric);
+        const nextScores = {
+          ...mergeSubjectScores(row.subject_scores),
+          [subject]: nextValue,
+        };
+        const metrics = termMetricsFromSubjectScores(nextScores);
+        return {
+          ...row,
+          subject_scores: nextScores,
+          average_percent: metrics.average_percent,
+          subject_count: metrics.subject_count,
+        };
+      })
+    );
+    setTermEntryStatus(null);
+  }
+
+  function applyPastedTermResults() {
+    const raw = termPasteText.trim();
+    if (!raw) return;
+    const parsed = parseTermRows(parseWideTermCsv(raw).normalizedText);
+    if (!parsed.length) {
+      setError("Could not find any student term rows in the pasted data");
+      return;
+    }
+
+    const parsedByName = new Map(parsed.map((row) => [normaliseStudentName(row.raw_name), row]));
+    let matched = 0;
+    let added = 0;
+
+    setTermEntryRows((prev) => {
+      const next = prev.map((row) => {
+        const incoming = parsedByName.get(normaliseStudentName(row.raw_name));
+        if (!incoming) return row;
+        matched += 1;
+        const nextScores = mergeSubjectScores(
+          incoming.raw_subjects_json ? JSON.parse(String(incoming.raw_subjects_json)) : {}
+        );
+        const metrics = termMetricsFromSubjectScores(nextScores);
+        return {
+          ...row,
+          subject_scores: nextScores,
+          average_percent: metrics.average_percent ?? incoming.average_percent ?? null,
+          subject_count: metrics.subject_count ?? incoming.subject_count ?? null,
+        };
+      });
+
+      parsed.forEach((row) => {
+        const key = normaliseStudentName(row.raw_name);
+        if (!key || next.some((item) => normaliseStudentName(item.raw_name) === key)) return;
+        const nextScores = mergeSubjectScores(
+          row.raw_subjects_json ? JSON.parse(String(row.raw_subjects_json)) : {}
+        );
+        const metrics = termMetricsFromSubjectScores(nextScores);
+        next.push({
+          raw_name: row.raw_name,
+          matched_name: null,
+          profile_label: null,
+          confidence_note: "Present in the pasted term data but not in the selected CAT4 baseline.",
+          subject_scores: nextScores,
+          average_percent: metrics.average_percent ?? row.average_percent ?? null,
+          subject_count: metrics.subject_count ?? row.subject_count ?? null,
+          has_baseline: false,
+        });
+        added += 1;
+      });
+
+      return next;
+    });
+
+    setTermEntryStatus(`Applied pasted term data to ${matched} cohort rows${added ? ` and added ${added} extra term rows` : ""}.`);
+    setTermPasteText("");
+    setError(null);
+  }
+
+  async function saveNativeTermRows() {
+    if (!selectedTermSetId) {
+      setError("Create or select a term set before saving native term results");
+      return;
+    }
+
+    setSavingNativeTermRows(true);
+    setError(null);
+    setTermEntryStatus(null);
+    try {
+      const rows = termEntryRows
+        .map((row) => {
+          const subject_scores = mergeSubjectScores(row.subject_scores);
+          const subjectValues = Object.entries(subject_scores).filter(([, value]) => typeof value === "number");
+          const metrics = termMetricsFromSubjectScores(subject_scores);
+          return {
+            raw_name: row.raw_name,
+            average_percent: subjectValues.length ? metrics.average_percent : row.average_percent ?? null,
+            subject_count: subjectValues.length ? metrics.subject_count : row.subject_count ?? null,
+            raw_subjects_json: subjectValues.length
+              ? Object.fromEntries(subjectValues)
+              : null,
+          };
+        })
+        .filter((row) => row.raw_name.trim() && (row.raw_subjects_json || row.average_percent != null || row.subject_count != null));
+
+      await apiFetch(`${API_BASE}/classes/${classId}/cat4/term-sets/${selectedTermSetId}/rows`, {
+        method: "POST",
+        body: JSON.stringify({ rows }),
+      });
+      const metaData = await loadMeta();
+      await loadReport(selectedBaselineId || metaData?.baseline_sets[0]?.id || "", selectedTermSetId);
+      await loadTermEntry(selectedBaselineId || metaData?.baseline_sets[0]?.id || "", selectedTermSetId);
+      setTermEntryStatus(`Saved ${rows.length} native term result rows.`);
+    } catch (e: any) {
+      setError(e?.message || "Could not save native term results");
+    } finally {
+      setSavingNativeTermRows(false);
     }
   }
 
@@ -851,6 +1241,13 @@ export default function Cat4InsightsPage() {
               >
                 Refresh
               </button>
+              <button
+                type="button"
+                onClick={() => void resetCat4Data()}
+                className="rounded-2xl border-2 border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
+              >
+                Reset CAT4 Data
+              </button>
             </div>
           </div>
         </div>
@@ -862,7 +1259,7 @@ export default function Cat4InsightsPage() {
         )}
 
         {loading ? (
-          <div className="mt-6 text-sm text-slate-600">Loading CAT4 insights…</div>
+          <div className="mt-6 text-sm text-slate-600">Loading CAT4 insights...</div>
         ) : !meta ? (
           <div className="mt-6 rounded-3xl border-2 border-slate-200 bg-white p-6 text-sm text-slate-600">
             CAT4 Insights is not enabled for this account yet.
@@ -893,7 +1290,7 @@ export default function Cat4InsightsPage() {
                     onClick={() => workbookInputRef.current?.click()}
                     className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
                   >
-                    {validatingWorkbook || importingWorkbook ? "Uploading…" : "Upload Tracking Workbook"}
+                    {validatingWorkbook || importingWorkbook ? "Uploading..." : "Upload CAT4 Workbook (.xlsx)"}
                   </button>
                 </div>
               </div>
@@ -906,7 +1303,7 @@ export default function Cat4InsightsPage() {
                       Workbook: <span className="font-semibold text-slate-900">{workbookPreview.workbook_name}</span>
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Baseline rows: <span className="font-semibold text-slate-900">{workbookPreview.baseline_rows.length}</span> · Term sets:{" "}
+                      Baseline rows: <span className="font-semibold text-slate-900">{workbookPreview.baseline_rows.length}</span> | Term sets:{" "}
                       <span className="font-semibold text-slate-900">{workbookPreview.term_sets.length}</span>
                     </div>
                     {workbookPreview.baseline_locked && (
@@ -944,13 +1341,240 @@ export default function Cat4InsightsPage() {
                       <div className="space-y-1 pl-0">
                         {workbookPreview.term_sets.map((item) => (
                           <div key={item.title} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
-                            <span className="font-semibold text-slate-900">{item.title}</span> · {item.rows.length} rows
+                            <span className="font-semibold text-slate-900">{item.title}</span> | {item.rows.length} rows
                           </div>
                         ))}
                       </div>
                     </div>
                   </div>
                 </div>
+              )}
+            </div>
+
+            <div className={`${card} ${cardPad} mt-6`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-lg font-extrabold tracking-tight text-slate-900">Native Term Entry</div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    Keep the CAT4 baseline from the original workbook, then enter ongoing term results directly in Elume.
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900">
+                    {selectedTermSetId
+                      ? `Term: ${meta.term_sets.find((item) => item.id === selectedTermSetId)?.title || "Selected"}`
+                      : selectedBaselineId
+                        ? "Baseline cohort ready"
+                        : "Select a CAT4 baseline first"}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTermEntryCollapsed((prev) => !prev)}
+                    className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+                  >
+                    {termEntryCollapsed ? "Expand" : "Collapse"}
+                  </button>
+                </div>
+              </div>
+
+              {!meta.baseline_sets.length ? (
+                <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  A locked CAT4 baseline is needed before native term entry can begin.
+                </div>
+              ) : termEntryCollapsed ? (
+                <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  Native term entry is collapsed. Expand it when you need to edit or paste CAT4 term results.
+                </div>
+              ) : (
+                <>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                      CAT4 baseline set
+                      <select
+                        value={selectedBaselineId}
+                        onChange={(e) => setSelectedBaselineId(e.target.value ? Number(e.target.value) : "")}
+                        className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2"
+                      >
+                        {meta.baseline_sets.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.title} {item.test_date ? ` | ${item.test_date}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                      Term result set
+                      <select
+                        value={selectedTermSetId}
+                        onChange={(e) => setSelectedTermSetId(e.target.value ? Number(e.target.value) : "")}
+                        className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2"
+                      >
+                        <option value="">Select a term set</option>
+                        {meta.term_sets.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.title} {item.academic_year ? ` | ${item.academic_year}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 xl:grid-cols-[1.4fr_1fr_1fr_auto]">
+                    <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                      New term set title
+                      <input
+                        value={termTitle}
+                        onChange={(e) => setTermTitle(e.target.value)}
+                        className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2"
+                        placeholder="e.g. Christmas 2026"
+                      />
+                    </label>
+                    <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                      Academic year
+                      <input
+                        value={termAcademicYear}
+                        onChange={(e) => setTermAcademicYear(e.target.value)}
+                        className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2"
+                        placeholder="e.g. 2026/27"
+                      />
+                    </label>
+                    <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                      Term key
+                      <input
+                        value={termKey}
+                        onChange={(e) => setTermKey(e.target.value)}
+                        className="rounded-2xl border-2 border-slate-200 bg-white px-3 py-2"
+                        placeholder="e.g. christmas"
+                      />
+                    </label>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={() => void createTermSet()}
+                        disabled={savingTerm || !termTitle.trim()}
+                        className="rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {savingTerm ? "Creating..." : "Create Term Set"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm font-extrabold uppercase tracking-[0.12em] text-slate-700">Current term context</div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="rounded-2xl border border-white bg-white p-3 text-sm text-slate-600">
+                          Baseline: <span className="font-semibold text-slate-900">{meta.baseline_sets.find((item) => item.id === selectedBaselineId)?.title || "Not selected"}</span>
+                        </div>
+                        <div className="rounded-2xl border border-white bg-white p-3 text-sm text-slate-600">
+                          Term set: <span className="font-semibold text-slate-900">{meta.term_sets.find((item) => item.id === selectedTermSetId)?.title || "Create or select one"}</span>
+                        </div>
+                      </div>
+                      <div className="mt-3 text-xs leading-5 text-slate-500">
+                        The native grid below always follows the selected baseline and term.
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-extrabold uppercase tracking-[0.12em] text-slate-700">Quick paste</div>
+                          <div className="mt-1 text-sm text-slate-600">Paste a term spreadsheet block here and apply it into the native grid.</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => applyPastedTermResults()}
+                          disabled={!termPasteText.trim()}
+                          className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Apply Pasted Values
+                        </button>
+                      </div>
+                      <textarea
+                        value={termPasteText}
+                        onChange={(e) => setTermPasteText(e.target.value)}
+                        className="mt-3 min-h-[120px] w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-3 text-sm text-slate-800"
+                        placeholder="Paste student_name, academic_year, term_key, subject columns here..."
+                      />
+                    </div>
+                  </div>
+
+                  {termEntryStatus && (
+                    <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                      {termEntryStatus}
+                    </div>
+                  )}
+
+                  {!selectedTermSetId ? (
+                    <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      Create a term set to start entering native CAT4 term results.
+                    </div>
+                  ) : loadingTermEntry ? (
+                    <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      Loading native term entry grid...
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mt-4 overflow-x-auto rounded-3xl border-2 border-slate-200 bg-white">
+                        <table className="min-w-[1400px] w-full text-sm">
+                          <thead className="bg-slate-50 text-left text-slate-600">
+                            <tr>
+                              <th className="px-3 py-3 font-semibold">Student</th>
+                              <th className="px-3 py-3 font-semibold">Profile</th>
+                              {TERM_SUBJECT_COLUMNS.map((subject) => (
+                                <th key={subject} className="px-3 py-3 font-semibold">
+                                  {TERM_SUBJECT_LABELS[subject] || subject}
+                                </th>
+                              ))}
+                              <th className="px-3 py-3 font-semibold">Avg</th>
+                              <th className="px-3 py-3 font-semibold">Count</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200">
+                            {termEntryRows.map((row, rowIndex) => (
+                              <tr key={`${row.raw_name}-${rowIndex}`}>
+                                <td className="px-3 py-3">
+                                  <div className="font-semibold text-slate-900">{row.raw_name}</div>
+                                  {!row.has_baseline && <div className="mt-1 text-xs text-amber-800">Extra term row</div>}
+                                  {!!row.confidence_note && <div className="mt-1 text-xs text-slate-500">{row.confidence_note}</div>}
+                                </td>
+                                <td className="px-3 py-3 text-slate-600">{row.profile_label || "-"}</td>
+                                {TERM_SUBJECT_COLUMNS.map((subject) => (
+                                  <td key={`${row.raw_name}-${subject}`} className="px-2 py-2">
+                                    <input
+                                      value={row.subject_scores?.[subject] ?? ""}
+                                      onChange={(e) => updateTermEntryScore(rowIndex, subject, e.target.value)}
+                                      inputMode="numeric"
+                                      className="w-20 rounded-xl border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"
+                                      placeholder="-"
+                                    />
+                                  </td>
+                                ))}
+                                <td className="px-3 py-3 font-semibold text-slate-900">{pct(row.average_percent)}</td>
+                                <td className="px-3 py-3 text-slate-600">{row.subject_count || "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-sm text-slate-600">
+                          {termEntryRows.length} cohort row{termEntryRows.length === 1 ? "" : "s"} loaded for native term entry.
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void saveNativeTermRows()}
+                          disabled={savingNativeTermRows}
+                          className="rounded-2xl border-2 border-emerald-700 bg-emerald-700 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {savingNativeTermRows ? "Saving..." : "Save Native Term Results"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </>
               )}
             </div>
 
@@ -961,6 +1585,42 @@ export default function Cat4InsightsPage() {
                   <div className="mt-2 text-4xl font-extrabold tracking-tight text-slate-900">{cardItem.value}</div>
                 </div>
               ))}
+            </div>
+
+            <div className="mt-6 grid gap-4 xl:grid-cols-2">
+              <div className={`${card} ${cardPad}`}>
+                <div className="text-lg font-extrabold tracking-tight text-slate-900">Bottom 10%</div>
+                <div className="mt-1 text-sm text-slate-600">Students with the lowest latest overall attainment across the selected term results.</div>
+                <div className="mt-4">
+                  <RankedStudentCards rows={report?.bottom_10_percent || []} empty="No bottom 10% cohort section is available yet." />
+                </div>
+              </div>
+
+              <div className={`${card} ${cardPad}`}>
+                <div className="text-lg font-extrabold tracking-tight text-slate-900">Top 5%</div>
+                <div className="mt-1 text-sm text-slate-600">Students with the highest latest overall attainment across the selected term results.</div>
+                <div className="mt-4">
+                  <RankedStudentCards rows={report?.top_5_percent || []} empty="No top 5% cohort section is available yet." />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 xl:grid-cols-2">
+              <div className={`${card} ${cardPad}`}>
+                <div className="text-lg font-extrabold tracking-tight text-slate-900">Biggest Downward Movers</div>
+                <div className="mt-1 text-sm text-slate-600">Students showing the sharpest negative CAT4-relative movement, with the key domain driving concern.</div>
+                <div className="mt-4">
+                  <RankedStudentCards rows={report?.biggest_downward_movers || []} empty="No downward movement section is available yet." />
+                </div>
+              </div>
+
+              <div className={`${card} ${cardPad}`}>
+                <div className="text-lg font-extrabold tracking-tight text-slate-900">Biggest Upward Movers</div>
+                <div className="mt-1 text-sm text-slate-600">Students showing the strongest positive CAT4-relative movement, with the domain of greatest strength.</div>
+                <div className="mt-4">
+                  <RankedStudentCards rows={report?.biggest_upward_movers || []} empty="No upward movement section is available yet." />
+                </div>
+              </div>
             </div>
 
             <div className="mt-6 grid gap-4 xl:grid-cols-2">
@@ -982,18 +1642,18 @@ export default function Cat4InsightsPage() {
                     Active workbook: <span className="font-semibold text-slate-900">{meta.active_workbook?.workbook_name || "None"}</span>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                    Version: <span className="font-semibold text-slate-900">{meta.active_workbook?.version_number ?? "—"}</span>
+                    Version: <span className="font-semibold text-slate-900">{meta.active_workbook?.version_number || "-"}</span>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                     Term sheets detected: <span className="font-semibold text-slate-900">{meta.active_workbook?.validation_summary?.term_sheet_names?.length || 0}</span>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                    Matched students: <span className="font-semibold text-slate-900">{meta.active_workbook?.validation_summary?.matched_student_count ?? 0}</span>
+                    Matched students: <span className="font-semibold text-slate-900">{meta.active_workbook?.validation_summary?.matched_student_count || 0}</span>
                   </div>
                 </div>
                 {!!meta.active_workbook?.validation_summary?.warnings?.length && (
                   <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                    Warnings: {meta.active_workbook.validation_summary.warnings.join(" • ")}
+                    Warnings: {meta.active_workbook.validation_summary.warnings.join(" | ")}
                   </div>
                 )}
 
@@ -1007,7 +1667,7 @@ export default function Cat4InsightsPage() {
                     >
                       {meta.baseline_sets.map((item) => (
                         <option key={item.id} value={item.id}>
-                          {item.title} {item.test_date ? `• ${item.test_date}` : ""}
+                          {item.title} {item.test_date ? ` | ${item.test_date}` : ""}
                         </option>
                       ))}
                     </select>
@@ -1022,7 +1682,7 @@ export default function Cat4InsightsPage() {
                     >
                       {meta.term_sets.map((item) => (
                         <option key={item.id} value={item.id}>
-                          {item.title} {item.academic_year ? `• ${item.academic_year}` : ""}
+                          {item.title} {item.academic_year ? ` | ${item.academic_year}` : ""}
                         </option>
                       ))}
                     </select>
@@ -1031,11 +1691,11 @@ export default function Cat4InsightsPage() {
 
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                    Baseline matched: <span className="font-semibold text-slate-900">{meta.matched_counts.baseline_rows}</span> · Unmatched:{" "}
+                    Baseline matched: <span className="font-semibold text-slate-900">{meta.matched_counts.baseline_rows}</span> | Unmatched:{" "}
                     <span className="font-semibold text-slate-900">{meta.matched_counts.baseline_unmatched}</span>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                    Term matched: <span className="font-semibold text-slate-900">{meta.matched_counts.term_rows}</span> · Unmatched:{" "}
+                    Term matched: <span className="font-semibold text-slate-900">{meta.matched_counts.term_rows}</span> | Unmatched:{" "}
                     <span className="font-semibold text-slate-900">{meta.matched_counts.term_unmatched}</span>
                   </div>
                 </div>
@@ -1051,17 +1711,17 @@ export default function Cat4InsightsPage() {
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <div className="text-sm font-semibold text-slate-900">
-                              Version {item.version_number} {item.is_active ? "• Active" : ""}
+                              Version {item.version_number} {item.is_active ? " | Active" : ""}
                             </div>
                             <div className="mt-1 text-xs text-slate-600">
-                              {item.workbook_name} • {item.uploaded_at ? item.uploaded_at.slice(0, 16).replace("T", " ") : "Unknown time"} • {item.uploaded_by_email}
+                              {item.workbook_name} | {item.uploaded_at ? item.uploaded_at.slice(0, 16).replace("T", " ") : "Unknown time"} | {item.uploaded_by_email}
                             </div>
                             <div className="mt-2 text-sm text-slate-700">
-                              Baseline {item.validation_summary?.baseline_locked ? "locked" : "not locked"} • Term sheets {item.validation_summary?.term_sheet_names?.length || 0} • Matched {item.validation_summary?.matched_student_count || 0}
+                              Baseline {item.validation_summary?.baseline_locked ? "locked" : "not locked"} | Term sheets {item.validation_summary?.term_sheet_names?.length || 0} | Matched {item.validation_summary?.matched_student_count || 0}
                             </div>
                             {!!item.validation_summary?.warnings?.length && (
                               <div className="mt-1 text-xs text-amber-800">
-                                Warnings: {item.validation_summary.warnings.join(" • ")}
+                                Warnings: {item.validation_summary.warnings.join(" | ")}
                               </div>
                             )}
                           </div>
@@ -1130,15 +1790,59 @@ export default function Cat4InsightsPage() {
 
             <div className="mt-6 space-y-6">
               <div className={`${card} ${cardPad}`}>
+                <div className="text-lg font-extrabold tracking-tight text-slate-900">Domain Concern Summary</div>
+                <div className="mt-1 text-sm text-slate-600">Shows which CAT4 domains are driving concern across the cohort and who is most affected in each one.</div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {(report?.domain_concern_summary || []).length ? (
+                    report?.domain_concern_summary?.map((item) => (
+                      <div key={item.domain} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-semibold text-slate-900">{item.domain}</div>
+                          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(item.domain)}`}>
+                            {item.primary_concern_count} primary concerns
+                          </span>
+                        </div>
+                        <div className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          Overall Avg Movement {signedOneDecimal(item.overall_average_movement)}
+                        </div>
+                        <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          Average Downward Movement {signedOneDecimal(item.average_negative_movement ?? item.average_movement)}
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {(item.most_affected_students || []).length ? (
+                            item.most_affected_students?.slice(0, 3).map((student, index) => (
+                              <div key={`${item.domain}-${student.student_name}-${index}`} className="rounded-xl border border-white bg-white px-3 py-2 text-sm text-slate-700">
+                                <span className="font-semibold text-slate-900">{student.student_name}</span>
+                                <span className="ml-2">Latest {pct(student.latest_average_percent)} | Domain {signedOneDecimal(student.largest_negative_domain_delta)}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-sm text-slate-500">No students are currently clustered here.</div>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      Domain concern summary will appear once a locked baseline and a structured term upload are available.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className={`${card} ${cardPad}`}>
                 <div className="text-lg font-extrabold tracking-tight text-slate-900">Domain Commentary</div>
-                <div className="mt-1 text-sm text-slate-600">Class-level commentary from the structured CAT4 domain movement calculations.</div>
+                <div className="mt-1 text-sm text-slate-600">Supporting commentary from the structured CAT4 domain movement calculations.</div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   {(report?.domain_commentary || []).length ? (
                     report?.domain_commentary.map((item) => (
                       <div key={item.domain} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                         <div className="text-sm font-semibold text-slate-900">{item.domain}</div>
                         <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          Avg movement {item.average_movement}
+                          Overall Avg Movement {signedOneDecimal(item.overall_average_movement)}
+                        </div>
+                        <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          Average Downward Movement {signedOneDecimal(item.average_negative_movement ?? item.average_movement)}
                         </div>
                         <div className="mt-2 text-sm text-slate-700">{item.commentary}</div>
                       </div>
