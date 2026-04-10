@@ -8313,7 +8313,6 @@ def upload_note(
         topic_id=topic_id,
         filename=safe_name,
         stored_path=str(dest_path),
-        size_bytes=incoming_size_bytes,
     )
     db.add(n)
     _increase_storage_used(user, incoming_size_bytes)

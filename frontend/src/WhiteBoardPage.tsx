@@ -3642,14 +3642,14 @@ export default function WhiteBoardPage() {
             <div className="mx-2 h-6 w-px bg-slate-200" />
 
             <div className="flex items-center gap-2">
-              {(tool === "pen" ? PEN_SIZES : ERASER_SIZES).map((s) => (
+              {(tool === "eraser" ? ERASER_SIZES : PEN_SIZES).map((s) => (
                 <DotSizeButton
                   key={s}
                   value={s}
-                  active={tool === "pen" ? penSize === s : eraserSize === s}
+                  active={tool === "eraser" ? eraserSize === s : penSize === s}
                   onClick={() => {
-                    if (tool === "pen") setPenSize(s);
-                    else setEraserSize(s);
+                    if (tool === "eraser") setEraserSize(s);
+                    else setPenSize(s);
                   }}
                 />
               ))}
