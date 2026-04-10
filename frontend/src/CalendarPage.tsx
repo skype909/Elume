@@ -533,6 +533,17 @@ export default function CalendarPage() {
                 </button>
               </div>
 
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={() => navigate(`/planner`)}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-[22px] border border-emerald-200 bg-emerald-50/85 px-4 py-3.5 text-base font-bold text-emerald-900 shadow-sm transition hover:bg-white"
+                >
+                  <span className="text-lg leading-none">🗂️</span>
+                  <span>↻ Planner</span>
+                </button>
+              </div>
+
               {filterMode === "class" && (
                 <div className="mt-3">
                   <label className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
@@ -565,6 +576,15 @@ export default function CalendarPage() {
                   <div className="mt-1 text-sm text-slate-600">
                     Events here are linked directly to this class.
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/planner`)}
+                    className="mt-4 inline-flex items-center gap-2 rounded-[22px] border border-emerald-200 bg-white/85 px-4 py-2.5 text-sm font-bold text-emerald-900 transition hover:bg-white"
+                  >
+                    <span className="text-base leading-none">🗂️</span>
+                    <span>↻ Planner</span>
+                  </button>
                 </div>
 
                 <button

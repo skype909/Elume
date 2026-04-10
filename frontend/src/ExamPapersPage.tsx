@@ -8,6 +8,7 @@ import {
   type ExamLibraryItem,
   type ExamLibrarySubject,
   examLibraryLevelOptions,
+  examLibrarySubjectOptions,
   normalizeExamLibrarySubject,
 } from "./examLibrary";
 
@@ -252,6 +253,13 @@ export default function ExamPapersPage() {
       setLibraryLevel(allowed[0]);
     }
   }, [libraryCycle, libraryLevel]);
+
+  useEffect(() => {
+    const allowedSubjects = examLibrarySubjectOptions(libraryCycle);
+    if (!allowedSubjects.includes(librarySubject)) {
+      setLibrarySubject(allowedSubjects[0]);
+    }
+  }, [libraryCycle, librarySubject]);
 
   useEffect(() => {
     if (!Number.isFinite(classId) || classId <= 0) return;
@@ -513,23 +521,6 @@ export default function ExamPapersPage() {
           <div className="mt-6 grid gap-3 md:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">
-                Subject
-              </label>
-              <select
-                className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                value={librarySubject}
-                onChange={(e) => setLibrarySubject(normalizeExamLibrarySubject(e.target.value))}
-              >
-                {EXAM_LIBRARY_SUBJECTS.map((subject) => (
-                  <option key={subject} value={subject}>
-                    {subject}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">
                 Cycle
               </label>
               <select
@@ -540,6 +531,23 @@ export default function ExamPapersPage() {
                 {EXAM_LIBRARY_CYCLES.map((cycle) => (
                   <option key={cycle} value={cycle}>
                     {cycle}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">
+                Subject
+              </label>
+              <select
+                className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                value={librarySubject}
+                onChange={(e) => setLibrarySubject(normalizeExamLibrarySubject(e.target.value))}
+              >
+                {examLibrarySubjectOptions(libraryCycle).map((subject) => (
+                  <option key={subject} value={subject}>
+                    {subject}
                   </option>
                 ))}
               </select>

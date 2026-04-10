@@ -843,7 +843,8 @@ export default function TeacherPlanner() {
             <div className="relative z-10 mx-auto max-w-7xl px-4 pb-16 pt-8">
                 <div className="mb-4 rounded-[28px] border border-white/70 bg-white/80 px-5 py-4 shadow-sm backdrop-blur-xl">
                     <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                        <div>
+                        <div className="flex min-w-0 flex-1 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
                             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200/70 bg-emerald-50/80 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-800 shadow-sm">
                                 <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
                                 Weekly planning workspace
@@ -854,6 +855,18 @@ export default function TeacherPlanner() {
                             <p className="mt-1 text-sm text-slate-600">
                                 Weekly diary + tasks for your teaching week. Plan by timetable slot so you can see each class at a glance.
                             </p>
+                            </div>
+
+                            <div className="flex lg:flex-1 lg:justify-center">
+                                <button
+                                    onClick={() => navigate(`/calendar`)}
+                                    className="inline-flex items-center gap-2 rounded-[22px] border border-emerald-200/80 bg-emerald-50/85 px-6 py-3.5 text-base font-bold text-emerald-900 shadow-sm transition hover:-translate-y-0.5 hover:bg-white hover:shadow-md"
+                                    type="button"
+                                >
+                                    <span className="text-lg leading-none">📅</span>
+                                    <span>↺ Calendar</span>
+                                </button>
+                            </div>
                         </div>
 
                         <div className="flex w-full flex-col gap-3 lg:w-auto lg:min-w-[220px] lg:items-stretch">
