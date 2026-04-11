@@ -194,9 +194,7 @@ export default function ExamPapersPage() {
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [libraryCycle, setLibraryCycle] = useState<string>(EXAM_LIBRARY_CYCLES[1]);
   const [librarySubject, setLibrarySubject] = useState<ExamLibrarySubject>("Maths");
-  const [libraryLevel, setLibraryLevel] = useState<string>(
-    examLibraryLevelOptions(EXAM_LIBRARY_CYCLES[1])[0]
-  );
+  const [libraryLevel, setLibraryLevel] = useState<string>("");
 
   const [activeCategory, setActiveCategory] = useState<CategoryKey>("mock");
   const [activeDocType, setActiveDocType] = useState<DocTypeKey>("papers");
@@ -249,8 +247,8 @@ export default function ExamPapersPage() {
 
   useEffect(() => {
     const allowed = examLibraryLevelOptions(libraryCycle);
-    if (!allowed.includes(libraryLevel)) {
-      setLibraryLevel(allowed[0]);
+    if (libraryLevel && !allowed.includes(libraryLevel)) {
+      setLibraryLevel("");
     }
   }, [libraryCycle, libraryLevel]);
 
@@ -562,6 +560,7 @@ export default function ExamPapersPage() {
                 value={libraryLevel}
                 onChange={(e) => setLibraryLevel(e.target.value)}
               >
+                <option value="">All levels</option>
                 {examLibraryLevelOptions(libraryCycle).map((level) => (
                   <option key={level} value={level}>
                     {level}

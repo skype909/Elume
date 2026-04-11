@@ -7,6 +7,7 @@ import {
   type ExamLibraryItem,
   type ExamLibrarySubject,
   examLibraryLevelOptions,
+  examLibrarySubjectOptions,
   normalizeExamLibrarySubject,
 } from "./examLibrary";
 
@@ -15,6 +16,7 @@ const API_BASE = "/api";
 function resolveFileUrl(u: string) {
   if (!u) return "";
   if (u.startsWith("http://") || u.startsWith("https://")) return u;
+  if (u.startsWith("/resources/")) return u;
   if (u.startsWith("/api/")) return u;
   if (u.startsWith("/")) return `${API_BASE}${u}`;
   return `${API_BASE}/${u}`;
@@ -50,9 +52,10 @@ const ERASER_SIZES = [10, 24, 40];
 const VISIBLE_RESIZE_HANDLE_SIZE = 14;
 const RESIZE_HIT_SIZE = 28;
 
-function formatKindLabel(kind: "notes" | "exam" | "exam-library") {
+function formatKindLabel(kind: "notes" | "exam" | "exam-library" | "formula-booklet") {
   if (kind === "notes") return "Notes";
   if (kind === "exam") return "Exam Papers";
+  if (kind === "formula-booklet") return "Formula Booklet";
   return "Exam Library";
 }
 
@@ -884,8 +887,8 @@ export default function WhiteBoardPage() {
   const [preferredExamSubject, setPreferredExamSubject] = useState<ExamLibrarySubject>("Maths");
   const [examLibrarySubject, setExamLibrarySubject] = useState<ExamLibrarySubject>("Maths");
   const [examLibraryCycle, setExamLibraryCycle] = useState<string>(EXAM_LIBRARY_CYCLES[1]);
-  const [examLibraryLevel, setExamLibraryLevel] = useState<string>(examLibraryLevelOptions(EXAM_LIBRARY_CYCLES[1])[0]);
-  const [importedPdf, setImportedPdf] = useState<{ kind: "notes" | "exam" | "exam-library"; item: NoteItem | SharedExamImportItem } | null>(null);
+  const [examLibraryLevel, setExamLibraryLevel] = useState<string>("");
+  const [importedPdf, setImportedPdf] = useState<{ kind: "notes" | "exam" | "exam-library" | "formula-booklet"; item: NoteItem | SharedExamImportItem } | null>(null);
   const [showPdfPanel, setShowPdfPanel] = useState(true);
 
   // Insert PDF as image controls
@@ -2832,16 +2835,41 @@ export default function WhiteBoardPage() {
 
   useEffect(() => {
     const allowed = examLibraryLevelOptions(examLibraryCycle);
-    if (!allowed.includes(examLibraryLevel)) {
-      setExamLibraryLevel(allowed[0]);
+    if (examLibraryLevel && !allowed.includes(examLibraryLevel)) {
+      setExamLibraryLevel("");
     }
   }, [examLibraryCycle, examLibraryLevel]);
+
+  useEffect(() => {
+    const allowedSubjects = examLibrarySubjectOptions(examLibraryCycle);
+    if (!allowedSubjects.includes(examLibrarySubject)) {
+      setExamLibrarySubject(allowedSubjects[0]);
+    }
+  }, [examLibraryCycle, examLibrarySubject]);
 
   useEffect(() => {
     if (!showImportModal || importSource !== "exam-library") return;
     void loadExamLibraryList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showImportModal, importSource, examLibrarySubject, examLibraryCycle, examLibraryLevel]);
+
+  function openFormulaBooklet() {
+    setImportedPdf({
+      kind: "formula-booklet",
+      item: {
+        id: "formula-booklet",
+        filename: "Formulae & Tables",
+        file_url: "/resources/Formulae-Tables.pdf",
+        topic_name: "Formula Booklet",
+        cycle: "",
+        subject: "",
+        level: "",
+        year: "",
+      },
+    });
+    stabilizeBoardGeometryIfNeeded();
+    setShowPdfPanel(true);
+  }
 
   useEffect(() => {
     if (!importedPdf || !showPdfPanel) return;
@@ -3665,15 +3693,22 @@ export default function WhiteBoardPage() {
               <button type="button" className={pill} onClick={() => addPage()}>
                 + Add Page
               </button>
-              <button type="button" className={pill} onClick={() => setShowGridModal(true)}>
-                Grid
-              </button>
-              <button type="button" className={pill} onClick={() => setShowAxesModal(true)}>
-                XY Plane
-              </button>
-              <button type="button" className={pill} onClick={() => setShowCalc((s) => !s)}>
-                Calculator
-              </button>
+            <button type="button" className={pill} onClick={() => setShowGridModal(true)}>
+              Grid
+            </button>
+            <button type="button" className={pill} onClick={() => setShowAxesModal(true)}>
+              XY Plane
+            </button>
+            <button
+              type="button"
+              className={pill}
+              onClick={openFormulaBooklet}
+            >
+              Formula Booklet
+            </button>
+            <button type="button" className={pill} onClick={() => setShowCalc((s) => !s)}>
+              Calculator
+            </button>
               <button
                 type="button"
                 className={pill}
@@ -4302,24 +4337,6 @@ export default function WhiteBoardPage() {
                   <>
                     <div className="mt-4 grid gap-3 md:grid-cols-3">
                       <div>
-                        <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">Subject</label>
-                        <select
-                          className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
-                          value={examLibrarySubject}
-                          onChange={(e) => setExamLibrarySubject(normalizeExamLibrarySubject(e.target.value))}
-                        >
-                          {EXAM_LIBRARY_SUBJECTS.map((subject) => (
-                            <option key={subject} value={subject}>
-                              {subject}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="mt-1 text-[11px] text-slate-500">
-                          Defaulted from this class: {preferredExamSubject}
-                        </div>
-                      </div>
-
-                      <div>
                         <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">Cycle</label>
                         <select
                           className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
@@ -4335,12 +4352,31 @@ export default function WhiteBoardPage() {
                       </div>
 
                       <div>
+                        <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">Subject</label>
+                        <select
+                          className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                          value={examLibrarySubject}
+                          onChange={(e) => setExamLibrarySubject(normalizeExamLibrarySubject(e.target.value))}
+                        >
+                          {examLibrarySubjectOptions(examLibraryCycle).map((subject) => (
+                            <option key={subject} value={subject}>
+                              {subject}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          Defaulted from this class: {preferredExamSubject}
+                        </div>
+                      </div>
+
+                      <div>
                         <label className="mb-1 block text-xs font-extrabold uppercase tracking-wide text-slate-600">Level</label>
                         <select
                           className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                           value={examLibraryLevel}
                           onChange={(e) => setExamLibraryLevel(e.target.value)}
                         >
+                          <option value="">All levels</option>
                           {examLibraryLevelOptions(examLibraryCycle).map((level) => (
                             <option key={level} value={level}>
                               {level}

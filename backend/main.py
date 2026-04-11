@@ -5594,7 +5594,7 @@ def _sync_demo_note_files(class_id: int, topic_id: int, db: Session) -> None:
         source_path = source_dir / filename
         if not source_path.exists():
             logger.warning("Missing demo PDF: %s", source_path)
-            raise HTTPException(status_code=500, detail=f"Missing demo resource: {filename}")
+            continue
 
         disk_name = f"demo_{uuid.uuid4().hex}_{Path(filename).name}"
         stored_path = dest_dir / disk_name

@@ -29,7 +29,12 @@ export const SENIOR_CYCLE_SUBJECTS = [
 
 export const EXAM_LIBRARY_SUBJECTS = [
   ...JUNIOR_CYCLE_SUBJECTS,
-  ...SENIOR_CYCLE_SUBJECTS.filter((subject) => !JUNIOR_CYCLE_SUBJECTS.includes(subject as (typeof JUNIOR_CYCLE_SUBJECTS)[number])),
+  ...SENIOR_CYCLE_SUBJECTS.filter(
+    (subject) =>
+      !JUNIOR_CYCLE_SUBJECTS.includes(
+        subject as (typeof JUNIOR_CYCLE_SUBJECTS)[number]
+      )
+  ),
 ] as const;
 
 export const EXAM_LIBRARY_CYCLES = ["Junior Cycle", "Senior Cycle"] as const;
@@ -49,7 +54,9 @@ export type ExamLibraryItem = {
   file_url: string;
 };
 
-export function normalizeExamLibrarySubject(value: string | null | undefined): ExamLibrarySubject {
+export function normalizeExamLibrarySubject(
+  value: string | null | undefined
+): ExamLibrarySubject {
   const raw = String(value || "").trim().toLowerCase();
 
   if (raw === "irish") return "Irish";
@@ -68,7 +75,11 @@ export function normalizeExamLibrarySubject(value: string | null | undefined): E
   if (raw === "german") return "German";
   if (raw === "home economics" || raw === "home ec") return "Home Economics";
   if (raw === "wood technology" || raw === "wood tech") return "Wood Technology";
-  if (raw === "applied maths" || raw === "applied math" || raw === "applied mathematics") {
+  if (
+    raw === "applied maths" ||
+    raw === "applied math" ||
+    raw === "applied mathematics"
+  ) {
     return "Applied Maths";
   }
 
