@@ -3617,6 +3617,13 @@ export default function WhiteBoardPage() {
               Import PDF
             </button>
             <button
+              type="button"
+              className={pill}
+              onClick={openFormulaBooklet}
+            >
+              Formula Booklet
+            </button>
+            <button
               className={pill}
               type="button"
               onClick={() => requestLeave(`/class/${classId}`)}
@@ -3698,13 +3705,6 @@ export default function WhiteBoardPage() {
             </button>
             <button type="button" className={pill} onClick={() => setShowAxesModal(true)}>
               XY Plane
-            </button>
-            <button
-              type="button"
-              className={pill}
-              onClick={openFormulaBooklet}
-            >
-              Formula Booklet
             </button>
             <button type="button" className={pill} onClick={() => setShowCalc((s) => !s)}>
               Calculator

@@ -1354,6 +1354,9 @@ export default function TeacherAdminPage() {
                   onChange={(e) => updateProfile({ schoolName: e.target.value })}
                   placeholder="School name"
                 />
+                <div className="mt-1 text-[11px] font-medium text-slate-500">
+                  Used for branded exports and PDFs across Elume.
+                </div>
               </label>
             </div>
 

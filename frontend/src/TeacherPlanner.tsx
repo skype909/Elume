@@ -718,7 +718,7 @@ export default function TeacherPlanner() {
         const previewEvents = evs.slice(0, MAX_BELL_PREVIEW_EVENTS);
 
         return (
-            <div className="flex items-start justify-between gap-3">
+            <div className="relative z-20 flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <div className="flex items-center gap-2">
                         <div className="text-xl font-black tracking-tight text-slate-900">
@@ -736,7 +736,7 @@ export default function TeacherPlanner() {
                 </div>
 
                 <div
-                    className="relative flex items-center gap-2"
+                    className="relative z-30 flex items-center gap-2"
                     onMouseEnter={() => {
                         if (hasEvents) setEventsPreviewDayISO(iso);
                     }}
@@ -775,7 +775,7 @@ export default function TeacherPlanner() {
                             {hasEvents ? <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-rose-500" /> : null}
                         </button>
                         {hasEvents && eventsPreviewDayISO === iso ? (
-                            <div className="absolute right-0 top-10 z-30 w-72 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-[0_16px_36px_rgba(15,23,42,0.14)] backdrop-blur-xl">
+                            <div className="absolute right-0 top-10 z-50 w-72 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-[0_16px_36px_rgba(15,23,42,0.14)] backdrop-blur-xl">
                                 <div className="flex items-center justify-between gap-2">
                                     <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">Calendar Events</div>
                                     <div className="text-[11px] font-semibold text-slate-500">{evs.length}</div>

@@ -242,6 +242,13 @@ class Cat4TermResultRowInput(BaseModel):
 class Cat4TermResultRowsPayload(BaseModel):
     rows: List[Cat4TermResultRowInput]
 
+
+class Cat4StudentInterpretationRequest(BaseModel):
+    baseline_id: int
+    term_set_id: Optional[int] = None
+    student_id: Optional[int] = None
+    raw_name: str
+
 class CreateCheckoutSessionRequest(BaseModel):
     plan: str  # "monthly" | "annual"
 
@@ -3112,6 +3119,25 @@ def _build_cat4_term_entry_payload(
         .filter(Cat4StudentBaselineModel.baseline_set_id == selected_baseline.id)
         .all()
     )
+    prior_term_sets = []
+    if selected_term:
+        selected_term_order = [
+            term.id
+            for term in sorted(term_sets, key=lambda item: (item.created_at or datetime.min, item.id))
+        ]
+        if selected_term.id in selected_term_order:
+            selected_index = selected_term_order.index(selected_term.id)
+            prior_term_set_ids = selected_term_order[:selected_index]
+            prior_order_index = {term_id: index for index, term_id in enumerate(prior_term_set_ids)}
+            prior_term_sets = (
+                db.query(Cat4StudentTermResultModel)
+                .filter(Cat4StudentTermResultModel.result_set_id.in_(prior_term_set_ids))
+                .all()
+                if prior_term_set_ids
+                else []
+            )
+        else:
+            prior_term_sets = []
     term_rows = (
         db.query(Cat4StudentTermResultModel)
         .filter(Cat4StudentTermResultModel.result_set_id == selected_term.id)
@@ -3119,6 +3145,20 @@ def _build_cat4_term_entry_payload(
         if selected_term
         else []
     )
+    previous_levels_by_identity: dict[str, dict[str, str]] = {}
+    if prior_term_sets:
+        prior_term_rows_sorted = sorted(
+            prior_term_sets,
+            key=lambda item: (prior_order_index.get(item.result_set_id, -1), item.id),
+        )
+        for prior_row in prior_term_rows_sorted:
+            identity_key = _cat4_identity_key(str(prior_row.raw_name or ""))
+            if not identity_key:
+                continue
+            levels = _parse_cat4_subject_levels(prior_row.raw_subjects_json)
+            if not levels:
+                continue
+            previous_levels_by_identity.setdefault(identity_key, {}).update(levels)
 
     term_rows_by_identity = {
         _cat4_identity_key(str(row.raw_name or "")): row
@@ -3134,6 +3174,9 @@ def _build_cat4_term_entry_payload(
         term_row = term_rows_by_identity.get(identity_key)
         if term_row and identity_key:
             used_term_keys.add(identity_key)
+        subject_levels = dict(previous_levels_by_identity.get(identity_key, {}))
+        if term_row:
+            subject_levels.update(_parse_cat4_subject_levels(term_row.raw_subjects_json))
         rows.append(
             {
                 "raw_name": baseline_row.raw_name,
@@ -3143,6 +3186,7 @@ def _build_cat4_term_entry_payload(
                 "average_percent": term_row.average_percent if term_row else None,
                 "subject_count": term_row.subject_count if term_row else None,
                 "subject_scores": _parse_cat4_subject_scores(term_row.raw_subjects_json if term_row else None),
+                "subject_levels": subject_levels,
                 "has_baseline": True,
             }
         )
@@ -3151,6 +3195,8 @@ def _build_cat4_term_entry_payload(
         identity_key = _cat4_identity_key(str(term_row.raw_name or ""))
         if identity_key and identity_key in used_term_keys:
             continue
+        subject_levels = dict(previous_levels_by_identity.get(identity_key, {}))
+        subject_levels.update(_parse_cat4_subject_levels(term_row.raw_subjects_json))
         rows.append(
             {
                 "raw_name": term_row.raw_name,
@@ -3160,6 +3206,7 @@ def _build_cat4_term_entry_payload(
                 "average_percent": term_row.average_percent,
                 "subject_count": term_row.subject_count,
                 "subject_scores": _parse_cat4_subject_scores(term_row.raw_subjects_json),
+                "subject_levels": subject_levels,
                 "has_baseline": False,
             }
         )
@@ -3193,6 +3240,7 @@ def _build_cat4_report_payload(
     db: Session,
     baseline_id: Optional[int] = None,
     term_set_id: Optional[int] = None,
+    threshold_percent: Optional[int] = None,
 ) -> dict[str, Any]:
     baseline_sets = _cat4_baseline_sets_for_class(class_id, db)
     term_sets = _cat4_term_sets_for_class(class_id, db)
@@ -3212,12 +3260,20 @@ def _build_cat4_report_payload(
             "top_5_percent": [],
             "biggest_downward_movers": [],
             "biggest_upward_movers": [],
+            "biggest_attainment_improvers": [],
+            "biggest_attainment_decliners": [],
+            "discrepancy_cases": [],
+            "selected_threshold_percent": None,
             "unmatched_cat4_rows": [],
             "unmatched_term_rows": [],
             "profile_distribution": [],
             "domain_commentary": [],
             "domain_concern_summary": [],
+            "concern_distribution": [],
+            "strength_distribution": [],
         }
+
+    threshold_value = threshold_percent if threshold_percent in {5, 10, 15} else None
 
     selected_baseline = next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]) if baseline_id else baseline_sets[0]
     selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_set_id else term_sets[0]
@@ -3295,11 +3351,62 @@ def _build_cat4_report_payload(
         baseline_row = baseline_by_identity[identity_key]
         latest_row = latest_by_identity[identity_key]
         previous_row = previous_by_identity.get(identity_key)
+        latest_average = float(latest_row.average_percent) if latest_row.average_percent is not None else None
+        previous_average = float(previous_row.average_percent) if previous_row and previous_row.average_percent is not None else None
+        latest_subject_entries = _parse_cat4_subject_entries(latest_row.raw_subjects_json)
+        previous_subject_entries = _parse_cat4_subject_entries(previous_row.raw_subjects_json if previous_row else None)
+        latest_subject_scores = {
+            key: entry["score"]
+            for key, entry in latest_subject_entries.items()
+            if isinstance(entry.get("score"), int)
+        }
+        previous_subject_scores = {
+            key: entry["score"]
+            for key, entry in previous_subject_entries.items()
+            if isinstance(entry.get("score"), int)
+        }
+        latest_levels = {
+            key: level
+            for key, level in _parse_cat4_subject_levels(latest_row.raw_subjects_json).items()
+            if key in CAT4_LEVEL_SENSITIVE_SUBJECTS
+        }
+        previous_levels = {
+            key: level
+            for key, level in _parse_cat4_subject_levels(previous_row.raw_subjects_json if previous_row else None).items()
+            if key in CAT4_LEVEL_SENSITIVE_SUBJECTS
+        }
+        latest_subject_count = len(latest_subject_scores)
+        previous_subject_count = len(previous_subject_scores)
+        like_for_like_subjects = set(latest_subject_scores.keys()) & set(previous_subject_scores.keys())
+        like_for_like_subject_count = len(like_for_like_subjects)
+        current_overall_average = round(sum(latest_subject_scores.values()) / latest_subject_count, 1) if latest_subject_count else latest_average
+        previous_overall_average = round(sum(previous_subject_scores.values()) / previous_subject_count, 1) if previous_subject_count else previous_average
+        like_for_like_latest_average = _cat4_average_for_subjects(latest_subject_scores, like_for_like_subjects)
+        like_for_like_previous_average = _cat4_average_for_subjects(previous_subject_scores, like_for_like_subjects)
+        latest_expected_subjects = set(latest_subject_entries.keys())
+        previous_expected_subjects = set(previous_subject_entries.keys())
+        subject_basket_changed = latest_expected_subjects != previous_expected_subjects
+        missed_results_flag = any(
+            (
+                subject in latest_expected_subjects
+                and subject not in latest_subject_scores
+            )
+            or (
+                subject in previous_expected_subjects
+                and subject not in previous_subject_scores
+            )
+            for subject in (latest_expected_subjects | previous_expected_subjects)
+        )
+        level_change_detected = any(
+            latest_levels.get(subject) != previous_levels.get(subject)
+            for subject in CAT4_LEVEL_SENSITIVE_SUBJECTS
+            if latest_levels.get(subject) and previous_levels.get(subject)
+        )
+        confidence_label = _cat4_confidence_label(latest_subject_count, like_for_like_subject_count)
+        low_coverage_flag = confidence_label == "Low"
 
         latest_term_percentile = latest_percentiles.get(identity_key)
         previous_term_percentile = previous_percentiles.get(identity_key)
-        latest_average = float(latest_row.average_percent) if latest_row.average_percent is not None else None
-        previous_average = float(previous_row.average_percent) if previous_row and previous_row.average_percent is not None else None
         trend_delta = round(latest_average - previous_average, 1) if latest_average is not None and previous_average is not None else None
         domain_movements: dict[str, Optional[float]] = {}
         domain_components: list[float] = []
@@ -3316,6 +3423,10 @@ def _build_cat4_report_payload(
         movement_score = round(sum(domain_components) / len(domain_components), 1) if domain_components else None
         value_added_delta = movement_score
         domain_extremes = _cat4_domain_extremes(domain_movements)
+        major_attainment_improver = trend_delta is not None and trend_delta >= 15
+        major_attainment_decliner = trend_delta is not None and trend_delta <= -15
+        recovering_toward_cat4 = bool(major_attainment_improver and movement_score is not None and movement_score < 0)
+        declining_despite_cat4_alignment = bool(major_attainment_decliner and movement_score is not None and movement_score > 0)
 
         matched_students.append(
             {
@@ -3329,7 +3440,23 @@ def _build_cat4_report_payload(
                 "trend_delta": trend_delta,
                 "latest_average_percent": latest_average,
                 "previous_average_percent": previous_average,
+                "current_overall_average": current_overall_average,
+                "previous_overall_average": previous_overall_average,
+                "like_for_like_latest_average": like_for_like_latest_average,
+                "like_for_like_previous_average": like_for_like_previous_average,
+                "latest_subject_count": latest_subject_count,
+                "previous_subject_count": previous_subject_count,
+                "like_for_like_subject_count": like_for_like_subject_count,
+                "subject_basket_changed": subject_basket_changed,
+                "low_coverage_flag": low_coverage_flag,
+                "level_change_detected": level_change_detected,
+                "missed_results_flag": missed_results_flag,
+                "comparison_confidence": confidence_label,
                 "movement_score": movement_score,
+                "major_attainment_improver": major_attainment_improver,
+                "major_attainment_decliner": major_attainment_decliner,
+                "recovering_toward_cat4": recovering_toward_cat4,
+                "declining_despite_cat4_alignment": declining_despite_cat4_alignment,
                 "domain_movements": domain_movements,
                 **domain_extremes,
                 "cohort_key": identity_key,
@@ -3370,35 +3497,106 @@ def _build_cat4_report_payload(
         key=lambda row: (float(row.get("movement_score") or 0), str(row.get("student_name") or "").lower()),
     )
     movement_ranked_desc = list(reversed(movement_ranked_asc))
+    downward_candidates = [row for row in movement_ranked_asc if float(row.get("movement_score") or 0) < 0]
+    upward_candidates = [row for row in movement_ranked_desc if float(row.get("movement_score") or 0) > 0]
     attainment_ranked_asc = sorted(
         [row for row in matched_students if row.get("latest_average_percent") is not None],
         key=lambda row: (float(row.get("latest_average_percent") or 0), str(row.get("student_name") or "").lower()),
     )
     attainment_ranked_desc = list(reversed(attainment_ranked_asc))
-    bottom_10_percent = attainment_ranked_asc[: max(1, int(math.ceil(len(attainment_ranked_asc) * 0.10)))] if attainment_ranked_asc else []
-    top_5_percent = attainment_ranked_desc[: max(1, int(math.ceil(len(attainment_ranked_desc) * 0.05)))] if attainment_ranked_desc else []
-    biggest_downward_movers = [row for row in movement_ranked_asc if float(row.get("movement_score") or 0) < 0][:10]
-    biggest_upward_movers = [row for row in movement_ranked_desc if float(row.get("movement_score") or 0) > 0][:10]
+    attainment_threshold = (threshold_value / 100.0) if threshold_value else None
+    movement_threshold = (threshold_value / 100.0) if threshold_value else None
+    bottom_10_percent = (
+        attainment_ranked_asc[: max(1, int(math.ceil(len(attainment_ranked_asc) * attainment_threshold)))]
+        if attainment_ranked_asc and attainment_threshold
+        else attainment_ranked_asc[: max(1, int(math.ceil(len(attainment_ranked_asc) * 0.10)))] if attainment_ranked_asc else []
+    )
+    top_5_percent = (
+        attainment_ranked_desc[: max(1, int(math.ceil(len(attainment_ranked_desc) * attainment_threshold)))]
+        if attainment_ranked_desc and attainment_threshold
+        else attainment_ranked_desc[: max(1, int(math.ceil(len(attainment_ranked_desc) * 0.05)))] if attainment_ranked_desc else []
+    )
+    biggest_downward_movers = (
+        downward_candidates[: max(1, int(math.ceil(len(downward_candidates) * movement_threshold)))]
+        if downward_candidates and movement_threshold
+        else downward_candidates[:10]
+    )
+    biggest_upward_movers = (
+        upward_candidates[: max(1, int(math.ceil(len(upward_candidates) * movement_threshold)))]
+        if upward_candidates and movement_threshold
+        else upward_candidates[:10]
+    )
+    trend_ranked_asc = sorted(
+        [row for row in matched_students if row.get("trend_delta") is not None],
+        key=lambda row: (float(row.get("trend_delta") or 0), str(row.get("student_name") or "").lower()),
+    )
+    trend_ranked_desc = list(reversed(trend_ranked_asc))
+    biggest_attainment_improvers = [row for row in trend_ranked_desc if float(row.get("trend_delta") or 0) > 0][:10]
+    biggest_attainment_decliners = [row for row in trend_ranked_asc if float(row.get("trend_delta") or 0) < 0][:10]
+    discrepancy_cases = []
+    for row in matched_students:
+        if row.get("recovering_toward_cat4"):
+            discrepancy_cases.append(
+                {
+                    "student_name": row.get("student_name"),
+                    "trend_delta": row.get("trend_delta"),
+                    "movement_score": row.get("movement_score"),
+                    "latest_average_percent": row.get("latest_average_percent"),
+                    "previous_average_percent": row.get("previous_average_percent"),
+                    "primary_concern_domain": row.get("primary_concern_domain"),
+                    "primary_strength_domain": row.get("primary_strength_domain"),
+                    "discrepancy_label": "Strong attainment gain but still below CAT4",
+                }
+            )
+        elif row.get("declining_despite_cat4_alignment"):
+            discrepancy_cases.append(
+                {
+                    "student_name": row.get("student_name"),
+                    "trend_delta": row.get("trend_delta"),
+                    "movement_score": row.get("movement_score"),
+                    "latest_average_percent": row.get("latest_average_percent"),
+                    "previous_average_percent": row.get("previous_average_percent"),
+                    "primary_concern_domain": row.get("primary_concern_domain"),
+                    "primary_strength_domain": row.get("primary_strength_domain"),
+                    "discrepancy_label": "Strong attainment decline but still above CAT4",
+                }
+            )
+    discrepancy_cases.sort(
+        key=lambda row: (
+            -abs(float(row.get("trend_delta") or 0)),
+            str(row.get("student_name") or "").lower(),
+        )
+    )
 
     domain_concern_summary = []
+    concern_distribution = []
+    strength_distribution = []
     for domain_key, domain_label in domain_labels.items():
         affected = [
             row
             for row in matched_students
             if row.get("primary_concern_domain") == domain_label and row.get("largest_negative_domain_delta") is not None
         ]
-        overall_values = _cat4_all_domain_values(matched_students, domain_key, domain_label)
-        overall_average_movement = (
-            round(sum(overall_values) / len(overall_values), 1)
-            if overall_values
-            else None
-        )
+        strengths = [
+            row
+            for row in matched_students
+            if row.get("primary_strength_domain") == domain_label and row.get("largest_positive_domain_delta") is not None
+        ]
+        all_values = _cat4_all_domain_values(matched_students, domain_key, domain_label)
         negative_values = _cat4_negative_domain_values(matched_students, domain_key, domain_label)
+        positive_values = _cat4_positive_domain_values(matched_students, domain_key, domain_label)
         average_negative_movement = (
             round(sum(negative_values) / len(negative_values), 1)
             if negative_values
             else None
         )
+        average_upward_movement = (
+            round(sum(positive_values) / len(positive_values), 1)
+            if positive_values
+            else None
+        )
+        movement_spread = _cat4_movement_spread(all_values)
+        movement_spread_label = _cat4_spread_label(movement_spread)
         most_affected = sorted(
             affected,
             key=lambda row: (
@@ -3406,13 +3604,19 @@ def _build_cat4_report_payload(
                 str(row.get("student_name") or "").lower(),
             ),
         )[:5]
+        concern_distribution.append({"domain": domain_label, "count": len(affected)})
+        strength_distribution.append({"domain": domain_label, "count": len(strengths)})
         domain_concern_summary.append(
             {
                 "domain": domain_label,
                 "primary_concern_count": len(affected),
+                "primary_strength_count": len(strengths),
                 "average_movement": average_negative_movement,
-                "overall_average_movement": overall_average_movement,
                 "average_negative_movement": average_negative_movement,
+                "average_downward_movement": average_negative_movement,
+                "average_upward_movement": average_upward_movement,
+                "movement_spread": movement_spread,
+                "movement_spread_label": movement_spread_label,
                 "most_affected_students": [
                     {
                         "student_id": row.get("student_id"),
@@ -3439,25 +3643,38 @@ def _build_cat4_report_payload(
     for domain_key, label in domain_labels.items():
         overall_values = _cat4_all_domain_values(matched_students, domain_key, label)
         negative_values = _cat4_negative_domain_values(matched_students, domain_key, label)
-        if not overall_values and not negative_values:
+        positive_values = _cat4_positive_domain_values(matched_students, domain_key, label)
+        concern_count = sum(1 for row in matched_students if row.get("primary_concern_domain") == label)
+        strength_count = sum(1 for row in matched_students if row.get("primary_strength_domain") == label)
+        spread = _cat4_movement_spread(overall_values)
+        spread_label = _cat4_spread_label(spread)
+        if not overall_values and not negative_values and not positive_values:
             continue
-        overall_avg = round(sum(overall_values) / len(overall_values), 1) if overall_values else None
         avg_negative = round(sum(negative_values) / len(negative_values), 1) if negative_values else None
-        comment = (
-            f"{label} shows an overall average movement of {overall_avg} and "
-            f"an average negative movement of {avg_negative} relative to CAT4 baseline."
-            if overall_avg is not None and avg_negative is not None
-            else f"{label} shows an overall average movement of {overall_avg} relative to CAT4 baseline."
-            if overall_avg is not None
-            else f"{label} shows an average negative movement of {avg_negative} relative to CAT4 baseline."
-        )
+        avg_positive = round(sum(positive_values) / len(positive_values), 1) if positive_values else None
+        comment_parts = [
+            f"{label} is the main concern for {concern_count} students and the main strength for {strength_count} students."
+        ]
+        if avg_negative is not None and avg_positive is not None:
+            comment_parts.append(
+                f"Downward movement averages {avg_negative} while upward movement averages +{avg_positive}."
+            )
+        elif avg_negative is not None:
+            comment_parts.append(f"Downward movement averages {avg_negative}.")
+        elif avg_positive is not None:
+            comment_parts.append(f"Upward movement averages +{avg_positive}.")
+        comment_parts.append(f"Movement spread is {spread_label.lower()} across the cohort.")
         domain_commentary.append(
             {
                 "domain": label,
                 "average_movement": avg_negative,
-                "overall_average_movement": overall_avg,
                 "average_negative_movement": avg_negative,
-                "commentary": comment,
+                "average_upward_movement": avg_positive,
+                "movement_spread": spread,
+                "movement_spread_label": spread_label,
+                "primary_concern_count": concern_count,
+                "primary_strength_count": strength_count,
+                "commentary": " ".join(comment_parts),
             }
         )
 
@@ -3486,6 +3703,7 @@ def _build_cat4_report_payload(
             if previous_term
             else None
         ),
+        "selected_threshold_percent": threshold_value,
         "summary_cards": [
             {"key": "matched", "label": "Matched Students", "value": len(matched_students)},
             {"key": "at_risk", "label": "At Risk", "value": sum(1 for row in matched_students if row["status"] == "at_risk")},
@@ -3500,6 +3718,9 @@ def _build_cat4_report_payload(
         "top_5_percent": top_5_percent,
         "biggest_downward_movers": biggest_downward_movers,
         "biggest_upward_movers": biggest_upward_movers,
+        "biggest_attainment_improvers": biggest_attainment_improvers,
+        "biggest_attainment_decliners": biggest_attainment_decliners,
+        "discrepancy_cases": discrepancy_cases[:10],
         "unmatched_cat4_rows": [
             {
                 "id": row.id,
@@ -3530,6 +3751,8 @@ def _build_cat4_report_payload(
         ],
         "domain_commentary": domain_commentary,
         "domain_concern_summary": domain_concern_summary,
+        "concern_distribution": concern_distribution,
+        "strength_distribution": strength_distribution,
     }
 
 def get_owned_livequiz_session_or_404(
@@ -3823,7 +4046,27 @@ def _normalise_subject_key(value: str) -> str:
     return CAT4_SUBJECT_ALIASES.get(key, key)
 
 
-def _parse_cat4_subject_scores(raw_subjects_json: Optional[str]) -> dict[str, int]:
+CAT4_LEVEL_SENSITIVE_SUBJECTS = {
+    "english",
+    "irish",
+    "mathematics",
+    "french",
+    "spanish",
+}
+
+
+def _normalise_cat4_subject_level(value: Any) -> Optional[str]:
+    text_value = _normalise_student_name(str(value or ""))
+    if not text_value:
+        return None
+    if text_value in {"higher", "higher_level", "higher level", "hl"}:
+        return "Higher"
+    if text_value in {"ordinary", "ordinary_level", "ordinary level", "ol"}:
+        return "Ordinary"
+    return None
+
+
+def _parse_cat4_subject_entries(raw_subjects_json: Optional[str]) -> dict[str, dict[str, Any]]:
     if not raw_subjects_json:
         return {}
     try:
@@ -3833,15 +4076,83 @@ def _parse_cat4_subject_scores(raw_subjects_json: Optional[str]) -> dict[str, in
     if not isinstance(parsed, dict):
         return {}
 
-    scores: dict[str, int] = {}
+    entries: dict[str, dict[str, Any]] = {}
     for raw_key, raw_value in parsed.items():
         key = _normalise_subject_key(str(raw_key))
-        try:
-            number = int(round(float(raw_value)))
-        except Exception:
+        if not key:
             continue
-        scores[key] = number
+
+        score: Optional[int] = None
+        level: Optional[str] = None
+
+        if isinstance(raw_value, dict):
+            raw_score = raw_value.get("score")
+            raw_level = raw_value.get("level")
+            try:
+                if raw_score not in (None, ""):
+                    score = int(round(float(raw_score)))
+            except Exception:
+                score = None
+            level = _normalise_cat4_subject_level(raw_level)
+        else:
+            try:
+                score = int(round(float(raw_value)))
+            except Exception:
+                score = None
+
+        if score is None and level is None:
+            continue
+        entries[key] = {"score": score, "level": level}
+    return entries
+
+
+def _parse_cat4_subject_scores(raw_subjects_json: Optional[str]) -> dict[str, int]:
+    scores: dict[str, int] = {}
+    for key, entry in _parse_cat4_subject_entries(raw_subjects_json).items():
+        score = entry.get("score")
+        if isinstance(score, int):
+            scores[key] = score
     return scores
+
+
+def _parse_cat4_subject_levels(raw_subjects_json: Optional[str]) -> dict[str, str]:
+    levels: dict[str, str] = {}
+    for key, entry in _parse_cat4_subject_entries(raw_subjects_json).items():
+        level = entry.get("level")
+        if isinstance(level, str) and level:
+            levels[key] = level
+    return levels
+
+
+def _cat4_subject_entries_to_json(entries: dict[str, dict[str, Any]]) -> Optional[str]:
+    payload: dict[str, Any] = {}
+    for subject, raw_entry in entries.items():
+        key = _normalise_subject_key(subject)
+        if not key:
+            continue
+
+        score = raw_entry.get("score")
+        level = _normalise_cat4_subject_level(raw_entry.get("level"))
+
+        if isinstance(score, bool):
+            score = None
+        if score is not None:
+            try:
+                score = int(round(float(score)))
+            except Exception:
+                score = None
+
+        if score is None and level is None:
+            continue
+
+        if key in CAT4_LEVEL_SENSITIVE_SUBJECTS:
+            payload[key] = {"score": score, "level": level}
+        elif score is not None:
+            payload[key] = score
+        elif level is not None:
+            payload[key] = {"level": level}
+
+    return _json_text_or_none(payload) if payload else None
 
 
 def _calculate_cat4_term_metrics(
@@ -3849,7 +4160,12 @@ def _calculate_cat4_term_metrics(
     fallback_average: Optional[int] = None,
     fallback_subject_count: Optional[int] = None,
 ) -> tuple[Optional[int], Optional[int], dict[str, Optional[int]], Optional[str]]:
-    subject_scores = _parse_cat4_subject_scores(raw_subjects_json)
+    subject_entries = _parse_cat4_subject_entries(raw_subjects_json)
+    subject_scores = {
+        key: entry["score"]
+        for key, entry in subject_entries.items()
+        if isinstance(entry.get("score"), int)
+    }
     values = list(subject_scores.values())
     average_percent = int(round(sum(values) / len(values))) if values else fallback_average
     subject_count = len(values) if values else fallback_subject_count
@@ -3859,8 +4175,195 @@ def _calculate_cat4_term_metrics(
         present = [subject_scores[subject] for subject in subjects if subject in subject_scores]
         domain_scores[domain_key] = int(round(sum(present) / len(present))) if present else None
 
-    raw_json = _json_text_or_none(subject_scores) if subject_scores else _json_text_or_none(raw_subjects_json)
+    raw_json = _cat4_subject_entries_to_json(subject_entries) if subject_entries else _json_text_or_none(raw_subjects_json)
     return average_percent, subject_count, domain_scores, raw_json
+
+
+def _cat4_average_for_subjects(subject_scores: dict[str, int], subjects: set[str]) -> Optional[float]:
+    values = [float(subject_scores[subject]) for subject in subjects if subject in subject_scores]
+    if not values:
+        return None
+    return round(sum(values) / len(values), 1)
+
+
+def _cat4_confidence_label(latest_subject_count: int, like_for_like_subject_count: int) -> str:
+    if latest_subject_count >= 8 and like_for_like_subject_count >= 6:
+        return "High"
+    if latest_subject_count < 5 or like_for_like_subject_count < 4:
+        return "Low"
+    return "Moderate"
+
+
+def _cat4_discrepancy_label_from_row(row: dict[str, Any]) -> Optional[str]:
+    if row.get("recovering_toward_cat4"):
+        return "Strong attainment gain but still below CAT4"
+    if row.get("declining_despite_cat4_alignment"):
+        return "Strong attainment decline but still above CAT4"
+    return None
+
+
+def _cat4_student_interpretation_facts(
+    class_id: int,
+    db: Session,
+    baseline_id: int,
+    raw_name: str,
+    student_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+) -> dict[str, Any]:
+    report = _build_cat4_report_payload(class_id, db, baseline_id=baseline_id, term_set_id=term_set_id)
+    requested_identity = _cat4_identity_key(raw_name)
+    report_rows = report.get("all_matched_students", [])
+    row = None
+    if student_id is not None:
+        row = next((item for item in report_rows if item.get("student_id") == student_id), None)
+    if row is None:
+        row = next(
+            (
+                item
+                for item in report_rows
+                if _cat4_identity_key(str(item.get("student_name") or "")) == requested_identity
+            ),
+            None,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="CAT4 student comparison not found")
+
+    discrepancy_label = row.get("discrepancy_label") or _cat4_discrepancy_label_from_row(row)
+    return {
+        "student_name": row.get("student_name"),
+        "student_id": row.get("student_id"),
+        "latest_average_percent": row.get("latest_average_percent"),
+        "previous_average_percent": row.get("previous_average_percent"),
+        "trend_delta": row.get("trend_delta"),
+        "movement_score": row.get("movement_score"),
+        "baseline_percentile": row.get("baseline_percentile"),
+        "latest_term_percentile": row.get("latest_term_percentile"),
+        "primary_concern_domain": row.get("primary_concern_domain"),
+        "primary_strength_domain": row.get("primary_strength_domain"),
+        "subject_basket_changed": bool(row.get("subject_basket_changed")),
+        "level_change_detected": bool(row.get("level_change_detected")),
+        "missed_results_flag": bool(row.get("missed_results_flag")),
+        "low_coverage_flag": bool(row.get("low_coverage_flag")),
+        "comparison_confidence": row.get("comparison_confidence"),
+        "discrepancy_label": discrepancy_label,
+        "major_attainment_improver": bool(row.get("major_attainment_improver")),
+        "major_attainment_decliner": bool(row.get("major_attainment_decliner")),
+        "recovering_toward_cat4": bool(row.get("recovering_toward_cat4")),
+        "declining_despite_cat4_alignment": bool(row.get("declining_despite_cat4_alignment")),
+    }
+
+
+def _cat4_fallback_interpretation(facts: dict[str, Any]) -> str:
+    student_name = str(facts.get("student_name") or "This student")
+    latest = facts.get("latest_average_percent")
+    previous = facts.get("previous_average_percent")
+    trend = facts.get("trend_delta")
+    movement = facts.get("movement_score")
+    confidence = facts.get("comparison_confidence")
+    discrepancy_label = facts.get("discrepancy_label")
+
+    latest_text = f"{latest}%" if latest is not None else None
+    previous_text = f"{previous}%" if previous is not None else None
+    movement_text = f"{movement:+g}" if movement is not None else None
+    trend_text = f"{trend:+g}" if trend is not None else None
+    has_discrepancy_support = latest is not None and previous is not None and movement is not None and trend is not None
+    if movement is None:
+        cat4_position = "CAT4-relative performance is mixed"
+    elif movement > 5:
+        cat4_position = "relative to CAT4, current performance appears above expectation"
+    elif movement < -5:
+        cat4_position = "relative to CAT4, current performance appears below expectation"
+    else:
+        cat4_position = "relative to CAT4, current performance appears broadly in line with expectation"
+    if trend is None:
+        trend_phrase = "recent results have changed"
+    elif trend >= 5:
+        trend_phrase = "recent results are trending upwards"
+    elif trend <= -5:
+        trend_phrase = "recent results are trending downwards"
+    else:
+        trend_phrase = "recent results are broadly stable"
+
+    if discrepancy_label == "Strong attainment gain but still below CAT4" and has_discrepancy_support:
+        first_sentence = (
+            f"{student_name} shows a strong recent improvement from "
+            f"{previous_text} to {latest_text}, but relative to CAT4, current performance still appears below expectation."
+        )
+    elif discrepancy_label == "Strong attainment decline but still above CAT4" and has_discrepancy_support:
+        first_sentence = (
+            f"{student_name} shows a notable recent decline from "
+            f"{previous_text} to {latest_text}, but relative to CAT4, current performance still appears above expectation."
+        )
+    elif trend is not None and movement is not None:
+        if latest is not None and previous is not None:
+            first_sentence = (
+                f"{student_name} is currently at {latest_text} compared with {previous_text} previously, and {trend_phrase}. "
+                f"At the same time, {cat4_position}."
+            )
+        elif latest is not None:
+            first_sentence = (
+                f"{student_name} is currently at {latest_text}, and {trend_phrase}. "
+                f"At the same time, {cat4_position}."
+            )
+        else:
+            first_sentence = (
+                f"For {student_name}, {trend_phrase}. "
+                f"At the same time, {cat4_position}."
+            )
+    elif trend is not None:
+        first_sentence = f"For {student_name}, {trend_phrase} in the current comparison."
+    elif movement is not None:
+        first_sentence = f"For {student_name}, {cat4_position} in the current comparison."
+    elif latest is not None:
+        first_sentence = f"{student_name} is currently at {latest_text} in the selected term."
+    else:
+        first_sentence = f"{student_name} has a CAT4 comparison record available, but comparison evidence is limited."
+
+    second_bits = []
+    if facts.get("primary_strength_domain"):
+        second_bits.append(f"a relative strength appears in {facts['primary_strength_domain']}")
+    if facts.get("primary_concern_domain"):
+        second_bits.append(f"a relative concern appears in {facts['primary_concern_domain']}")
+    if facts.get("baseline_percentile") is not None and facts.get("latest_term_percentile") is not None:
+        second_bits.append(
+            "current position in the cohort appears "
+            + (
+                "stronger than before"
+                if facts["latest_term_percentile"] > facts["baseline_percentile"]
+                else "weaker than before"
+                if facts["latest_term_percentile"] < facts["baseline_percentile"]
+                else "broadly similar to before"
+            )
+        )
+    second_sentence = (
+        ("; ".join(second_bits[:2]).capitalize() + ".")
+        if second_bits
+        else (
+            "This comparison can be read with relatively high confidence."
+            if confidence == "High"
+            else "This should be interpreted with caution."
+        )
+    )
+
+    cautions = []
+    if facts.get("low_coverage_flag") or confidence == "Low":
+        cautions.append("interpretation is limited by low coverage")
+    if facts.get("subject_basket_changed"):
+        cautions.append("the subject basket changed")
+    if facts.get("level_change_detected"):
+        cautions.append("subject level changes are present")
+    if facts.get("missed_results_flag"):
+        cautions.append("some results appear to be missing")
+    caution_sentence = (
+        f"Caution is needed because {', '.join(cautions)}."
+        if cautions
+        else f"This summary is evidence-based and worth monitoring rather than treating as a definite conclusion."
+    )
+
+    sentences = [first_sentence, second_sentence, caution_sentence]
+    if len(" ".join(sentences)) < 120:
+        sentences.append("This may indicate a pattern worth monitoring in the next comparable term.")
+    return " ".join(sentences[:4])
 
 
 def _cat4_identity_key(value: str) -> str:
@@ -4296,6 +4799,19 @@ def _cat4_negative_domain_values(
     return values
 
 
+def _cat4_positive_domain_values(
+    matched_students: list[dict[str, Any]],
+    domain_key: str,
+    domain_label: str,
+) -> list[float]:
+    values = []
+    for row in matched_students:
+        value = _cat4_domain_movement_value(row, domain_key, domain_label)
+        if value is not None and value > 0:
+            values.append(float(value))
+    return values
+
+
 def _cat4_all_domain_values(
     matched_students: list[dict[str, Any]],
     domain_key: str,
@@ -4307,6 +4823,24 @@ def _cat4_all_domain_values(
         if value is not None:
             values.append(float(value))
     return values
+
+
+def _cat4_movement_spread(values: list[float]) -> Optional[float]:
+    if not values:
+        return None
+    mean = sum(values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / len(values)
+    return round(math.sqrt(variance), 1)
+
+
+def _cat4_spread_label(spread: Optional[float]) -> str:
+    if spread is None:
+        return "Low"
+    if spread >= 12:
+        return "High"
+    if spread >= 7:
+        return "Moderate"
+    return "Low"
 
 
 # =========================================================
@@ -9820,11 +10354,203 @@ def cat4_report(
     class_id: int,
     baseline_id: Optional[int] = None,
     term_set_id: Optional[int] = None,
+    threshold_percent: Optional[int] = None,
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
     _get_owned_class_for_cat4_or_403(class_id, db, user)
-    return _build_cat4_report_payload(class_id, db, baseline_id=baseline_id, term_set_id=term_set_id)
+    return _build_cat4_report_payload(
+        class_id,
+        db,
+        baseline_id=baseline_id,
+        term_set_id=term_set_id,
+        threshold_percent=threshold_percent,
+    )
+
+
+@app.get("/classes/{class_id}/cat4/student-history")
+def cat4_student_history(
+    class_id: int,
+    baseline_id: int,
+    raw_name: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    _get_owned_class_for_cat4_or_403(class_id, db, user)
+
+    baseline = (
+        db.query(Cat4BaselineSetModel)
+        .filter(Cat4BaselineSetModel.id == baseline_id, Cat4BaselineSetModel.class_id == class_id)
+        .first()
+    )
+    if not baseline:
+        raise HTTPException(status_code=404, detail="CAT4 baseline set not found")
+
+    requested_name = (raw_name or "").strip()
+    if not requested_name:
+        raise HTTPException(status_code=400, detail="raw_name is required")
+
+    baseline_rows = (
+        db.query(Cat4StudentBaselineModel)
+        .filter(Cat4StudentBaselineModel.baseline_set_id == baseline_id)
+        .all()
+    )
+    cohort_identity_keys = {
+        _cat4_identity_key(str(row.raw_name or ""))
+        for row in baseline_rows
+        if _cat4_identity_key(str(row.raw_name or ""))
+    }
+
+    requested_identity = _cat4_identity_key(requested_name)
+    selected_baseline_row = next(
+        (row for row in baseline_rows if _cat4_identity_key(str(row.raw_name or "")) == requested_identity),
+        None,
+    )
+
+    term_sets = (
+        db.query(Cat4TermResultSetModel)
+        .filter(Cat4TermResultSetModel.class_id == class_id)
+        .order_by(Cat4TermResultSetModel.created_at.asc(), Cat4TermResultSetModel.id.asc())
+        .all()
+    )
+    term_set_ids = [term_set.id for term_set in term_sets]
+    term_rows = (
+        db.query(Cat4StudentTermResultModel)
+        .filter(Cat4StudentTermResultModel.result_set_id.in_(term_set_ids))
+        .all()
+        if term_set_ids
+        else []
+    )
+
+    rows_by_term_set: dict[int, list[Cat4StudentTermResultModel]] = defaultdict(list)
+    for row in term_rows:
+        rows_by_term_set[row.result_set_id].append(row)
+
+    points = []
+    for term_set in term_sets:
+        cohort_rows = [
+            row
+            for row in rows_by_term_set.get(term_set.id, [])
+            if _cat4_identity_key(str(row.raw_name or "")) in cohort_identity_keys
+        ]
+        student_row = next(
+            (row for row in cohort_rows if _cat4_identity_key(str(row.raw_name or "")) == requested_identity),
+            None,
+        )
+        cohort_values = [row.average_percent for row in cohort_rows if row.average_percent is not None]
+        cohort_avg = round(sum(cohort_values) / len(cohort_values), 1) if cohort_values else None
+
+        points.append(
+            {
+                "term_set_id": term_set.id,
+                "title": term_set.title,
+                "date": term_set.created_at.isoformat() if term_set.created_at else None,
+                "student": student_row.average_percent if student_row and student_row.average_percent is not None else None,
+                "cohort_avg": cohort_avg,
+            }
+        )
+
+    return {
+        "student": {
+            "raw_name": (
+                selected_baseline_row.raw_name
+                if selected_baseline_row and selected_baseline_row.raw_name
+                else requested_name
+            )
+        },
+        "points": points,
+    }
+
+
+@app.post("/classes/{class_id}/cat4/student-interpretation")
+def cat4_student_interpretation(
+    class_id: int,
+    payload: Cat4StudentInterpretationRequest,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    _get_owned_class_for_cat4_or_403(class_id, db, user)
+    raw_name = (payload.raw_name or "").strip()
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="raw_name is required")
+
+    _enforce_ai_prompt_limit(db, user)
+    facts = _cat4_student_interpretation_facts(
+        class_id,
+        db,
+        baseline_id=payload.baseline_id,
+        student_id=payload.student_id,
+        term_set_id=payload.term_set_id,
+        raw_name=raw_name,
+    )
+    fallback_explanation = _cat4_fallback_interpretation(facts)
+
+    try:
+        from openai import OpenAI  # type: ignore
+    except Exception:
+        return {
+            "explanation": fallback_explanation,
+            "facts": facts,
+            "source": "fallback",
+        }
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return {
+            "explanation": fallback_explanation,
+            "facts": facts,
+            "source": "fallback",
+        }
+
+    system = (
+        "You explain CAT4 comparison data for teachers. "
+        "Write 2 to 4 sentences only. "
+        "Be professional, cautious, teacher-friendly, and evidence-based. "
+        "Use only the structured facts provided. "
+        "Translate technical metrics into plain-English teacher-facing wording wherever possible. "
+        "Avoid using phrases such as trend delta, baseline percentile, latest term percentile, or movement score in the paragraph unless absolutely necessary. "
+        "Prefer wording such as results are trending upwards, results are trending downwards, results are broadly stable, in line with CAT4 profile, below what CAT4 would suggest, above what CAT4 would suggest, current position in the cohort, this comparison can be read with relatively high confidence, and this should be interpreted with caution. "
+        "Do not diagnose, speculate about motivation, effort, home life, attendance, SEN status, or causes. "
+        "Do not give intervention plans. "
+        "Use phrasing such as suggests, appears, may indicate, and worth monitoring where appropriate. "
+        "If low_coverage_flag is true or comparison_confidence is Low, explicitly say the interpretation is limited. "
+        "If subject_basket_changed, level_change_detected, missed_results_flag, or low_coverage_flag are true, explicitly mention that as a caution. "
+        "If discrepancy_label is present, explain it clearly in plain English without overstating certainty. "
+        "Return plain text only."
+    )
+    user_message = json.dumps(facts, ensure_ascii=True)
+
+    try:
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0.2,
+        )
+        explanation = " ".join((resp.choices[0].message.content or "").strip().split())
+    except Exception:
+        return {
+            "explanation": fallback_explanation,
+            "facts": facts,
+            "source": "fallback",
+        }
+
+    if not explanation:
+        return {
+            "explanation": fallback_explanation,
+            "facts": facts,
+            "source": "fallback",
+        }
+
+    _record_ai_prompt_usage(db, user)
+    return {
+        "explanation": explanation,
+        "facts": facts,
+        "source": "ai",
+    }
 
 @app.get("/classes/{class_id}/insights")
 def class_insights(
