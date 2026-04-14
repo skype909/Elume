@@ -149,6 +149,15 @@ export default function ClassAdminPage() {
 
     const activeCount = students.filter((s) => s.active).length;
     const inactiveCount = students.length - activeCount;
+    const sortedAtRiskStudents = useMemo(() => {
+        return [...(insights?.at_risk || [])].sort((a, b) => {
+            const aAvg = a.average ?? Number.POSITIVE_INFINITY;
+            const bAvg = b.average ?? Number.POSITIVE_INFINITY;
+            if (aAvg !== bAvg) return aAvg - bAvg;
+            if (a.missed !== b.missed) return b.missed - a.missed;
+            return a.first_name.localeCompare(b.first_name, undefined, { sensitivity: "base" });
+        });
+    }, [insights?.at_risk]);
 
     const card =
         "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)]";
@@ -1119,7 +1128,7 @@ export default function ClassAdminPage() {
                             <div>
                                 <div className="text-lg font-extrabold tracking-tight text-slate-900">Insights</div>
                                 <div className="mt-1 text-sm text-slate-600">
-                                    Strongest → weakest by average • Class average • At-risk list
+                                    Class average • At-risk list • Rankings by average
                                 </div>
                             </div>
 
@@ -1201,11 +1210,11 @@ export default function ClassAdminPage() {
 
                                 {insightsLoading ? (
                                     <div className="mt-3 text-sm text-slate-600">Loading…</div>
-                                ) : !insights || insights.at_risk.length === 0 ? (
+                                ) : !insights || sortedAtRiskStudents.length === 0 ? (
                                     <div className="mt-3 text-sm text-slate-600">No at-risk students flagged.</div>
                                 ) : (
                                     <div className="mt-3 divide-y divide-slate-200 rounded-2xl border border-slate-200">
-                                        {insights.at_risk.slice(0, 6).map((r) => (
+                                        {sortedAtRiskStudents.slice(0, 6).map((r) => (
                                             <div key={r.student_id} className="flex items-start justify-between gap-3 p-3">
                                                 <div>
                                                     <div className="font-semibold text-slate-900">{r.first_name}</div>

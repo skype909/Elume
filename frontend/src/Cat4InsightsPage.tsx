@@ -86,6 +86,7 @@ type Cat4StudentReportRow = {
   missed_results_flag?: boolean;
   comparison_confidence?: "High" | "Moderate" | "Low" | null;
   movement_score?: number | null;
+  baseline_to_date_label?: string | null;
   major_attainment_improver?: boolean;
   major_attainment_decliner?: boolean;
   recovering_toward_cat4?: boolean;
@@ -330,8 +331,6 @@ const LEVEL_SENSITIVE_SUBJECTS = new Set([
   "english",
   "irish",
   "mathematics",
-  "french",
-  "spanish",
 ]);
 
 type TermSubjectLevel = "Higher" | "Ordinary" | null;
@@ -669,10 +668,22 @@ function signed(value?: number | null) {
   return rounded > 0 ? `+${rounded}` : `${rounded}`;
 }
 
+function signedPct(value?: number | null) {
+  if (value == null || Number.isNaN(value)) return "-";
+  const rounded = Math.round(value);
+  return rounded > 0 ? `+${rounded}%` : `${rounded}%`;
+}
+
 function statusPill(status: Cat4StudentReportRow["status"]) {
   if (status === "at_risk") return "border-rose-200 bg-rose-50 text-rose-800";
   if (status === "excelling") return "border-sky-200 bg-sky-50 text-sky-800";
   return "border-emerald-200 bg-emerald-50 text-emerald-800";
+}
+
+function statusLabel(status: Cat4StudentReportRow["status"]) {
+  if (status === "at_risk") return "At Risk";
+  if (status === "excelling") return "Excelling";
+  return "Within Expected Range";
 }
 
 function StudentTable({
@@ -696,10 +707,10 @@ function StudentTable({
         <thead className="bg-slate-50 text-left text-slate-600">
           <tr>
             <th className="px-4 py-3 font-semibold">Student</th>
-            <th className="px-4 py-3 font-semibold">Status</th>
+            <th className="w-40 px-4 py-3 font-semibold">Status</th>
             <th className="px-4 py-3 font-semibold">Latest</th>
             <th className="px-4 py-3 font-semibold">Previous</th>
-            <th className="px-4 py-3 font-semibold">Trend</th>
+            <th className="px-4 py-3 font-semibold">Change</th>
             <th className="px-4 py-3 font-semibold">Movement</th>
             <th className="px-4 py-3 font-semibold">Baseline %ile</th>
             <th className="px-4 py-3 font-semibold">Latest %ile</th>
@@ -725,6 +736,11 @@ function StudentTable({
                     <div className="mt-1 text-xs font-medium text-slate-500">
                       Subjects {row.latest_subject_count ?? 0} · Like-for-like {row.like_for_like_subject_count ?? 0} · Confidence {row.comparison_confidence || "-"}
                     </div>
+                    {row.baseline_to_date_label ? (
+                      <div className="mt-1 text-xs font-medium text-slate-500">
+                        Since baseline: {row.baseline_to_date_label}
+                      </div>
+                    ) : null}
                     <div className="mt-2 flex flex-wrap gap-2">
                       {row.major_attainment_improver ? (
                         <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">
@@ -771,13 +787,13 @@ function StudentTable({
                 ) : null}
               </td>
               <td className="px-4 py-3">
-                <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusPill(row.status)}`}>
-                  {row.status.replace("_", " ")}
+                <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold ${statusPill(row.status)}`}>
+                  {statusLabel(row.status)}
                 </span>
               </td>
               <td className="px-4 py-3 text-slate-900">{pct(row.latest_average_percent)}</td>
               <td className="px-4 py-3 text-slate-600">{pct(row.previous_average_percent)}</td>
-              <td className="px-4 py-3 font-semibold text-slate-900">{signed(row.trend_delta)}</td>
+              <td className="px-4 py-3 font-semibold text-slate-900">{signedPct(row.trend_delta)}</td>
               <td className="px-4 py-3 font-semibold text-slate-900">{signedOneDecimal(row.movement_score || row.value_added_delta)}</td>
               <td className="px-4 py-3 text-slate-600">{pct(row.baseline_percentile)}</td>
               <td className="px-4 py-3 text-slate-600">{pct(row.latest_term_percentile)}</td>
@@ -916,6 +932,72 @@ function DoughnutSummary({
   );
 }
 
+function StudentDomainDoughnut({ row }: { row: Cat4StudentReportRow }) {
+  const domainItems = [
+    { key: "verbal", label: "Verbal" },
+    { key: "quantitative", label: "Quantitative" },
+    { key: "non_verbal", label: "Non-Verbal" },
+    { key: "spatial", label: "Spatial" },
+  ]
+    .map((item) => {
+      const value = row.domain_movements?.[item.key] ?? row.domain_movements?.[item.label];
+      return {
+        ...item,
+        value: typeof value === "number" && Number.isFinite(value) ? value : null,
+        magnitude: typeof value === "number" && Number.isFinite(value) ? Math.abs(value) : 0,
+      };
+    })
+    .filter((item) => item.value !== null);
+
+  if (!domainItems.length) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        Domain picture will appear once CAT4 domain movement values are available.
+      </div>
+    );
+  }
+  const maxMagnitude = Math.max(...domainItems.map((item) => item.magnitude), 1);
+
+  return (
+    <div className="grid gap-4">
+      <div className="space-y-2">
+        {domainItems.map((item) => (
+          <div key={`student-domain-legend-${item.key}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: domainChartColor(item.label) }} />
+                <span className="font-semibold text-slate-800">{item.label}</span>
+              </div>
+              <span className={item.value && item.value >= 0 ? "font-semibold text-emerald-700" : "font-semibold text-rose-700"}>
+                {signedOneDecimal(item.value)}
+              </span>
+            </div>
+            <div className="relative mt-2 h-4 rounded-full bg-slate-100">
+              <div className="absolute inset-y-0 left-1/2 w-px bg-slate-400" />
+              <div
+                className="absolute inset-y-[2px] rounded-full"
+                style={
+                  item.value && item.value >= 0
+                    ? {
+                        left: "50%",
+                        width: `${(Math.abs(item.value) / maxMagnitude) * 50}%`,
+                        backgroundColor: domainChartColor(item.label),
+                      }
+                    : {
+                        right: "50%",
+                        width: `${(Math.abs(item.value || 0) / maxMagnitude) * 50}%`,
+                        backgroundColor: domainChartColor(item.label),
+                      }
+                }
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CollapsibleCard({
   title,
   description,
@@ -959,18 +1041,11 @@ function CollapsibleCard({
 }
 
 function compactStudentInsight(row: Cat4StudentReportRow) {
-  const parts = [
+  return [
     `Latest ${pct(row.latest_average_percent)}`,
-    `Trend ${signed(row.trend_delta)}`,
+    `Change ${signedPct(row.trend_delta)}`,
     `Movement ${signedOneDecimal(row.movement_score || row.value_added_delta)}`,
-  ];
-  if (row.primary_concern_domain) {
-    parts.push(`${row.primary_concern_domain} ${signedOneDecimal(row.largest_negative_domain_delta)}`);
-  }
-  if (row.primary_strength_domain) {
-    parts.push(`${row.primary_strength_domain} ${signedOneDecimal(row.largest_positive_domain_delta)}`);
-  }
-  return parts.join(" | ");
+  ].join(" | ");
 }
 
 function normaliseCat4HistoryName(value: string) {
@@ -989,14 +1064,65 @@ function hasMeaningfulFact(value: unknown) {
   return value !== null && value !== undefined && value !== "";
 }
 
+function hasUsableDomainMovements(row?: Cat4StudentReportRow | null) {
+  if (!row?.domain_movements) return false;
+  return Object.values(row.domain_movements).some((value) => typeof value === "number" && Number.isFinite(value));
+}
+
+type RankedCardDomainMode = "default" | "concerns" | "strength-watch";
+
+function rankedCardDomainChips(row: Cat4StudentReportRow, mode: RankedCardDomainMode) {
+  const movementEntries = Object.entries(row.domain_movements || {})
+    .filter(([, value]) => typeof value === "number" && Number.isFinite(value))
+    .map(([domain, value]) => ({
+      domain,
+      value: Number(value),
+    }));
+
+  const negativeDomains = movementEntries
+    .filter((entry) => entry.value < 0)
+    .sort((a, b) => a.value - b.value);
+
+  if (mode === "concerns") {
+    return [
+      negativeDomains[0] ? { label: "Main concern", domain: negativeDomains[0].domain } : null,
+      negativeDomains[1] ? { label: "Next concern", domain: negativeDomains[1].domain } : null,
+    ].filter((item): item is { label: string; domain: string } => Boolean(item));
+  }
+
+  if (mode === "strength-watch") {
+    const chips: { label: string; domain: string }[] = [];
+    if (row.primary_strength_domain) {
+      chips.push({ label: "Primary strength", domain: row.primary_strength_domain });
+    }
+    if (negativeDomains[0]?.domain) {
+      chips.push({ label: "Watch area", domain: negativeDomains[0].domain });
+    } else if (row.primary_concern_domain) {
+      chips.push({ label: "Watch area", domain: row.primary_concern_domain });
+    }
+    return chips;
+  }
+
+  const chips: { label: string; domain: string }[] = [];
+  if (row.primary_concern_domain) {
+    chips.push({ label: "Primary concern", domain: row.primary_concern_domain });
+  }
+  if (row.primary_strength_domain) {
+    chips.push({ label: "Primary strength", domain: row.primary_strength_domain });
+  }
+  return chips;
+}
+
 function RankedStudentCards({
   rows,
   empty,
   onStudentClick,
+  domainMode = "default",
 }: {
   rows: Cat4StudentReportRow[];
   empty: string;
   onStudentClick: (row: Cat4StudentReportRow) => void;
+  domainMode?: RankedCardDomainMode;
 }) {
   if (!rows.length) {
     return <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">{empty}</div>;
@@ -1004,9 +1130,11 @@ function RankedStudentCards({
 
   return (
     <div className="space-y-3">
-      {rows.map((row, index) => (
-        <div key={`${row.student_id || row.student_name}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+      {rows.map((row, index) => {
+        const domainChips = rankedCardDomainChips(row, domainMode);
+        return (
+        <div key={`${row.student_id || row.student_name}-${index}`} className="relative rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-wrap items-start gap-3 pr-28">
             <div>
               <button
                 type="button"
@@ -1017,13 +1145,16 @@ function RankedStudentCards({
               </button>
               {!!row.profile_label && <div className="mt-1 text-xs text-slate-500">{row.profile_label}</div>}
               <div className="mt-2 text-sm text-slate-600">{compactStudentInsight(row)}</div>
+              {row.baseline_to_date_label ? (
+                <div className="mt-1 text-xs font-medium text-slate-500">Since baseline: {row.baseline_to_date_label}</div>
+              ) : null}
             </div>
-            {row.status ? (
-              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusPill(row.status)}`}>
-                {row.status.replace("_", " ")}
-              </span>
-            ) : null}
           </div>
+          {row.status ? (
+            <span className={`absolute right-4 top-4 rounded-full border px-3 py-1 text-xs font-semibold ${statusPill(row.status)}`}>
+              {row.status.replace("_", " ")}
+            </span>
+          ) : null}
           {row.discrepancy_label ? (
             <div className="mt-3">
               <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
@@ -1031,28 +1162,25 @@ function RankedStudentCards({
               </span>
             </div>
           ) : null}
-          <div className="mt-3 flex flex-wrap gap-2">
-            {row.primary_concern_domain ? (
-              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(row.primary_concern_domain)}`}>
-                Primary concern: {row.primary_concern_domain}
-              </span>
-            ) : null}
-            {row.primary_strength_domain ? (
-              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(row.primary_strength_domain)}`}>
-                Primary strength: {row.primary_strength_domain}
-              </span>
-            ) : null}
-          </div>
+          {domainChips.length ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {domainChips.map((chip, chipIndex) => (
+                <span key={`${row.student_id || row.student_name}-${chip.label}-${chipIndex}`} className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(chip.domain)}`}>
+                  {chip.label}: {chip.domain}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
-      ))}
+      )})}
     </div>
   );
 }
 
 function Sparkline({ points }: { points: Cat4StudentHistoryPoint[] }) {
-  const width = 220;
-  const height = 60;
-  const pad = 6;
+  const width = 360;
+  const height = 132;
+  const pad = 10;
 
   const vals = points
     .flatMap((point) => [point.student, point.cohort_avg])
@@ -1076,7 +1204,7 @@ function Sparkline({ points }: { points: Cat4StudentHistoryPoint[] }) {
       .join(" ");
 
   return (
-    <svg width={width} height={height}>
+    <svg width={width} height={height} className="max-w-full">
       <polyline
         points={poly((point) => point.cohort_avg)}
         fill="none"
@@ -1118,7 +1246,9 @@ export default function Cat4InsightsPage() {
   const [selectedTermSetId, setSelectedTermSetId] = useState<number | "">("");
   const [selectedThresholdPercent, setSelectedThresholdPercent] = useState<number | "">("");
   const [domainChartMode, setDomainChartMode] = useState<"concerns" | "strengths">("concerns");
+  const [manualLevelsEnabled, setManualLevelsEnabled] = useState(false);
   const [teacherSchoolName, setTeacherSchoolName] = useState("");
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const [baselineTitle, setBaselineTitle] = useState("");
   const [baselineDate, setBaselineDate] = useState("");
@@ -1175,6 +1305,28 @@ export default function Cat4InsightsPage() {
   const selectedInterpretationBusy = selectedInterpretationKey ? Boolean(interpretationLoading[selectedInterpretationKey]) : false;
   const selectedInterpretationError = selectedInterpretationKey ? interpretationError[selectedInterpretationKey] ?? null : null;
   const rankedThresholdLabel = report?.selected_threshold_percent ? `${report.selected_threshold_percent}%` : null;
+  const modalStudentRow = useMemo(() => {
+    if (!selectedHistoryStudent) return null;
+    if (hasUsableDomainMovements(selectedHistoryStudent)) {
+      return selectedHistoryStudent;
+    }
+
+    const rows = report?.all_matched_students || [];
+    if (selectedHistoryStudent.student_id != null) {
+      const byId = rows.find((row) => row.student_id === selectedHistoryStudent.student_id);
+      if (hasUsableDomainMovements(byId)) {
+        return byId;
+      }
+    }
+
+    const targetName = normaliseCat4HistoryName(selectedHistoryStudent.student_name);
+    const byName = rows.find((row) => normaliseCat4HistoryName(row.student_name) === targetName);
+    if (hasUsableDomainMovements(byName)) {
+      return byName;
+    }
+
+    return selectedHistoryStudent;
+  }, [selectedHistoryStudent, report]);
 
   function setSectionRef(key: string) {
     return (node: HTMLDivElement | null) => {
@@ -1530,10 +1682,6 @@ export default function Cat4InsightsPage() {
 
   async function resetCat4Data() {
     if (!validClassId) return;
-    const confirmed = window.confirm(
-      "Reset CAT4 data for this cohort... This will remove workbook uploads, baseline sets, term sets, and generated CAT4 results for this cohort."
-    );
-    if (!confirmed) return;
 
     setError(null);
     try {
@@ -1544,6 +1692,7 @@ export default function Cat4InsightsPage() {
       setWorkbookPreview(null);
       setSelectedBaselineId("");
       setSelectedTermSetId("");
+      setShowResetConfirm(false);
       const metaData = await loadMeta();
       await loadReport(metaData?.baseline_sets[0]?.id || "", metaData?.term_sets[0]?.id || "");
     } catch (e: any) {
@@ -1597,12 +1746,12 @@ export default function Cat4InsightsPage() {
       writeLine("");
     };
 
-    writeStudentSection("Bottom 10% by Latest Attainment", report.bottom_10_percent);
-    writeStudentSection("Top 5% by Latest Attainment", report.top_5_percent);
+    writeStudentSection("Bottom 10% by Latest Academic Average", report.bottom_10_percent);
+    writeStudentSection("Top 5% by Latest Academic Average", report.top_5_percent);
     writeStudentSection("Biggest Downward Movers vs CAT4 Baseline", report.biggest_downward_movers);
     writeStudentSection("Biggest Upward Movers vs CAT4 Baseline", report.biggest_upward_movers);
-    writeStudentSection("Biggest Attainment Improvers", report.biggest_attainment_improvers);
-    writeStudentSection("Biggest Attainment Decliners", report.biggest_attainment_decliners);
+    writeStudentSection("Biggest Academic Improvers", report.biggest_attainment_improvers);
+    writeStudentSection("Biggest Academic Decliners", report.biggest_attainment_decliners);
     writeStudentSection("Mixed Signals / Requires Interpretation", report.discrepancy_cases);
 
     writeLine("Domain Concern Summary", 14, "bold");
@@ -1800,7 +1949,7 @@ export default function Cat4InsightsPage() {
 
   async function saveNativeTermRows() {
     if (!selectedTermSetId) {
-      setError("Create or select a term set before saving native term results");
+      setError("Create or select a term set before saving manual results");
       return;
     }
 
@@ -1811,7 +1960,7 @@ export default function Cat4InsightsPage() {
       const rows = termEntryRows
         .map((row) => {
           const subject_scores = mergeSubjectScores(row.subject_scores);
-          const subject_levels = mergeSubjectLevels(row.subject_levels);
+          const subject_levels = manualLevelsEnabled ? mergeSubjectLevels(row.subject_levels) : buildEmptySubjectLevels();
           const subjectValues = Object.entries(subject_scores).filter(([, value]) => typeof value === "number");
           const metrics = termMetricsFromSubjectScores(subject_scores);
           const subjectPayload = TERM_SUBJECT_COLUMNS.reduce<Record<string, number | { score: number | null; level: TermSubjectLevel }>>((acc, subject) => {
@@ -1847,9 +1996,9 @@ export default function Cat4InsightsPage() {
       const metaData = await loadMeta();
       await loadReport(selectedBaselineId || metaData?.baseline_sets[0]?.id || "", selectedTermSetId);
       await loadTermEntry(selectedBaselineId || metaData?.baseline_sets[0]?.id || "", selectedTermSetId);
-      setTermEntryStatus(`Saved ${rows.length} native term result rows.`);
+      setTermEntryStatus(`Saved ${rows.length} manual result row${rows.length === 1 ? "" : "s"}.`);
     } catch (e: any) {
-      setError(e?.message || "Could not save native term results");
+      setError(e?.message || "Could not save manual results");
     } finally {
       setSavingNativeTermRows(false);
     }
@@ -1895,7 +2044,7 @@ export default function Cat4InsightsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => void resetCat4Data()}
+                onClick={() => setShowResetConfirm(true)}
                 className="rounded-2xl border-2 border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
               >
                 Reset CAT4 Data
@@ -2019,7 +2168,7 @@ export default function Cat4InsightsPage() {
             <div className={`${card} ${cardPad} mt-6`}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <div className="text-lg font-extrabold tracking-tight text-slate-900">Native Term Entry</div>
+                  <div className="text-lg font-extrabold tracking-tight text-slate-900">Manual Results Entry</div>
                   <div className="mt-1 text-sm text-slate-600">
                     Keep the CAT4 baseline from the original workbook, then enter ongoing term results directly in Elume.
                   </div>
@@ -2044,11 +2193,11 @@ export default function Cat4InsightsPage() {
 
               {!meta.baseline_sets.length ? (
                 <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                  A locked CAT4 baseline is needed before native term entry can begin.
+                  A locked CAT4 baseline is needed before manual results entry can begin.
                 </div>
               ) : termEntryCollapsed ? (
                 <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                  Native term entry is collapsed. Expand it when you need to edit or paste CAT4 term results.
+                  Manual results entry is collapsed. Expand it when you need to edit or paste CAT4 term results.
                 </div>
               ) : (
                 <>
@@ -2137,7 +2286,7 @@ export default function Cat4InsightsPage() {
                         </div>
                       </div>
                       <div className="mt-3 text-xs leading-5 text-slate-500">
-                        The native grid below always follows the selected baseline and term.
+                        The manual results grid below always follows the selected baseline and term.
                       </div>
                     </div>
 
@@ -2145,7 +2294,7 @@ export default function Cat4InsightsPage() {
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <div className="text-sm font-extrabold uppercase tracking-[0.12em] text-slate-700">Quick paste</div>
-                          <div className="mt-1 text-sm text-slate-600">Paste a term spreadsheet block here and apply it into the native grid.</div>
+                          <div className="mt-1 text-sm text-slate-600">Paste a term spreadsheet block here and apply it into the manual grid.</div>
                         </div>
                         <button
                           type="button"
@@ -2171,13 +2320,27 @@ export default function Cat4InsightsPage() {
                     </div>
                   )}
 
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div>
+                      <div className="text-sm font-extrabold uppercase tracking-[0.12em] text-slate-700">Levels</div>
+                      <div className="mt-1 text-sm text-slate-600">Turn level entry on only when Irish, English, and Maths need Higher or Ordinary labels for this session.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setManualLevelsEnabled((prev) => !prev)}
+                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${manualLevelsEnabled ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                    >
+                      {manualLevelsEnabled ? "Levels On" : "Levels Off"}
+                    </button>
+                  </div>
+
                   {!selectedTermSetId ? (
                     <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                      Create a term set to start entering native CAT4 term results.
+                      Create a term set to start entering manual CAT4 results.
                     </div>
                   ) : loadingTermEntry ? (
                     <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                      Loading native term entry grid...
+                      Loading manual results grid...
                     </div>
                   ) : (
                     <>
@@ -2190,7 +2353,7 @@ export default function Cat4InsightsPage() {
                               {TERM_SUBJECT_COLUMNS.map((subject) => (
                                 <th key={subject} className="px-3 py-3 font-semibold">
                                   {TERM_SUBJECT_LABELS[subject] || subject}
-                                  {LEVEL_SENSITIVE_SUBJECTS.has(subject) ? (
+                                  {manualLevelsEnabled && LEVEL_SENSITIVE_SUBJECTS.has(subject) ? (
                                     <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">Score + Level</div>
                                   ) : null}
                                 </th>
@@ -2218,7 +2381,7 @@ export default function Cat4InsightsPage() {
                                         className="w-20 rounded-xl border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"
                                         placeholder="-"
                                       />
-                                      {LEVEL_SENSITIVE_SUBJECTS.has(subject) ? (
+                                      {manualLevelsEnabled && LEVEL_SENSITIVE_SUBJECTS.has(subject) ? (
                                         <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
                                           {(["Higher", "Ordinary"] as const).map((level) => {
                                             const active = row.subject_levels?.[subject] === level;
@@ -2255,7 +2418,7 @@ export default function Cat4InsightsPage() {
 
                       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                         <div className="text-sm text-slate-600">
-                          {termEntryRows.length} cohort row{termEntryRows.length === 1 ? "" : "s"} loaded for native term entry.
+                          {termEntryRows.length} cohort row{termEntryRows.length === 1 ? "" : "s"} loaded for manual results entry.
                         </div>
                         <button
                           type="button"
@@ -2263,7 +2426,7 @@ export default function Cat4InsightsPage() {
                           disabled={savingNativeTermRows}
                           className="rounded-2xl border-2 border-emerald-700 bg-emerald-700 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          {savingNativeTermRows ? "Saving..." : "Save Native Term Results"}
+                          {savingNativeTermRows ? "Saving..." : "Save Manual Results"}
                         </button>
                       </div>
                     </>
@@ -2334,12 +2497,6 @@ export default function Cat4InsightsPage() {
                           Primary strengths {item.primary_strength_count || 0}
                         </div>
                         <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          Average upward movement {signedOneDecimal(item.average_upward_movement)}
-                        </div>
-                        <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          Average downward movement {signedOneDecimal(item.average_downward_movement ?? item.average_negative_movement ?? item.average_movement)}
-                        </div>
-                        <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
                           Movement spread: {item.movement_spread_label || "Low"}
                         </div>
                         <div className="mt-3 space-y-2">
@@ -2359,39 +2516,6 @@ export default function Cat4InsightsPage() {
                   ) : (
                     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                       Domain concern summary will appear once a locked baseline and a structured term upload are available.
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div ref={setSectionRef("domain-commentary")} className={`${card} ${cardPad}`}>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="text-lg font-extrabold tracking-tight text-slate-900">Domain Commentary</div>
-                    <div className="mt-1 text-sm text-slate-600">Short commentary that balances where concern is most common with where upward movement and variation are also present.</div>
-                  </div>
-                  {renderSectionExportButton("domain-commentary", "Domain Commentary")}
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {(report?.domain_commentary || []).length ? (
-                    report?.domain_commentary.map((item) => (
-                      <div key={item.domain} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-sm font-semibold text-slate-900">{item.domain}</div>
-                        <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          Primary concerns {item.primary_concern_count || 0} | Primary strengths {item.primary_strength_count || 0}
-                        </div>
-                        <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          Upward {signedOneDecimal(item.average_upward_movement)} | Downward {signedOneDecimal(item.average_negative_movement ?? item.average_movement)}
-                        </div>
-                        <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          Movement spread: {item.movement_spread_label || "Low"}
-                        </div>
-                        <div className="mt-2 text-sm text-slate-700">{item.commentary}</div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                      Domain commentary will appear once a locked baseline and a structured term upload are available.
                     </div>
                   )}
                 </div>
@@ -2567,7 +2691,7 @@ export default function Cat4InsightsPage() {
                   <div>
                     <div className="text-sm font-bold text-slate-900">Ranked Group Threshold</div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Apply one cohort threshold across top/bottom attainment and CAT4-relative movement groups.
+                      Apply one cohort threshold across top/bottom academic and CAT4-relative movement groups.
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -2596,23 +2720,23 @@ export default function Cat4InsightsPage() {
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
                   title={rankedThresholdLabel ? `Bottom ${rankedThresholdLabel}` : "Bottom 10%"}
-                  description="Students with the lowest latest overall attainment across the selected term results."
+                  description="Students with the lowest latest academic averages. The domain labels highlight the CAT4 areas showing the strongest concern signals, to help guide support."
                   defaultOpen
                   sectionRef={setSectionRef("bottom-attainment")}
                   headerActions={renderSectionExportButton("bottom-attainment", rankedThresholdLabel ? `Bottom ${rankedThresholdLabel}` : "Bottom Attainment")}
                 >
-                  <RankedStudentCards rows={report?.bottom_10_percent || []} empty="No bottom 10% cohort section is available yet." onStudentClick={openStudentHistoryModal} />
+                  <RankedStudentCards rows={report?.bottom_10_percent || []} empty="No bottom 10% cohort section is available yet." onStudentClick={openStudentHistoryModal} domainMode="concerns" />
                 </CollapsibleCard>
 
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
                   title={rankedThresholdLabel ? `Top ${rankedThresholdLabel}` : "Top 5%"}
-                  description="Students with the highest latest overall attainment across the selected term results."
+                  description="Students with the highest latest academic averages. The labels show one CAT4 strength and one watch area, so strong performance is viewed alongside the area that may still need attention."
                   defaultOpen
                   sectionRef={setSectionRef("top-attainment")}
                   headerActions={renderSectionExportButton("top-attainment", rankedThresholdLabel ? `Top ${rankedThresholdLabel}` : "Top Attainment")}
                 >
-                  <RankedStudentCards rows={report?.top_5_percent || []} empty="No top 5% cohort section is available yet." onStudentClick={openStudentHistoryModal} />
+                  <RankedStudentCards rows={report?.top_5_percent || []} empty="No top 5% cohort section is available yet." onStudentClick={openStudentHistoryModal} domainMode="strength-watch" />
                 </CollapsibleCard>
               </div>
 
@@ -2620,54 +2744,54 @@ export default function Cat4InsightsPage() {
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
                   title={rankedThresholdLabel ? `Downward Movers ${rankedThresholdLabel}` : "Biggest Downward Movers"}
-                  description="Students showing the sharpest negative CAT4-relative movement, with the key domain driving concern."
+                  description="Students showing the sharpest negative CAT4-relative movement. The domain labels show the areas contributing most to the decline, to help target support."
                   defaultOpen
                   sectionRef={setSectionRef("downward-movers")}
                   headerActions={renderSectionExportButton("downward-movers", rankedThresholdLabel ? `Downward Movers ${rankedThresholdLabel}` : "Downward Movers")}
                 >
-                  <RankedStudentCards rows={report?.biggest_downward_movers || []} empty="No downward movement section is available yet." onStudentClick={openStudentHistoryModal} />
+                  <RankedStudentCards rows={report?.biggest_downward_movers || []} empty="No downward movement section is available yet." onStudentClick={openStudentHistoryModal} domainMode="concerns" />
                 </CollapsibleCard>
 
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
                   title={rankedThresholdLabel ? `Upward Movers ${rankedThresholdLabel}` : "Biggest Upward Movers"}
-                  description="Students showing the strongest positive CAT4-relative movement, with the domain of greatest strength."
+                  description="Students showing the strongest positive CAT4-relative movement. The labels show the main area of strength and one watch area, so improvement is viewed with balance."
                   defaultOpen
                   sectionRef={setSectionRef("upward-movers")}
                   headerActions={renderSectionExportButton("upward-movers", rankedThresholdLabel ? `Upward Movers ${rankedThresholdLabel}` : "Upward Movers")}
                 >
-                  <RankedStudentCards rows={report?.biggest_upward_movers || []} empty="No upward movement section is available yet." onStudentClick={openStudentHistoryModal} />
+                  <RankedStudentCards rows={report?.biggest_upward_movers || []} empty="No upward movement section is available yet." onStudentClick={openStudentHistoryModal} domainMode="strength-watch" />
                 </CollapsibleCard>
               </div>
 
               <div className="grid gap-4 xl:grid-cols-2">
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title="Biggest Attainment Improvers"
-                  description="Students showing the strongest raw attainment gains between the selected term and the previous comparable term."
+                  title="Biggest Academic Improvers"
+                  description="Students showing the strongest academic gains between the selected term and the previous comparable term."
                   defaultOpen={false}
                   sectionRef={setSectionRef("attainment-improvers")}
-                  headerActions={renderSectionExportButton("attainment-improvers", "Biggest Attainment Improvers")}
+                  headerActions={renderSectionExportButton("attainment-improvers", "Biggest Academic Improvers")}
                 >
-                  <RankedStudentCards rows={report?.biggest_attainment_improvers || []} empty="No attainment improvement section is available yet." onStudentClick={openStudentHistoryModal} />
+                  <RankedStudentCards rows={report?.biggest_attainment_improvers || []} empty="No academic improvement section is available yet." onStudentClick={openStudentHistoryModal} />
                 </CollapsibleCard>
 
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title="Biggest Attainment Decliners"
-                  description="Students showing the sharpest raw attainment decline between the selected term and the previous comparable term."
+                  title="Biggest Academic Decliners"
+                  description="Students showing the sharpest academic decline between the selected term and the previous comparable term."
                   defaultOpen={false}
                   sectionRef={setSectionRef("attainment-decliners")}
-                  headerActions={renderSectionExportButton("attainment-decliners", "Biggest Attainment Decliners")}
+                  headerActions={renderSectionExportButton("attainment-decliners", "Biggest Academic Decliners")}
                 >
-                  <RankedStudentCards rows={report?.biggest_attainment_decliners || []} empty="No attainment decline section is available yet." onStudentClick={openStudentHistoryModal} />
+                  <RankedStudentCards rows={report?.biggest_attainment_decliners || []} empty="No academic decline section is available yet." onStudentClick={openStudentHistoryModal} />
                 </CollapsibleCard>
               </div>
 
               <CollapsibleCard
                 className={`${card} ${cardPad}`}
                 title="Mixed Signals / Requires Interpretation"
-                description="Cases where raw attainment changed sharply but CAT4-relative movement still points in the opposite direction."
+                description="Cases where academic results changed sharply but CAT4-relative movement still points in the opposite direction."
                 defaultOpen={false}
                 sectionRef={setSectionRef("mixed-signals")}
                 headerActions={renderSectionExportButton("mixed-signals", "Mixed Signals Requires Interpretation")}
@@ -2730,6 +2854,7 @@ export default function Cat4InsightsPage() {
             onClick={() => setSelectedHistoryStudent(null)}
           >
             <div
+              ref={setSectionRef("student-modal-report")}
               className="w-full max-w-2xl rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl"
               onClick={(e) => e.stopPropagation()}
             >
@@ -2763,12 +2888,14 @@ export default function Cat4InsightsPage() {
                   <div className="mt-1 text-xl font-extrabold text-slate-900">{pct(selectedHistoryStudent.previous_average_percent)}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Trend</div>
-                  <div className="mt-1 text-xl font-extrabold text-slate-900">{signed(selectedHistoryStudent.trend_delta)}</div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Change</div>
+                  <div className={`mt-1 text-xl font-extrabold ${typeof selectedHistoryStudent.trend_delta === "number" && selectedHistoryStudent.trend_delta < 0 ? "text-rose-700" : "text-slate-900"}`}>
+                    {signedPct(selectedHistoryStudent.trend_delta)}
+                  </div>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Movement</div>
-                  <div className="mt-1 text-xl font-extrabold text-slate-900">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">CAT4 Movement</div>
+                  <div className={`mt-1 text-xl font-extrabold ${typeof (selectedHistoryStudent.movement_score ?? selectedHistoryStudent.value_added_delta) === "number" && (selectedHistoryStudent.movement_score ?? selectedHistoryStudent.value_added_delta)! < 0 ? "text-rose-700" : "text-slate-900"}`}>
                     {signedOneDecimal(selectedHistoryStudent.movement_score ?? selectedHistoryStudent.value_added_delta)}
                   </div>
                 </div>
@@ -2780,14 +2907,17 @@ export default function Cat4InsightsPage() {
                     <div className="text-sm font-bold text-slate-900">Elume's Interpretation</div>
                     <div className="mt-1 text-xs text-slate-500">Plain-English interpretation of the current CAT4 picture, based on the available comparison data.</div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void fetchStudentInterpretation(selectedHistoryStudent)}
-                    disabled={selectedInterpretationBusy}
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {selectedInterpretation ? "Refresh Interpretation" : selectedInterpretationBusy ? "Generating..." : "Generate Interpretation"}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {renderSectionExportButton("student-modal-report", `${selectedHistoryStudent.student_name} CAT4 Report`)}
+                    <button
+                      type="button"
+                      onClick={() => void fetchStudentInterpretation(selectedHistoryStudent)}
+                      disabled={selectedInterpretationBusy}
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {selectedInterpretation ? "Refresh Interpretation" : selectedInterpretationBusy ? "Generating..." : "Generate Interpretation"}
+                    </button>
+                  </div>
                 </div>
 
                 {selectedInterpretation?.explanation ? (
@@ -2813,7 +2943,7 @@ export default function Cat4InsightsPage() {
                         ) : null}
                         {hasMeaningfulFact(selectedInterpretation.facts.trend_delta) ? (
                           <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                            Trend {signed(selectedInterpretation.facts.trend_delta)}
+                            Change {signedPct(selectedInterpretation.facts.trend_delta)}
                           </span>
                         ) : null}
                         {hasMeaningfulFact(selectedInterpretation.facts.movement_score) ? (
@@ -2873,14 +3003,17 @@ export default function Cat4InsightsPage() {
                 ) : null}
               </div>
 
-              <div className="mt-4 rounded-2xl border border-slate-200 p-3">
+              <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.7fr)_260px] lg:items-start">
+              <div className="rounded-2xl border border-slate-200 p-3">
                 {selectedHistoryBusy && (
                   <div className="text-sm text-slate-500">Loading…</div>
                 )}
 
                 {!selectedHistoryBusy && selectedHistory?.points?.length ? (
                   <>
-                    <Sparkline points={selectedHistory.points.slice(-8)} />
+                    <div className="flex justify-center rounded-2xl border border-slate-100 bg-slate-50 px-3 py-5">
+                      <Sparkline points={selectedHistory.points.slice(-8)} />
+                    </div>
 
                     <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
                       {selectedHistory.points
@@ -2934,6 +3067,46 @@ export default function Cat4InsightsPage() {
                 {!selectedHistoryBusy && !selectedHistory?.points?.length && (
                   <div className="text-sm text-slate-500">No CAT4 cohort history available yet.</div>
                 )}
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">CAT4 Domain Profile</div>
+                <div className="mt-1 text-xs text-slate-500">Shows which CAT4 areas are currently above or below expectation for this student.</div>
+                <div className="mt-4">
+                  <StudentDomainDoughnut row={modalStudentRow || selectedHistoryStudent} />
+                </div>
+              </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showResetConfirm && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-lg rounded-3xl border-2 border-slate-200 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+              <div className="text-xl font-extrabold tracking-tight text-slate-900">Reset CAT4 data?</div>
+              <div className="mt-3 space-y-2 text-sm text-slate-600">
+                <p>This will remove workbook uploads, baseline sets, term sets, and generated CAT4 results for this cohort.</p>
+                <p>This does not affect ordinary class assessment data.</p>
+                <p className="font-semibold text-rose-700">This action cannot be undone.</p>
+              </div>
+              <div className="mt-6 flex flex-wrap justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowResetConfirm(false)}
+                  disabled={importingWorkbook}
+                  className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void resetCat4Data()}
+                  disabled={importingWorkbook}
+                  className="rounded-2xl border-2 border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-800 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {importingWorkbook ? "Resetting..." : "Reset CAT4 Data"}
+                </button>
               </div>
             </div>
           </div>

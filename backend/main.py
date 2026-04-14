@@ -3145,21 +3145,6 @@ def _build_cat4_term_entry_payload(
         if selected_term
         else []
     )
-    previous_levels_by_identity: dict[str, dict[str, str]] = {}
-    if prior_term_sets:
-        prior_term_rows_sorted = sorted(
-            prior_term_sets,
-            key=lambda item: (prior_order_index.get(item.result_set_id, -1), item.id),
-        )
-        for prior_row in prior_term_rows_sorted:
-            identity_key = _cat4_identity_key(str(prior_row.raw_name or ""))
-            if not identity_key:
-                continue
-            levels = _parse_cat4_subject_levels(prior_row.raw_subjects_json)
-            if not levels:
-                continue
-            previous_levels_by_identity.setdefault(identity_key, {}).update(levels)
-
     term_rows_by_identity = {
         _cat4_identity_key(str(row.raw_name or "")): row
         for row in term_rows
@@ -3174,9 +3159,7 @@ def _build_cat4_term_entry_payload(
         term_row = term_rows_by_identity.get(identity_key)
         if term_row and identity_key:
             used_term_keys.add(identity_key)
-        subject_levels = dict(previous_levels_by_identity.get(identity_key, {}))
-        if term_row:
-            subject_levels.update(_parse_cat4_subject_levels(term_row.raw_subjects_json))
+        subject_levels = _parse_cat4_subject_levels(term_row.raw_subjects_json) if term_row else {}
         rows.append(
             {
                 "raw_name": baseline_row.raw_name,
@@ -3195,8 +3178,7 @@ def _build_cat4_term_entry_payload(
         identity_key = _cat4_identity_key(str(term_row.raw_name or ""))
         if identity_key and identity_key in used_term_keys:
             continue
-        subject_levels = dict(previous_levels_by_identity.get(identity_key, {}))
-        subject_levels.update(_parse_cat4_subject_levels(term_row.raw_subjects_json))
+        subject_levels = _parse_cat4_subject_levels(term_row.raw_subjects_json)
         rows.append(
             {
                 "raw_name": term_row.raw_name,
@@ -3289,6 +3271,12 @@ def _build_cat4_report_payload(
         .filter(Cat4StudentTermResultModel.result_set_id == selected_term.id)
         .all()
     )
+    ordered_term_sets = sorted(term_sets, key=lambda item: (item.created_at or datetime.min, item.id))
+    all_term_rows = (
+        db.query(Cat4StudentTermResultModel)
+        .filter(Cat4StudentTermResultModel.result_set_id.in_([term.id for term in ordered_term_sets]))
+        .all()
+    )
     previous_rows = (
         db.query(Cat4StudentTermResultModel)
         .filter(Cat4StudentTermResultModel.result_set_id == previous_term.id)
@@ -3324,6 +3312,22 @@ def _build_cat4_report_payload(
     previous_percentiles = _build_percentile_map(
         [(identity_key, float(row.average_percent)) for identity_key, row in previous_by_identity.items()]
     )
+    all_term_rows_by_set_identity: dict[int, dict[str, Cat4StudentTermResultModel]] = defaultdict(dict)
+    for row in all_term_rows:
+        identity_key = _cat4_identity_key(str(row.raw_name or ""))
+        if not identity_key:
+            continue
+        all_term_rows_by_set_identity[int(row.result_set_id)] = all_term_rows_by_set_identity.get(int(row.result_set_id), {})
+        all_term_rows_by_set_identity[int(row.result_set_id)][identity_key] = row
+    all_term_domain_maps: dict[int, dict[str, dict[str, float]]] = {}
+    for term in ordered_term_sets:
+        term_rows_by_identity = all_term_rows_by_set_identity.get(int(term.id), {})
+        all_term_domain_maps[int(term.id)] = {
+            "verbal_domain_score": _build_percentile_map([(identity_key, float(row.verbal_domain_score)) for identity_key, row in term_rows_by_identity.items() if row.verbal_domain_score is not None]),
+            "quantitative_domain_score": _build_percentile_map([(identity_key, float(row.quantitative_domain_score)) for identity_key, row in term_rows_by_identity.items() if row.quantitative_domain_score is not None]),
+            "non_verbal_domain_score": _build_percentile_map([(identity_key, float(row.non_verbal_domain_score)) for identity_key, row in term_rows_by_identity.items() if row.non_verbal_domain_score is not None]),
+            "spatial_domain_score": _build_percentile_map([(identity_key, float(row.spatial_domain_score)) for identity_key, row in term_rows_by_identity.items() if row.spatial_domain_score is not None]),
+        }
 
     matched_identity_keys = sorted(set(baseline_by_identity.keys()) & set(latest_by_identity.keys()))
     matched_students: list[dict[str, Any]] = []
@@ -3422,6 +3426,18 @@ def _build_cat4_report_payload(
 
         movement_score = round(sum(domain_components) / len(domain_components), 1) if domain_components else None
         value_added_delta = movement_score
+        baseline_to_date_scores: list[float] = []
+        for term in ordered_term_sets:
+            term_components: list[float] = []
+            for domain_key in domain_labels:
+                baseline_pct = domain_baseline_maps[domain_key].get(identity_key)
+                term_pct = all_term_domain_maps.get(int(term.id), {}).get(domain_key, {}).get(identity_key)
+                if baseline_pct is None or term_pct is None:
+                    continue
+                term_components.append(round(term_pct - baseline_pct, 1))
+            if term_components:
+                baseline_to_date_scores.append(round(sum(term_components) / len(term_components), 1))
+        baseline_to_date_label = _cat4_baseline_to_date_label(baseline_to_date_scores, confidence_label)
         domain_extremes = _cat4_domain_extremes(domain_movements)
         major_attainment_improver = trend_delta is not None and trend_delta >= 15
         major_attainment_decliner = trend_delta is not None and trend_delta <= -15
@@ -3453,6 +3469,7 @@ def _build_cat4_report_payload(
                 "missed_results_flag": missed_results_flag,
                 "comparison_confidence": confidence_label,
                 "movement_score": movement_score,
+                "baseline_to_date_label": baseline_to_date_label,
                 "major_attainment_improver": major_attainment_improver,
                 "major_attainment_decliner": major_attainment_decliner,
                 "recovering_toward_cat4": recovering_toward_cat4,
@@ -4050,8 +4067,6 @@ CAT4_LEVEL_SENSITIVE_SUBJECTS = {
     "english",
     "irish",
     "mathematics",
-    "french",
-    "spanish",
 }
 
 
@@ -4192,6 +4207,31 @@ def _cat4_confidence_label(latest_subject_count: int, like_for_like_subject_coun
     if latest_subject_count < 5 or like_for_like_subject_count < 4:
         return "Low"
     return "Moderate"
+
+
+def _cat4_baseline_to_date_label(
+    movement_scores: list[float],
+    comparison_confidence: str,
+) -> Optional[str]:
+    if len(movement_scores) < 2:
+        return None
+    if comparison_confidence == "Low":
+        return None
+
+    latest_score = movement_scores[-1]
+    average_score = round(sum(movement_scores) / len(movement_scores), 1)
+
+    if latest_score >= 8 and average_score >= 4:
+        return "Mostly above CAT4 expectation"
+    if latest_score <= -8 and average_score <= -4:
+        return "Mostly below CAT4 expectation"
+    if -4 <= average_score <= 4:
+        return "Broadly in line with CAT4 over time"
+    if latest_score > average_score and latest_score > 0:
+        return "Improving toward CAT4 expectation"
+    if latest_score < average_score and latest_score < 0:
+        return "Drifting below CAT4 expectation"
+    return None
 
 
 def _cat4_discrepancy_label_from_row(row: dict[str, Any]) -> Optional[str]:
