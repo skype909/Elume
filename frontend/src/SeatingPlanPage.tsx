@@ -479,17 +479,28 @@ export default function SeatingPlanPage() {
         const aTable = selectedSeat.tableId;
         const aIndex = selectedSeat.seatIndex;
 
-        const aArr = [...(currentAssignment[aTable] || [])];
-        const bArr = [...(currentAssignment[tableId] || [])];
+        if (aTable === tableId) {
+            const tableArr = [...(currentAssignment[aTable] || [])];
+            const aVal = tableArr[aIndex] || "";
+            const bVal = tableArr[seatIndex] || "";
 
-        const aVal = aArr[aIndex] || "";
-        const bVal = bArr[seatIndex] || "";
+            tableArr[aIndex] = bVal;
+            tableArr[seatIndex] = aVal;
 
-        aArr[aIndex] = bVal;
-        bArr[seatIndex] = aVal;
+            currentAssignment[aTable] = tableArr;
+        } else {
+            const aArr = [...(currentAssignment[aTable] || [])];
+            const bArr = [...(currentAssignment[tableId] || [])];
 
-        currentAssignment[aTable] = aArr;
-        currentAssignment[tableId] = bArr;
+            const aVal = aArr[aIndex] || "";
+            const bVal = bArr[seatIndex] || "";
+
+            aArr[aIndex] = bVal;
+            bArr[seatIndex] = aVal;
+
+            currentAssignment[aTable] = aArr;
+            currentAssignment[tableId] = bArr;
+        }
 
         setState((prev) => ({
             ...prev,

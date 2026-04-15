@@ -10136,6 +10136,38 @@ def create_cat4_term_set(
     }
 
 
+@app.delete("/classes/{class_id}/cat4/term-sets/{term_set_id}")
+def delete_cat4_term_set(
+    class_id: int,
+    term_set_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    _get_owned_class_for_cat4_or_403(class_id, db, user)
+
+    term_set = (
+        db.query(Cat4TermResultSetModel)
+        .filter(Cat4TermResultSetModel.id == term_set_id, Cat4TermResultSetModel.class_id == class_id)
+        .first()
+    )
+    if not term_set:
+        raise HTTPException(status_code=404, detail="CAT4 term result set not found")
+
+    deleted_rows = (
+        db.query(Cat4StudentTermResultModel)
+        .filter(Cat4StudentTermResultModel.result_set_id == term_set_id)
+        .delete(synchronize_session=False)
+    )
+    db.delete(term_set)
+    db.commit()
+
+    return {
+        "ok": True,
+        "term_set_id": term_set_id,
+        "deleted_rows": deleted_rows,
+    }
+
+
 @app.post("/classes/{class_id}/cat4/term-sets/{term_set_id}/rows")
 def upsert_cat4_term_rows(
     class_id: int,

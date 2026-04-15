@@ -1259,6 +1259,7 @@ export default function Cat4InsightsPage() {
   const [termRowsText, setTermRowsText] = useState("");
   const [savingBaseline, setSavingBaseline] = useState(false);
   const [savingTerm, setSavingTerm] = useState(false);
+  const [deletingTermSet, setDeletingTermSet] = useState(false);
   const [loadingTermEntry, setLoadingTermEntry] = useState(false);
   const [savingNativeTermRows, setSavingNativeTermRows] = useState(false);
   const [termEntryCollapsed, setTermEntryCollapsed] = useState(true);
@@ -1304,6 +1305,13 @@ export default function Cat4InsightsPage() {
   const selectedInterpretation = selectedInterpretationKey ? interpretationCache[selectedInterpretationKey] ?? null : null;
   const selectedInterpretationBusy = selectedInterpretationKey ? Boolean(interpretationLoading[selectedInterpretationKey]) : false;
   const selectedInterpretationError = selectedInterpretationKey ? interpretationError[selectedInterpretationKey] ?? null : null;
+  const selectedTermSet = useMemo(
+    () =>
+      typeof selectedTermSetId === "number" && meta
+        ? meta.term_sets.find((item) => item.id === selectedTermSetId) ?? null
+        : null,
+    [meta, selectedTermSetId]
+  );
   const rankedThresholdLabel = report?.selected_threshold_percent ? `${report.selected_threshold_percent}%` : null;
   const modalStudentRow = useMemo(() => {
     if (!selectedHistoryStudent) return null;
@@ -1850,6 +1858,48 @@ export default function Cat4InsightsPage() {
     }
   }
 
+  async function deleteSelectedTermSet() {
+    if (!validClassId || typeof selectedTermSetId !== "number" || selectedTermSetId <= 0) {
+      setError("Select a term set before deleting");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete "${selectedTermSet?.title || "this term set"}"?\n\nThis will remove the term set and its saved CAT4 term rows. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingTermSet(true);
+    setError(null);
+    setTermEntryStatus(null);
+
+    try {
+      await apiFetch(`${API_BASE}/classes/${classId}/cat4/term-sets/${selectedTermSetId}`, {
+        method: "DELETE",
+      });
+
+      const metaData = await loadMeta();
+      const nextBaselineId =
+        (typeof selectedBaselineId === "number" && selectedBaselineId > 0
+          ? selectedBaselineId
+          : metaData?.baseline_sets[0]?.id) || "";
+      const nextTermSetId = metaData?.term_sets[0]?.id || "";
+
+      setSelectedTermSetId(nextTermSetId);
+      await loadReport(nextBaselineId, nextTermSetId);
+      await loadTermEntry(nextBaselineId, nextTermSetId);
+      setTermEntryStatus(
+        nextTermSetId
+          ? "Term set deleted. The next available term set is now selected."
+          : "Term set deleted. No term sets remain."
+      );
+    } catch (e: any) {
+      setError(e?.message || "Could not delete the selected term set");
+    } finally {
+      setDeletingTermSet(false);
+    }
+  }
+
   function updateTermEntryScore(rowIndex: number, subject: string, value: string) {
     const trimmed = value.trim();
     const numeric = trimmed === "" ? null : Number(trimmed);
@@ -2020,10 +2070,10 @@ export default function Cat4InsightsPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => navigate(`/class/${classId}/admin`)}
+                onClick={() => navigate("/admin")}
                 className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
               >
-                Back to Class Admin
+                Back to Admin
               </button>
               <button
                 type="button"
@@ -2233,6 +2283,22 @@ export default function Cat4InsightsPage() {
                       </select>
                     </label>
                   </div>
+
+                  {selectedTermSet && (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                      <div className="text-sm text-rose-900">
+                        Current term set: <span className="font-semibold">{selectedTermSet.title}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void deleteSelectedTermSet()}
+                        disabled={deletingTermSet}
+                        className="rounded-2xl border border-rose-300 bg-white px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {deletingTermSet ? "Deleting..." : "Delete Term Set"}
+                      </button>
+                    </div>
+                  )}
 
                   <div className="mt-4 grid gap-3 xl:grid-cols-[1.4fr_1fr_1fr_auto]">
                     <label className="grid gap-2 text-sm font-semibold text-slate-700">

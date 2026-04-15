@@ -1151,28 +1151,6 @@ export default function ClassAdminPage() {
                             </div>
                         </div>
 
-                        {cat4Enabled && (
-                            <div className="mt-4 rounded-3xl border-2 border-sky-200 bg-gradient-to-br from-sky-50 via-white to-emerald-50 p-4">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                    <div>
-                                        <div className="text-sm font-extrabold uppercase tracking-[0.12em] text-sky-700">Pilot</div>
-                                        <div className="mt-1 text-lg font-extrabold tracking-tight text-slate-900">CAT4 Insights</div>
-                                        <div className="mt-1 text-sm text-slate-600">
-                                            Compare CAT4 baseline ability with named term result sets and review matched versus unmatched rows.
-                                        </div>
-                                    </div>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => navigate(`/class/${classId}/admin/cat4`)}
-                                        className="rounded-2xl border-2 border-sky-300 bg-white px-4 py-2 text-sm font-semibold text-sky-900 hover:bg-sky-50"
-                                    >
-                                        Open CAT4 Insights
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
                         {insightsError && (
                             <div className="mt-4 rounded-2xl border-2 border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
                                 {insightsError}
