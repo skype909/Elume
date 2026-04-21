@@ -23,12 +23,12 @@ function getEmailFromToken(): string | null {
   }
 }
 
-function teacherAdminKeyForUser() {
+function teacherAdminLegacyKeyForUser() {
   const email = getEmailFromToken() ?? "anon";
   return `elume_teacher_admin_v2__${email}`;
 }
 
-function teacherAdminV3KeyForUser() {
+function teacherAdminPrimaryKeyForUser() {
   const email = getEmailFromToken() ?? "anon";
   return `elume_teacher_admin_v3__${email}`;
 }
@@ -39,7 +39,7 @@ function metaKeyForUser() {
 }
 
 function loadTeacherDisplayName(): string {
-  const keys = [teacherAdminV3KeyForUser(), teacherAdminKeyForUser()];
+  const keys = [teacherAdminPrimaryKeyForUser(), teacherAdminLegacyKeyForUser()];
   for (const key of keys) {
     try {
       const raw = localStorage.getItem(key);
@@ -60,7 +60,7 @@ function loadTeacherDisplayName(): string {
 }
 
 function loadClassAdminPin(): string {
-  const keys = [teacherAdminV3KeyForUser(), teacherAdminKeyForUser()];
+  const keys = [teacherAdminPrimaryKeyForUser(), teacherAdminLegacyKeyForUser()];
   for (const key of keys) {
     try {
       const raw = localStorage.getItem(key);
@@ -386,7 +386,7 @@ export default function ClassPage() {
   const [classInfo, setClassInfo] = useState<ClassItem | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
   const [content, setContent] = useState("");
-  const [author, setAuthor] = useState(() => loadTeacherDisplayName() || "Teacher");
+  const [author, setAuthor] = useState(() => loadTeacherDisplayName() || "");
   const [links, setLinks] = useState<string[]>([]);
   const [linkDraft, setLinkDraft] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -397,12 +397,12 @@ export default function ClassPage() {
   const [showClassSettings, setShowClassSettings] = useState(false);
   const [editName, setEditName] = useState("");
   const [editSubject, setEditSubject] = useState("");
-  const [teacherName, setTeacherName] = useState(() => loadTeacherDisplayName() || "Teacher");
+  const [teacherName, setTeacherName] = useState(() => loadTeacherDisplayName() || "");
   const [displayId, setDisplayId] = useState("");
   const [editTeacher, setEditTeacher] = useState("");
   const [editGroup, setEditGroup] = useState("");
   const [editDisplayId, setEditDisplayId] = useState("");
-  const [roomLabel, setRoomLabel] = useState("Lab");
+  const [roomLabel, setRoomLabel] = useState("");
   const [editRoom, setEditRoom] = useState("");
   const [timerOpen, setTimerOpen] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState(5);
@@ -429,7 +429,7 @@ export default function ClassPage() {
   const [postToDelete, setPostToDelete] = useState<number | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [bellOpen, setBellOpen] = useState(false);
-  const [groupLabel, setGroupLabel] = useState("1E");
+  const [groupLabel, setGroupLabel] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -603,25 +603,28 @@ export default function ClassPage() {
       }
 
       const adminTeacherName = loadTeacherDisplayName();
+      const savedTeacher = typeof entry?.teacher === "string" ? entry.teacher.trim() : "";
+      const savedGroup = typeof entry?.group === "string" ? entry.group.trim() : "";
+      const savedRoom = typeof entry?.room === "string" ? entry.room.trim() : "";
+
       if (adminTeacherName) {
         setTeacherName(adminTeacherName);
         setAuthor(adminTeacherName);
-      } else if (typeof entry?.teacher === "string" && entry.teacher.trim()) {
-        setTeacherName(entry.teacher);
-        setAuthor(entry.teacher);
+      } else if (savedTeacher) {
+        setTeacherName(savedTeacher);
+        setAuthor(savedTeacher);
+      } else {
+        setTeacherName("");
+        setAuthor("");
       }
 
-      if (typeof entry?.group === "string" && entry.group.trim()) {
-        setGroupLabel(entry.group);
-      }
+      setGroupLabel(savedGroup);
 
       if (typeof entry?.displayId === "string") {
         setDisplayId(entry.displayId);
       }
 
-      if (typeof entry?.room === "string" && entry.room.trim()) {
-        setRoomLabel(entry.room);
-      }
+      setRoomLabel(savedRoom);
     } catch {}
   }, [classId, classInfo]);
 
@@ -631,6 +634,19 @@ export default function ClassPage() {
       if (adminTeacherName) {
         setTeacherName(adminTeacherName);
         setAuthor(adminTeacherName);
+        return;
+      }
+
+      try {
+        const raw = localStorage.getItem(metaKeyForUser());
+        const meta = raw ? JSON.parse(raw) : null;
+        const entry = meta?.[String(classId)] || {};
+        const savedTeacher = typeof entry?.teacher === "string" ? entry.teacher.trim() : "";
+        setTeacherName(savedTeacher);
+        setAuthor(savedTeacher);
+      } catch {
+        setTeacherName("");
+        setAuthor("");
       }
     };
 
@@ -641,7 +657,7 @@ export default function ClassPage() {
       window.removeEventListener("storage", refreshTeacher);
       window.removeEventListener("focus", refreshTeacher);
     };
-  }, []);
+  }, [classId]);
 
   useEffect(() => {
     if (!classInfo) return;
@@ -813,7 +829,7 @@ export default function ClassPage() {
     setError(null);
 
     const fd = new FormData();
-    fd.append("author", author || "Teacher");
+    fd.append("author", author.trim() || "Teacher");
     fd.append("content", trimmedContent);
     fd.append("links", JSON.stringify(links || []));
 
@@ -2211,7 +2227,7 @@ export default function ClassPage() {
                         value={editTeacher}
                         onChange={(e) => setEditTeacher(e.target.value)}
                         className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
-                        placeholder="e.g. Mr Fitzgerald"
+                        placeholder="e.g. Ms Murphy"
                       />
                     </label>
 
@@ -2221,7 +2237,7 @@ export default function ClassPage() {
                         value={editGroup}
                         onChange={(e) => setEditGroup(e.target.value)}
                         className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
-                        placeholder="e.g. 1E"
+                        placeholder="e.g. TY Science"
                       />
                     </label>
 
@@ -2231,7 +2247,7 @@ export default function ClassPage() {
                         value={editRoom}
                         onChange={(e) => setEditRoom(e.target.value)}
                         className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2"
-                        placeholder="e.g. Lab"
+                        placeholder="e.g. Room 12"
                       />
                     </label>
 
@@ -2328,11 +2344,13 @@ export default function ClassPage() {
                           localStorage.setItem(metaKeyForUser(), JSON.stringify(meta));
                         } catch {}
 
-                        const t = editTeacher.trim() || "Mr Fitzgerald";
+                        const t = editTeacher.trim();
+                        const g = editGroup.trim();
+                        const r = editRoom.trim();
                         setTeacherName(t);
                         setAuthor(t);
-                        setGroupLabel(editGroup.trim() || "1E");
-                        setRoomLabel(editRoom.trim() || "Lab");
+                        setGroupLabel(g);
+                        setRoomLabel(r);
 
                         setShowClassSettings(false);
                       }}

@@ -606,6 +606,12 @@ export default function TeacherAdminPage() {
   const navigate = useNavigate();
   const email = getEmailFromToken();
   const isSuperAdmin = email === "admin@elume.ie";
+  const normalizedEmail = (email || "").trim().toLowerCase();
+  const canAccessCat4Card = new Set([
+    "peter@elume.ie",
+    "sandra@elume.ie",
+    "lisa@elume.ie",
+  ]).has(normalizedEmail);
 
   const [state, setState] = useState<StoredAdminState>(() => {
     const raw = localStorage.getItem(storageKey()) ?? localStorage.getItem(legacyStorageKey());
@@ -1517,49 +1523,51 @@ export default function TeacherAdminPage() {
           ) : null}
         </div>
 
-        <div className="mt-6 print-hide">
-          <div className={`${card} p-4`}>
-            <div className="overflow-hidden rounded-[32px] border border-white/80 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.10)]">
-              <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-5">
-                  <div className="flex h-20 w-20 shrink-0 items-center justify-center">
-                    <img
-                      src={ELogo2}
-                      alt="Elume"
-                      className="h-16 w-16 object-contain drop-shadow-[6px_8px_10px_rgba(15,23,42,0.16)] md:h-[4.5rem] md:w-[4.5rem]"
-                    />
+        {canAccessCat4Card && (
+          <div className="mt-6 print-hide">
+            <div className={`${card} p-4`}>
+              <div className="overflow-hidden rounded-[32px] border border-white/80 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.10)]">
+                <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+                  <div className="flex items-center gap-5">
+                    <div className="flex h-20 w-20 shrink-0 items-center justify-center">
+                      <img
+                        src={ELogo2}
+                        alt="Elume"
+                        className="h-16 w-16 object-contain drop-shadow-[6px_8px_10px_rgba(15,23,42,0.16)] md:h-[4.5rem] md:w-[4.5rem]"
+                      />
+                    </div>
+
+                    <div className="max-w-3xl">
+                      <div className="text-sm font-black uppercase tracking-[0.16em] text-sky-700">
+                        Assessment Tools
+                      </div>
+                      <div className="mt-2 text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">
+                        CAT4 Insights
+                      </div>
+                      <div className="mt-3 max-w-[50rem] text-[15px] leading-7 text-slate-600 md:text-base">
+                        Review CAT4 baseline ability against term results, upload workbooks, and manage cohort insights.
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="max-w-3xl">
-                    <div className="text-sm font-black uppercase tracking-[0.16em] text-sky-700">
-                      Assessment Tools
-                    </div>
-                    <div className="mt-2 text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">
-                      CAT4 Insights
-                    </div>
-                    <div className="mt-3 max-w-[50rem] text-[15px] leading-7 text-slate-600 md:text-base">
-                      Review CAT4 baseline ability against term results, upload workbooks, and manage cohort insights.
-                    </div>
+                  <div className="flex shrink-0 items-center">
+                    <button
+                      type="button"
+                      className="rounded-full border-2 border-sky-600 bg-sky-600 px-6 py-3 text-base font-bold text-white shadow-[0_12px_24px_rgba(2,132,199,0.24)] transition hover:bg-sky-700 hover:border-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => {
+                        if (!defaultCat4ClassId) return;
+                        navigate(`/class/${defaultCat4ClassId}/admin/cat4`);
+                      }}
+                      disabled={!defaultCat4ClassId}
+                    >
+                      Open CAT4 Insights
+                    </button>
                   </div>
-                </div>
-
-                <div className="flex shrink-0 items-center">
-                  <button
-                    type="button"
-                    className="rounded-full border-2 border-sky-600 bg-sky-600 px-6 py-3 text-base font-bold text-white shadow-[0_12px_24px_rgba(2,132,199,0.24)] transition hover:bg-sky-700 hover:border-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={() => {
-                      if (!defaultCat4ClassId) return;
-                      navigate(`/class/${defaultCat4ClassId}/admin/cat4`);
-                    }}
-                    disabled={!defaultCat4ClassId}
-                  >
-                    Open CAT4 Insights
-                  </button>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
         <div className={`${adminSectionOpen ? "mt-6" : "mt-0"} grid gap-4 md:grid-cols-12 print:mt-0`}>
           {adminSectionOpen ? (

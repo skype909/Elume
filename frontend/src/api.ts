@@ -2,6 +2,8 @@
 const TOKEN_KEY = "elume_token";
 type JsonBody = BodyInit | Record<string, unknown> | unknown[] | null;
 type ApiRequestInit = Omit<RequestInit, "body"> & { body?: JsonBody };
+const FRIENDLY_AUTH_ERROR =
+  "Your session has expired or changed. Please log in again to continue. This can happen for security reasons or if you signed in on another device.";
 
 export function getToken(): string | null {
   try {
@@ -25,6 +27,31 @@ export function clearToken() {
   } catch {
     // ignore
   }
+}
+
+function isAuthLikeError(status: number, message: string) {
+  if (status === 401) return true;
+  const text = message.trim().toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("invalid token") ||
+    text.includes("token expired") ||
+    text.includes("expired token") ||
+    text.includes("unauthorized") ||
+    text.includes("unauthorised") ||
+    text.includes("not authenticated") ||
+    text.includes("authentication required") ||
+    text.includes("session expired") ||
+    text.includes("jwt expired") ||
+    text.includes("invalid signature")
+  );
+}
+
+function normaliseApiErrorMessage(status: number, message: string) {
+  if (isAuthLikeError(status, message)) {
+    return FRIENDLY_AUTH_ERROR;
+  }
+  return message;
 }
 
 export async function apiFetch(path: string, init: ApiRequestInit = {}) {
@@ -64,7 +91,7 @@ export async function apiFetch(path: string, init: ApiRequestInit = {}) {
       (data && (data.detail || data.message)) ||
       (typeof data === "string" && data) ||
       `Request failed (${res.status})`;
-    throw new Error(msg);
+    throw new Error(normaliseApiErrorMessage(res.status, String(msg)));
   }
 
   return data;
@@ -95,7 +122,7 @@ export async function apiFetchBlob(path: string, init: ApiRequestInit = {}) {
   const res = await fetch(url, { ...init, headers, body });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `Request failed (${res.status})`);
+    throw new Error(normaliseApiErrorMessage(res.status, text || `Request failed (${res.status})`));
   }
 
   return res.blob();

@@ -1354,6 +1354,115 @@ export default function Cat4InsightsPage() {
     );
   }
 
+  async function exportStudentModalPdf(title: string) {
+    const headerNode = sectionRefs.current["student-modal-export-header"];
+    const interpretationNode = sectionRefs.current["student-modal-export-interpretation"];
+    const visualsNode = sectionRefs.current["student-modal-export-visuals"];
+    const exportNodes = [headerNode, interpretationNode, visualsNode].filter(
+      (node): node is HTMLDivElement => Boolean(node),
+    );
+
+    if (exportNodes.length !== 3) {
+      setError("Could not prepare the CAT4 student report export");
+      return;
+    }
+
+    const captureOptions = {
+      cacheBust: true,
+      pixelRatio: 2,
+      backgroundColor: "#ffffff",
+    } as const;
+
+    const capturedSections = await Promise.all(
+      exportNodes.map(async (node) => {
+        const imageData = await toPng(node, captureOptions);
+        const img = new Image();
+        img.src = imageData;
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error("student-export-image-load-failed"));
+        });
+        return { imageData, width: img.width, height: img.height };
+      }),
+    );
+
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 32;
+    const headerHeight = 74;
+    const footerHeight = 26;
+    const sectionGap = 18;
+    const contentWidth = pageWidth - margin * 2;
+    const maxSectionHeight = pageHeight - headerHeight - footerHeight - margin;
+    const exportDate = new Date().toLocaleDateString("en-IE", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+    const reportTitle = teacherSchoolName || "Elume CAT4 Report";
+    let logo: HTMLImageElement | null = null;
+
+    try {
+      logo = await loadBrandLogo();
+    } catch {
+      logo = null;
+    }
+
+    const drawHeader = () => {
+      if (logo) {
+        doc.addImage(logo, "PNG", margin, 18, 26, 26);
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(17);
+      doc.setTextColor(15, 23, 42);
+      doc.text(reportTitle, margin + (logo ? 36 : 0), 34);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.setTextColor(71, 85, 105);
+      doc.text(title, margin, 58);
+    };
+
+    const drawFooter = (pageNumber: number) => {
+      const footerY = pageHeight - 18;
+      doc.setDrawColor(226, 232, 240);
+      doc.line(margin, pageHeight - 34, pageWidth - margin, pageHeight - 34);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      if (logo) {
+        doc.addImage(logo, "PNG", margin, pageHeight - 30, 12, 12);
+      }
+      doc.text("Elume", margin + (logo ? 18 : 0), footerY);
+      doc.text(`Exported ${exportDate}`, pageWidth / 2, footerY, { align: "center" });
+      doc.text(`Page ${pageNumber}`, pageWidth - margin, footerY, { align: "right" });
+    };
+
+    let pageNumber = 1;
+    let cursorY = headerHeight;
+    drawHeader();
+    drawFooter(pageNumber);
+
+    capturedSections.forEach((section) => {
+      const scale = Math.min(contentWidth / section.width, maxSectionHeight / section.height);
+      const drawWidth = section.width * scale;
+      const drawHeight = section.height * scale;
+
+      if (cursorY > headerHeight && cursorY + drawHeight > pageHeight - footerHeight - margin) {
+        doc.addPage();
+        pageNumber += 1;
+        drawHeader();
+        drawFooter(pageNumber);
+        cursorY = headerHeight;
+      }
+
+      doc.addImage(section.imageData, "PNG", margin, cursorY, drawWidth, drawHeight);
+      cursorY += drawHeight + sectionGap;
+    });
+
+    doc.save(`elume-cat4-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.pdf`);
+  }
+
   async function loadBrandLogo() {
     return new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
@@ -1373,6 +1482,16 @@ export default function Cat4InsightsPage() {
   }
 
   async function exportSectionPdf(sectionKey: string, title: string) {
+    if (sectionKey === "student-modal-report") {
+      try {
+        setError(null);
+        await exportStudentModalPdf(title);
+      } catch {
+        setError("Could not export this CAT4 student report to PDF");
+      }
+      return;
+    }
+
     const node = sectionRefs.current[sectionKey];
     if (!node) {
       setError("Could not find that CAT4 section to export");
@@ -2782,6 +2901,28 @@ export default function Cat4InsightsPage() {
                 </div>
               </div>
 
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm font-bold text-slate-900">Current subject mapping used for CAT4 domain analysis</div>
+                <div className="mt-1 text-sm text-slate-600">Default subject-to-domain mapping used for Elume&apos;s current CAT4 domain analysis.</div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                    <span className="font-semibold text-slate-900">Verbal:</span> English, Irish, French, Spanish, History, Geography, Business Studies
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                    <span className="font-semibold text-slate-900">Quantitative:</span> Mathematics, Science, Business Studies, Graphics
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                    <span className="font-semibold text-slate-900">Non-Verbal:</span> Science, Graphics, Geography, Visual Art
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                    <span className="font-semibold text-slate-900">Spatial:</span> Graphics, Geography, Visual Art, Home Economics, Science
+                  </div>
+                </div>
+                <div className="mt-3 text-xs text-slate-500">
+                  Some subjects contribute to more than one CAT4 domain. This overlap is intentional in the current default mapping.
+                </div>
+              </div>
+
               <div className="grid gap-4 xl:grid-cols-2">
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
@@ -3142,6 +3283,209 @@ export default function Cat4InsightsPage() {
                   <StudentDomainDoughnut row={modalStudentRow || selectedHistoryStudent} />
                 </div>
               </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedHistoryStudent && (
+          <div className="pointer-events-none fixed -left-[10000px] top-0 z-[-1] w-[960px] bg-white p-6" aria-hidden="true">
+            <div ref={setSectionRef("student-modal-export-header")} className="rounded-[28px] border-2 border-slate-200 bg-white p-6 shadow-[0_8px_30px_rgba(15,23,42,0.08)]">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[28px] font-extrabold tracking-tight text-slate-900">{selectedHistoryStudent.student_name}</div>
+                  {!!selectedHistoryStudent.profile_label && (
+                    <div className="mt-1 text-sm text-slate-500">{selectedHistoryStudent.profile_label}</div>
+                  )}
+                </div>
+                <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">CAT4 Student Report</div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-4 gap-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Latest Average</div>
+                  <div className="mt-2 text-2xl font-extrabold text-slate-900">{pct(selectedHistoryStudent.latest_average_percent)}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Previous Average</div>
+                  <div className="mt-2 text-2xl font-extrabold text-slate-900">{pct(selectedHistoryStudent.previous_average_percent)}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Change</div>
+                  <div className={`mt-2 text-2xl font-extrabold ${typeof selectedHistoryStudent.trend_delta === "number" && selectedHistoryStudent.trend_delta < 0 ? "text-rose-700" : "text-slate-900"}`}>
+                    {signedPct(selectedHistoryStudent.trend_delta)}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">CAT4 Movement</div>
+                  <div className={`mt-2 text-2xl font-extrabold ${typeof (selectedHistoryStudent.movement_score ?? selectedHistoryStudent.value_added_delta) === "number" && (selectedHistoryStudent.movement_score ?? selectedHistoryStudent.value_added_delta)! < 0 ? "text-rose-700" : "text-slate-900"}`}>
+                    {signedOneDecimal(selectedHistoryStudent.movement_score ?? selectedHistoryStudent.value_added_delta)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div ref={setSectionRef("student-modal-export-interpretation")} className="mt-5 rounded-[28px] border-2 border-slate-200 bg-slate-50 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.05)]">
+              <div>
+                <div className="text-sm font-bold text-slate-900">Elume's Interpretation</div>
+                <div className="mt-1 text-xs text-slate-500">Plain-English interpretation of the current CAT4 picture, based on the available comparison data.</div>
+              </div>
+
+              {selectedInterpretation?.explanation ? (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="mb-3">
+                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${selectedInterpretation.source === "fallback" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
+                      {selectedInterpretation.source === "fallback" ? "Elume fallback summary" : "Elume summary"}
+                    </span>
+                  </div>
+                  <div className="text-sm leading-6 text-slate-700">{selectedInterpretation.explanation}</div>
+                  <div className="mt-4 border-t border-slate-100 pt-3">
+                    <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Based on facts</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {hasMeaningfulFact(selectedInterpretation.facts.latest_average_percent) ? (
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          Latest {pct(selectedInterpretation.facts.latest_average_percent)}
+                        </span>
+                      ) : null}
+                      {hasMeaningfulFact(selectedInterpretation.facts.previous_average_percent) ? (
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          Previous {pct(selectedInterpretation.facts.previous_average_percent)}
+                        </span>
+                      ) : null}
+                      {hasMeaningfulFact(selectedInterpretation.facts.trend_delta) ? (
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          Change {signedPct(selectedInterpretation.facts.trend_delta)}
+                        </span>
+                      ) : null}
+                      {hasMeaningfulFact(selectedInterpretation.facts.movement_score) ? (
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          CAT4-relative movement {signedOneDecimal(selectedInterpretation.facts.movement_score)}
+                        </span>
+                      ) : null}
+                      {hasMeaningfulFact(selectedInterpretation.facts.comparison_confidence) ? (
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          Confidence {selectedInterpretation.facts.comparison_confidence}
+                        </span>
+                      ) : null}
+                      {selectedInterpretation.facts.discrepancy_label ? (
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                          {selectedInterpretation.facts.discrepancy_label}
+                        </span>
+                      ) : null}
+                      {selectedInterpretation.facts.primary_concern_domain ? (
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(selectedInterpretation.facts.primary_concern_domain)}`}>
+                          Concern {selectedInterpretation.facts.primary_concern_domain}
+                        </span>
+                      ) : null}
+                      {selectedInterpretation.facts.primary_strength_domain ? (
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${domainPillTone(selectedInterpretation.facts.primary_strength_domain)}`}>
+                          Strength {selectedInterpretation.facts.primary_strength_domain}
+                        </span>
+                      ) : null}
+                      {selectedInterpretation.facts.subject_basket_changed ? (
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                          Basket changed
+                        </span>
+                      ) : null}
+                      {selectedInterpretation.facts.level_change_detected ? (
+                        <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-900">
+                          Level changed
+                        </span>
+                      ) : null}
+                      {selectedInterpretation.facts.missed_results_flag ? (
+                        <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-800">
+                          Missing results
+                        </span>
+                      ) : null}
+                      {selectedInterpretation.facts.low_coverage_flag ? (
+                        <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          Limited interpretation
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+                  {selectedInterpretationError || "Interpretation has not been generated yet. Generate an interpretation in Elume to include the written comment in this report."}
+                </div>
+              )}
+            </div>
+
+            <div ref={setSectionRef("student-modal-export-visuals")} className="mt-5 grid grid-cols-[minmax(0,1.7fr)_280px] gap-5">
+              <div className="rounded-[28px] border-2 border-slate-200 bg-white p-5 shadow-[0_8px_30px_rgba(15,23,42,0.05)]">
+                <div className="text-sm font-bold text-slate-900">Attainment History</div>
+                <div className="mt-1 text-xs text-slate-500">Student average compared with cohort average across recorded CAT4 terms.</div>
+                {selectedHistoryBusy && (
+                  <div className="mt-4 text-sm text-slate-500">Loading...</div>
+                )}
+
+                {!selectedHistoryBusy && selectedHistory?.points?.length ? (
+                  <>
+                    <div className="mt-4 flex justify-center rounded-2xl border border-slate-100 bg-slate-50 px-3 py-5">
+                      <Sparkline points={selectedHistory.points.slice(-8)} />
+                    </div>
+
+                    <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                      {selectedHistory.points
+                        .slice()
+                        .reverse()
+                        .map((point) => {
+                          const delta =
+                            typeof point.student === "number" && typeof point.cohort_avg === "number"
+                              ? Math.round((point.student - point.cohort_avg) * 10) / 10
+                              : null;
+
+                          return (
+                            <div
+                              key={`export-${point.term_set_id}`}
+                              className="flex items-center justify-between gap-3 border-b border-slate-200/70 py-2 last:border-b-0"
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-slate-800">
+                                  {point.title}
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  {point.date ? point.date.slice(0, 10) : ""}
+                                </div>
+                              </div>
+
+                              <div className="shrink-0 text-right">
+                                <div className="text-sm font-extrabold text-slate-900">
+                                  {point.student == null ? "-" : `${point.student}%`}
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  {typeof point.cohort_avg === "number" ? `cohort ${point.cohort_avg}%` : "cohort -"}
+                                  {delta != null && (
+                                    <span className={delta >= 0 ? "ml-1 text-emerald-700" : "ml-1 text-rose-700"}>
+                                      ({delta >= 0 ? "+" : ""}
+                                      {delta})
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+
+                    <div className="mt-3 text-xs text-slate-500">
+                      Solid = student average · Dotted red = cohort average
+                    </div>
+                  </>
+                ) : null}
+
+                {!selectedHistoryBusy && !selectedHistory?.points?.length && (
+                  <div className="mt-4 text-sm text-slate-500">No CAT4 cohort history available yet.</div>
+                )}
+              </div>
+
+              <div className="rounded-[28px] border-2 border-slate-200 bg-white p-5 shadow-[0_8px_30px_rgba(15,23,42,0.05)]">
+                <div className="text-sm font-bold text-slate-900">CAT4 Domain Profile</div>
+                <div className="mt-1 text-xs text-slate-500">Shows which CAT4 areas are currently above or below expectation for this student.</div>
+                <div className="mt-4">
+                  <StudentDomainDoughnut row={modalStudentRow || selectedHistoryStudent} />
+                </div>
               </div>
             </div>
           </div>
