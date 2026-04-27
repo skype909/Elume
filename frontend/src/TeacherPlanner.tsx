@@ -550,6 +550,10 @@ export default function TeacherPlanner() {
     }, [tasks]);
 
     const [showArchived, setShowArchived] = useState(false);
+    const [tasksCollapsed, setTasksCollapsed] = useState(() => {
+        if (typeof window === "undefined") return false;
+        return window.innerWidth < 1024;
+    });
 
     function openSlot(dayIndex: number, slotIndex: number) {
         const existing = notesByCell.get(`${dayIndex}:${slotIndex}`);
@@ -775,7 +779,7 @@ export default function TeacherPlanner() {
                             {hasEvents ? <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-rose-500" /> : null}
                         </button>
                         {hasEvents && eventsPreviewDayISO === iso ? (
-                            <div className="absolute right-0 top-10 z-50 w-72 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-[0_16px_36px_rgba(15,23,42,0.14)] backdrop-blur-xl">
+                            <div className="absolute right-0 top-10 z-[70] w-72 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-[0_16px_36px_rgba(15,23,42,0.14)] backdrop-blur-xl">
                                 <div className="flex items-center justify-between gap-2">
                                     <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">Calendar Events</div>
                                     <div className="text-[11px] font-semibold text-slate-500">{evs.length}</div>
@@ -898,7 +902,7 @@ export default function TeacherPlanner() {
                     </div>
 
                     <div className="relative">
-                        <div className="absolute left-0 top-[20%] z-10 hidden -translate-x-[112%] lg:flex">
+                        <div className="absolute left-0 top-[20%] z-0 hidden -translate-x-[112%] lg:flex">
                             <WeekArrowButton
                                 direction="left"
                                 label="Go to previous week"
@@ -906,7 +910,7 @@ export default function TeacherPlanner() {
                             />
                         </div>
 
-                        <div className="absolute right-0 top-[20%] z-10 hidden translate-x-[112%] justify-end lg:flex">
+                        <div className="absolute right-0 top-[20%] z-0 hidden translate-x-[112%] justify-end lg:flex">
                             <WeekArrowButton
                                 direction="right"
                                 label="Go to next week"
@@ -914,7 +918,7 @@ export default function TeacherPlanner() {
                             />
                         </div>
 
-                        <div className="rounded-[34px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+                        <div className="relative z-10 rounded-[34px] border border-white/70 bg-white/80 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
                             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                             <div>
                                 <div className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Planner layout</div>
@@ -1261,16 +1265,27 @@ export default function TeacherPlanner() {
                                 <div className="text-[12px] text-slate-500">Quick checklist • archive for reuse</div>
                             </div>
 
-                            <button
-                                type="button"
-                                onClick={() => setShowArchived((s) => !s)}
-                                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-                            >
-                                {showArchived ? "Active" : "Archived"}
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {!tasksCollapsed ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowArchived((s) => !s)}
+                                        className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                                    >
+                                        {showArchived ? "Active" : "Archived"}
+                                    </button>
+                                ) : null}
+                                <button
+                                    type="button"
+                                    onClick={() => setTasksCollapsed((s) => !s)}
+                                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                                >
+                                    {tasksCollapsed ? "Expand" : "Collapse"}
+                                </button>
+                            </div>
                         </div>
 
-                        {!showArchived ? (
+                        {!tasksCollapsed && !showArchived ? (
                             <>
                                 <div className="mt-4 grid gap-2">
                                     <input
@@ -1354,7 +1369,7 @@ export default function TeacherPlanner() {
                                     )}
                                 </div>
                             </>
-                        ) : (
+                        ) : !tasksCollapsed ? (
                             <div className="mt-4 grid max-h-[58vh] gap-2 overflow-auto pr-1">
                                 {archivedTasks.length === 0 ? (
                                     <div className="text-sm text-slate-600">No archived tasks.</div>
@@ -1393,6 +1408,17 @@ export default function TeacherPlanner() {
                                     ))
                                 )}
                             </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => setTasksCollapsed(false)}
+                                className="mt-4 flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-slate-50"
+                            >
+                                <span className="text-sm font-semibold text-slate-800">
+                                    {activeTasks.length} active task{activeTasks.length === 1 ? "" : "s"}
+                                </span>
+                                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Open</span>
+                            </button>
                         )}
                     </div>
                 </div>

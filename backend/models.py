@@ -172,6 +172,8 @@ class Cat4BaselineSetModel(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=False, index=True)
+    cohort_key = Column(String, nullable=False, default="default", index=True)
+    cohort_name = Column(String, nullable=False, default="Default Cohort")
     title = Column(String, nullable=False)
     test_date = Column(DateTime, nullable=True)
     is_locked = Column(Boolean, nullable=False, default=False)
@@ -202,6 +204,8 @@ class Cat4TermResultSetModel(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=False, index=True)
+    cohort_key = Column(String, nullable=False, default="default", index=True)
+    cohort_name = Column(String, nullable=False, default="Default Cohort")
     title = Column(String, nullable=False)
     academic_year = Column(String, nullable=True)
     term_key = Column(String, nullable=True)
@@ -231,6 +235,8 @@ class Cat4WorkbookVersionModel(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=False, index=True)
+    cohort_key = Column(String, nullable=False, default="default", index=True)
+    cohort_name = Column(String, nullable=False, default="Default Cohort")
     version_number = Column(Integer, nullable=False)
     workbook_name = Column(String, nullable=False)
     uploaded_by_email = Column(String, nullable=False)

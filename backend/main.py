@@ -43,7 +43,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, Column, Integer, String, Text, Boolean, func
+from sqlalchemy import and_, Column, Integer, String, Text, Boolean, func, inspect as sa_inspect
 from sqlalchemy import text
 from fastapi import Header
 from passlib.context import CryptContext
@@ -51,6 +51,7 @@ from jose import jwt, JWTError
 import secrets
 
 import logging
+from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +210,8 @@ class AdminTransferClassPayload(BaseModel):
 class Cat4BaselineSetCreatePayload(BaseModel):
     title: str
     test_date: Optional[str] = None
+    cohort_key: Optional[str] = None
+    cohort_name: Optional[str] = None
 
 
 class Cat4BaselineRowInput(BaseModel):
@@ -230,6 +233,8 @@ class Cat4TermResultSetCreatePayload(BaseModel):
     title: str
     academic_year: Optional[str] = None
     term_key: Optional[str] = None
+    cohort_key: Optional[str] = None
+    cohort_name: Optional[str] = None
 
 
 class Cat4TermResultRowInput(BaseModel):
@@ -2977,28 +2982,246 @@ def _get_owned_class_for_cat4_or_403(
     return get_owned_class_or_404(class_id, db, user)
 
 
-def _cat4_baseline_sets_for_class(class_id: int, db: Session) -> list[Cat4BaselineSetModel]:
-    return (
-        db.query(Cat4BaselineSetModel)
-        .filter(Cat4BaselineSetModel.class_id == class_id)
-        .order_by(Cat4BaselineSetModel.test_date.desc(), Cat4BaselineSetModel.created_at.desc(), Cat4BaselineSetModel.id.desc())
-        .all()
-    )
+def _cat4_baseline_sets_for_class(class_id: int, db: Session, cohort_key: Optional[str] = None) -> list[Cat4BaselineSetModel]:
+    query = db.query(Cat4BaselineSetModel).filter(Cat4BaselineSetModel.class_id == class_id)
+    if cohort_key is not None:
+        query = query.filter(Cat4BaselineSetModel.cohort_key == _normalise_cat4_cohort_key(cohort_key))
+    return query.order_by(Cat4BaselineSetModel.test_date.desc(), Cat4BaselineSetModel.created_at.desc(), Cat4BaselineSetModel.id.desc()).all()
 
 
-def _cat4_term_sets_for_class(class_id: int, db: Session) -> list[Cat4TermResultSetModel]:
-    return (
-        db.query(Cat4TermResultSetModel)
-        .filter(Cat4TermResultSetModel.class_id == class_id)
-        .order_by(Cat4TermResultSetModel.created_at.desc(), Cat4TermResultSetModel.id.desc())
-        .all()
-    )
+def _cat4_term_sets_for_class(class_id: int, db: Session, cohort_key: Optional[str] = None) -> list[Cat4TermResultSetModel]:
+    query = db.query(Cat4TermResultSetModel).filter(Cat4TermResultSetModel.class_id == class_id)
+    if cohort_key is not None:
+        query = query.filter(Cat4TermResultSetModel.cohort_key == _normalise_cat4_cohort_key(cohort_key))
+    term_sets = query.all()
+    return sorted(term_sets, key=_cat4_term_sort_key, reverse=True)
 
 
-def _build_cat4_meta_payload(class_id: int, db: Session) -> dict[str, Any]:
-    baseline_sets = _cat4_baseline_sets_for_class(class_id, db)
-    term_sets = _cat4_term_sets_for_class(class_id, db)
+def _cat4_table_columns(db: Session, table_name: str) -> set[str]:
+    try:
+        bind = db.get_bind()
+        inspector = sa_inspect(bind)
+        return {str(column.get("name")) for column in inspector.get_columns(table_name) if column.get("name")}
+    except Exception:
+        return set()
+
+
+def _cat4_cohort_columns_available(db: Session) -> bool:
+    required_columns = {
+        "cat4_baseline_sets": {"cohort_key", "cohort_name"},
+        "cat4_term_result_sets": {"cohort_key", "cohort_name"},
+        "cat4_workbook_versions": {"cohort_key", "cohort_name"},
+    }
+    for table_name, columns in required_columns.items():
+        if not columns.issubset(_cat4_table_columns(db, table_name)):
+            return False
+    return True
+
+
+def _cat4_format_db_datetime(value: Any, *, date_only: bool = False) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat() if date_only else value.isoformat()
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    if date_only:
+        return text_value[:10]
+    return text_value
+
+
+def _build_cat4_meta_payload_legacy(class_id: int, db: Session) -> dict[str, Any]:
+    baseline_sets = [
+        dict(row._mapping)
+        for row in db.execute(
+            text(
+                """
+                SELECT id, title, test_date, is_locked, locked_at, created_at
+                FROM cat4_baseline_sets
+                WHERE class_id = :class_id
+                ORDER BY test_date DESC, created_at DESC, id DESC
+                """
+            ),
+            {"class_id": class_id},
+        ).fetchall()
+    ]
+    term_sets = [
+        dict(row._mapping)
+        for row in db.execute(
+            text(
+                """
+                SELECT id, title, academic_year, term_key, created_at
+                FROM cat4_term_result_sets
+                WHERE class_id = :class_id
+                ORDER BY created_at DESC, id DESC
+                """
+            ),
+            {"class_id": class_id},
+        ).fetchall()
+    ]
+    workbook_versions = [
+        dict(row._mapping)
+        for row in db.execute(
+            text(
+                """
+                SELECT id, version_number, workbook_name, uploaded_by_email, uploaded_at, is_active, validation_summary_json
+                FROM cat4_workbook_versions
+                WHERE class_id = :class_id
+                ORDER BY version_number DESC, uploaded_at DESC
+                """
+            ),
+            {"class_id": class_id},
+        ).fetchall()
+    ]
+    baseline_rows = [
+        dict(row._mapping)
+        for row in db.execute(
+            text(
+                """
+                SELECT baseline_set_id, student_id
+                FROM cat4_student_baselines
+                WHERE class_id = :class_id
+                """
+            ),
+            {"class_id": class_id},
+        ).fetchall()
+    ]
+    term_rows = [
+        dict(row._mapping)
+        for row in db.execute(
+            text(
+                """
+                SELECT result_set_id, student_id
+                FROM cat4_student_term_results
+                WHERE class_id = :class_id
+                """
+            ),
+            {"class_id": class_id},
+        ).fetchall()
+    ]
+
+    baseline_rows_by_set: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for row in baseline_rows:
+        baseline_set_id = row.get("baseline_set_id")
+        if baseline_set_id is not None:
+            baseline_rows_by_set[int(baseline_set_id)].append(row)
+
+    term_rows_by_set: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for row in term_rows:
+        result_set_id = row.get("result_set_id")
+        if result_set_id is not None:
+            term_rows_by_set[int(result_set_id)].append(row)
+
+    def _legacy_set_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
+        row_count = len(rows)
+        matched_count = sum(1 for row in rows if row.get("student_id") is not None)
+        return {
+            "row_count": row_count,
+            "matched_count": matched_count,
+            "unmatched_count": max(0, row_count - matched_count),
+        }
+
+    baseline_total = len(baseline_rows)
+    baseline_unmatched = sum(1 for row in baseline_rows if row.get("student_id") is None)
+    term_total = len(term_rows)
+    term_unmatched = sum(1 for row in term_rows if row.get("student_id") is None)
+
+    return {
+        "feature_enabled": True,
+        "selected_cohort": {
+            "key": CAT4_DEFAULT_COHORT_KEY,
+            "name": CAT4_DEFAULT_COHORT_NAME,
+        },
+        "cohorts": [
+            {
+                "key": CAT4_DEFAULT_COHORT_KEY,
+                "name": CAT4_DEFAULT_COHORT_NAME,
+                "baseline_count": len(baseline_sets),
+                "term_count": len(term_sets),
+                "workbook_count": len(workbook_versions),
+            }
+        ],
+        "active_workbook": next(
+            (
+                {
+                    "id": item["id"],
+                    "version_number": item["version_number"],
+                    "workbook_name": item["workbook_name"],
+                    "uploaded_by_email": item["uploaded_by_email"],
+                    "uploaded_at": _cat4_format_db_datetime(item.get("uploaded_at")),
+                    "cohort_key": CAT4_DEFAULT_COHORT_KEY,
+                    "cohort_name": CAT4_DEFAULT_COHORT_NAME,
+                    "validation_summary": json.loads(item.get("validation_summary_json") or "{}"),
+                }
+                for item in workbook_versions
+                if bool(item.get("is_active"))
+            ),
+            None,
+        ),
+        "workbook_versions": [
+            {
+                "id": item["id"],
+                "version_number": item["version_number"],
+                "workbook_name": item["workbook_name"],
+                "uploaded_by_email": item["uploaded_by_email"],
+                "uploaded_at": _cat4_format_db_datetime(item.get("uploaded_at")),
+                "is_active": bool(item.get("is_active")),
+                "cohort_key": CAT4_DEFAULT_COHORT_KEY,
+                "cohort_name": CAT4_DEFAULT_COHORT_NAME,
+                "validation_summary": json.loads(item.get("validation_summary_json") or "{}"),
+            }
+            for item in workbook_versions
+        ],
+        "baseline_sets": [
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "test_date": _cat4_format_db_datetime(item.get("test_date"), date_only=True),
+                "is_locked": bool(item.get("is_locked")),
+                "locked_at": _cat4_format_db_datetime(item.get("locked_at")),
+                "created_at": _cat4_format_db_datetime(item.get("created_at")),
+                "cohort_key": CAT4_DEFAULT_COHORT_KEY,
+                "cohort_name": CAT4_DEFAULT_COHORT_NAME,
+                **_legacy_set_summary(baseline_rows_by_set.get(int(item["id"]), [])),
+            }
+            for item in baseline_sets
+        ],
+        "term_sets": [
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "academic_year": item.get("academic_year"),
+                "term_key": item.get("term_key"),
+                "created_at": _cat4_format_db_datetime(item.get("created_at")),
+                "cohort_key": CAT4_DEFAULT_COHORT_KEY,
+                "cohort_name": CAT4_DEFAULT_COHORT_NAME,
+                **_legacy_set_summary(term_rows_by_set.get(int(item["id"]), [])),
+            }
+            for item in term_sets
+        ],
+        "matched_counts": {
+            "baseline_rows": baseline_total,
+            "baseline_unmatched": baseline_unmatched,
+            "term_rows": term_total,
+            "term_unmatched": term_unmatched,
+        },
+    }
+
+
+def _build_cat4_meta_payload(class_id: int, db: Session, cohort_key: Optional[str] = None) -> dict[str, Any]:
+    requested_cohort_key = _normalise_cat4_cohort_key(cohort_key)
+    baseline_sets = _cat4_baseline_sets_for_class(class_id, db, requested_cohort_key)
+    term_sets = _cat4_term_sets_for_class(class_id, db, requested_cohort_key)
+    all_baseline_sets = _cat4_baseline_sets_for_class(class_id, db)
+    all_term_sets = _cat4_term_sets_for_class(class_id, db)
     workbook_versions = (
+        db.query(Cat4WorkbookVersionModel)
+        .filter(Cat4WorkbookVersionModel.class_id == class_id, Cat4WorkbookVersionModel.cohort_key == requested_cohort_key)
+        .order_by(Cat4WorkbookVersionModel.version_number.desc(), Cat4WorkbookVersionModel.uploaded_at.desc())
+        .all()
+    )
+    all_workbook_versions = (
         db.query(Cat4WorkbookVersionModel)
         .filter(Cat4WorkbookVersionModel.class_id == class_id)
         .order_by(Cat4WorkbookVersionModel.version_number.desc(), Cat4WorkbookVersionModel.uploaded_at.desc())
@@ -3032,9 +3255,41 @@ def _build_cat4_meta_payload(class_id: int, db: Session) -> dict[str, Any]:
         term_rows_by_set[row.result_set_id].append(row)
 
     overall_match_counts = _cat4_match_counts_for_rows(baseline_rows, term_rows)
+    cohort_counts: dict[str, dict[str, Any]] = {}
+    for item in all_baseline_sets:
+        cohort_counts.setdefault(
+            item.cohort_key,
+            {"key": item.cohort_key, "name": _cat4_cohort_name(item.cohort_name, item.cohort_key), "baseline_count": 0, "term_count": 0, "workbook_count": 0},
+        )["baseline_count"] += 1
+    for item in all_term_sets:
+        cohort_counts.setdefault(
+            item.cohort_key,
+            {"key": item.cohort_key, "name": _cat4_cohort_name(item.cohort_name, item.cohort_key), "baseline_count": 0, "term_count": 0, "workbook_count": 0},
+        )["term_count"] += 1
+    for item in all_workbook_versions:
+        cohort_counts.setdefault(
+            item.cohort_key,
+            {"key": item.cohort_key, "name": _cat4_cohort_name(item.cohort_name, item.cohort_key), "baseline_count": 0, "term_count": 0, "workbook_count": 0},
+        )["workbook_count"] += 1
+    if not cohort_counts:
+        cohort_counts[requested_cohort_key] = {
+            "key": requested_cohort_key,
+            "name": _cat4_cohort_name(None, requested_cohort_key),
+            "baseline_count": 0,
+            "term_count": 0,
+            "workbook_count": 0,
+        }
 
     return {
         "feature_enabled": True,
+        "selected_cohort": {
+            "key": requested_cohort_key,
+            "name": _cat4_cohort_name(
+                cohort_counts.get(requested_cohort_key, {}).get("name"),
+                requested_cohort_key,
+            ),
+        },
+        "cohorts": sorted(cohort_counts.values(), key=lambda item: (item["name"].lower(), item["key"])),
         "active_workbook": next(
             (
                 {
@@ -3043,6 +3298,8 @@ def _build_cat4_meta_payload(class_id: int, db: Session) -> dict[str, Any]:
                     "workbook_name": item.workbook_name,
                     "uploaded_by_email": item.uploaded_by_email,
                     "uploaded_at": item.uploaded_at.isoformat() if item.uploaded_at else None,
+                    "cohort_key": item.cohort_key,
+                    "cohort_name": _cat4_cohort_name(item.cohort_name, item.cohort_key),
                     "validation_summary": json.loads(item.validation_summary_json or "{}"),
                 }
                 for item in workbook_versions
@@ -3058,6 +3315,8 @@ def _build_cat4_meta_payload(class_id: int, db: Session) -> dict[str, Any]:
                 "uploaded_by_email": item.uploaded_by_email,
                 "uploaded_at": item.uploaded_at.isoformat() if item.uploaded_at else None,
                 "is_active": bool(item.is_active),
+                "cohort_key": item.cohort_key,
+                "cohort_name": _cat4_cohort_name(item.cohort_name, item.cohort_key),
                 "validation_summary": json.loads(item.validation_summary_json or "{}"),
             }
             for item in workbook_versions
@@ -3070,6 +3329,8 @@ def _build_cat4_meta_payload(class_id: int, db: Session) -> dict[str, Any]:
                 "is_locked": bool(item.is_locked),
                 "locked_at": item.locked_at.isoformat() if item.locked_at else None,
                 "created_at": item.created_at.isoformat() if item.created_at else None,
+                "cohort_key": item.cohort_key,
+                "cohort_name": _cat4_cohort_name(item.cohort_name, item.cohort_key),
                 **_cat4_set_summary(baseline_rows_by_set.get(item.id, [])),
             }
             for item in baseline_sets
@@ -3081,6 +3342,8 @@ def _build_cat4_meta_payload(class_id: int, db: Session) -> dict[str, Any]:
                 "academic_year": item.academic_year,
                 "term_key": item.term_key,
                 "created_at": item.created_at.isoformat() if item.created_at else None,
+                "cohort_key": item.cohort_key,
+                "cohort_name": _cat4_cohort_name(item.cohort_name, item.cohort_key),
                 **_cat4_set_summary(term_rows_by_set.get(item.id, [])),
             }
             for item in term_sets
@@ -3094,57 +3357,122 @@ def _build_cat4_meta_payload(class_id: int, db: Session) -> dict[str, Any]:
     }
 
 
-def _build_cat4_term_entry_payload(
-    class_id: int,
-    db: Session,
+def _cat4_namespace_rows(rows: list[dict[str, Any]]) -> list[SimpleNamespace]:
+    return [SimpleNamespace(**row) for row in rows]
+
+
+def _cat4_legacy_baseline_sets_for_class(class_id: int, db: Session) -> list[SimpleNamespace]:
+    rows = [
+        dict(row._mapping)
+        for row in db.execute(
+            text(
+                """
+                SELECT id, class_id, title, test_date, is_locked, locked_at, created_at
+                FROM cat4_baseline_sets
+                WHERE class_id = :class_id
+                """
+            ),
+            {"class_id": class_id},
+        ).fetchall()
+    ]
+    baseline_sets = _cat4_namespace_rows(rows)
+    baseline_sets.sort(
+        key=lambda item: (
+            item.test_date or datetime.min,
+            item.created_at or datetime.min,
+            int(item.id or 0),
+        ),
+        reverse=True,
+    )
+    return baseline_sets
+
+
+def _cat4_legacy_term_sets_for_class(class_id: int, db: Session) -> list[SimpleNamespace]:
+    rows = [
+        dict(row._mapping)
+        for row in db.execute(
+            text(
+                """
+                SELECT id, class_id, title, academic_year, term_key, created_at
+                FROM cat4_term_result_sets
+                WHERE class_id = :class_id
+                """
+            ),
+            {"class_id": class_id},
+        ).fetchall()
+    ]
+    term_sets = _cat4_namespace_rows(rows)
+    return sorted(term_sets, key=_cat4_term_sort_key, reverse=True)
+
+
+def _cat4_legacy_baseline_rows_for_set(baseline_set_id: int, db: Session) -> list[SimpleNamespace]:
+    rows = [
+        dict(row._mapping)
+        for row in db.execute(
+            text(
+                """
+                SELECT id, baseline_set_id, class_id, student_id, raw_name, matched_name,
+                       verbal_sas, quantitative_sas, non_verbal_sas, spatial_sas,
+                       overall_sas, profile_label, confidence_note
+                FROM cat4_student_baselines
+                WHERE baseline_set_id = :baseline_set_id
+                """
+            ),
+            {"baseline_set_id": baseline_set_id},
+        ).fetchall()
+    ]
+    return _cat4_namespace_rows(rows)
+
+
+def _cat4_legacy_term_rows_for_set(result_set_id: int, db: Session) -> list[SimpleNamespace]:
+    rows = [
+        dict(row._mapping)
+        for row in db.execute(
+            text(
+                """
+                SELECT id, result_set_id, class_id, student_id, raw_name, matched_name,
+                       average_percent, subject_count, raw_subjects_json,
+                       verbal_domain_score, quantitative_domain_score,
+                       non_verbal_domain_score, spatial_domain_score
+                FROM cat4_student_term_results
+                WHERE result_set_id = :result_set_id
+                """
+            ),
+            {"result_set_id": result_set_id},
+        ).fetchall()
+    ]
+    return _cat4_namespace_rows(rows)
+
+
+def _cat4_build_term_entry_payload_from_loaded(
+    baseline_sets: list[Any],
+    term_sets: list[Any],
+    baseline_rows: list[Any],
+    term_rows: list[Any],
     baseline_id: Optional[int] = None,
     term_set_id: Optional[int] = None,
 ) -> dict[str, Any]:
-    baseline_sets = _cat4_baseline_sets_for_class(class_id, db)
-    term_sets = _cat4_term_sets_for_class(class_id, db)
-
     if not baseline_sets:
+        empty_term = next((item for item in term_sets if item.id == term_set_id), None) if term_set_id else (term_sets[0] if term_sets else None)
         return {
             "feature_enabled": True,
             "baseline_set": None,
-            "term_set": next((item for item in term_sets if item.id == term_set_id), None) if term_set_id else (term_sets[0] if term_sets else None),
+            "term_set": (
+                {
+                    "id": empty_term.id,
+                    "title": empty_term.title,
+                    "academic_year": empty_term.academic_year,
+                    "term_key": empty_term.term_key,
+                    "created_at": empty_term.created_at.isoformat() if empty_term and empty_term.created_at else None,
+                }
+                if empty_term
+                else None
+            ),
             "rows": [],
         }
 
     selected_baseline = next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]) if baseline_id else baseline_sets[0]
     selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_set_id else (term_sets[0] if term_sets else None)
-
-    baseline_rows = (
-        db.query(Cat4StudentBaselineModel)
-        .filter(Cat4StudentBaselineModel.baseline_set_id == selected_baseline.id)
-        .all()
-    )
-    prior_term_sets = []
-    if selected_term:
-        selected_term_order = [
-            term.id
-            for term in sorted(term_sets, key=lambda item: (item.created_at or datetime.min, item.id))
-        ]
-        if selected_term.id in selected_term_order:
-            selected_index = selected_term_order.index(selected_term.id)
-            prior_term_set_ids = selected_term_order[:selected_index]
-            prior_order_index = {term_id: index for index, term_id in enumerate(prior_term_set_ids)}
-            prior_term_sets = (
-                db.query(Cat4StudentTermResultModel)
-                .filter(Cat4StudentTermResultModel.result_set_id.in_(prior_term_set_ids))
-                .all()
-                if prior_term_set_ids
-                else []
-            )
-        else:
-            prior_term_sets = []
-    term_rows = (
-        db.query(Cat4StudentTermResultModel)
-        .filter(Cat4StudentTermResultModel.result_set_id == selected_term.id)
-        .all()
-        if selected_term
-        else []
-    )
     term_rows_by_identity = {
         _cat4_identity_key(str(row.raw_name or "")): row
         for row in term_rows
@@ -3217,16 +3545,187 @@ def _build_cat4_term_entry_payload(
     }
 
 
+def _build_cat4_term_entry_payload_legacy(
+    class_id: int,
+    db: Session,
+    baseline_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+) -> dict[str, Any]:
+    baseline_sets = _cat4_legacy_baseline_sets_for_class(class_id, db)
+    term_sets = _cat4_legacy_term_sets_for_class(class_id, db)
+    selected_baseline = next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]) if baseline_sets and baseline_id else (baseline_sets[0] if baseline_sets else None)
+    selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_sets and term_set_id else (term_sets[0] if term_sets else None)
+    baseline_rows = _cat4_legacy_baseline_rows_for_set(int(selected_baseline.id), db) if selected_baseline else []
+    term_rows = _cat4_legacy_term_rows_for_set(int(selected_term.id), db) if selected_term else []
+    return _cat4_build_term_entry_payload_from_loaded(
+        baseline_sets,
+        term_sets,
+        baseline_rows,
+        term_rows,
+        baseline_id=baseline_id,
+        term_set_id=term_set_id,
+    )
+
+
+def _build_cat4_term_entry_payload(
+    class_id: int,
+    db: Session,
+    baseline_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+    cohort_key: Optional[str] = None,
+) -> dict[str, Any]:
+    if not _cat4_cohort_columns_available(db):
+        return _build_cat4_term_entry_payload_legacy(
+            class_id,
+            db,
+            baseline_id=baseline_id,
+            term_set_id=term_set_id,
+        )
+    resolved_cohort_key = _cat4_resolve_cohort_key(class_id, db, cohort_key=cohort_key, baseline_id=baseline_id, term_set_id=term_set_id)
+    baseline_sets = _cat4_baseline_sets_for_class(class_id, db, resolved_cohort_key)
+    term_sets = _cat4_term_sets_for_class(class_id, db, resolved_cohort_key)
+    baseline_rows = (
+        db.query(Cat4StudentBaselineModel)
+        .filter(Cat4StudentBaselineModel.baseline_set_id == next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]).id)
+        .all()
+        if baseline_sets
+        else []
+    )
+    selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_set_id else (term_sets[0] if term_sets else None)
+    term_rows = (
+        db.query(Cat4StudentTermResultModel)
+        .filter(Cat4StudentTermResultModel.result_set_id == selected_term.id)
+        .all()
+        if selected_term
+        else []
+    )
+    return _cat4_build_term_entry_payload_from_loaded(
+        baseline_sets,
+        term_sets,
+        baseline_rows,
+        term_rows,
+        baseline_id=baseline_id,
+        term_set_id=term_set_id,
+    )
+
+
 def _build_cat4_report_payload(
     class_id: int,
     db: Session,
     baseline_id: Optional[int] = None,
     term_set_id: Optional[int] = None,
     threshold_percent: Optional[int] = None,
+    cohort_key: Optional[str] = None,
 ) -> dict[str, Any]:
-    baseline_sets = _cat4_baseline_sets_for_class(class_id, db)
-    term_sets = _cat4_term_sets_for_class(class_id, db)
+    if not _cat4_cohort_columns_available(db):
+        return _build_cat4_report_payload_legacy(
+            class_id,
+            db,
+            baseline_id=baseline_id,
+            term_set_id=term_set_id,
+            threshold_percent=threshold_percent,
+        )
+    resolved_cohort_key = _cat4_resolve_cohort_key(class_id, db, cohort_key=cohort_key, baseline_id=baseline_id, term_set_id=term_set_id)
+    baseline_sets = _cat4_baseline_sets_for_class(class_id, db, resolved_cohort_key)
+    term_sets = _cat4_term_sets_for_class(class_id, db, resolved_cohort_key)
 
+    selected_baseline = next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]) if baseline_id else baseline_sets[0]
+    selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_set_id else term_sets[0]
+    ordered_term_sets = sorted(term_sets, key=_cat4_term_sort_key)
+    selected_index = next((index for index, item in enumerate(ordered_term_sets) if item.id == selected_term.id), -1)
+    previous_term = ordered_term_sets[selected_index - 1] if selected_index > 0 else None
+
+    baseline_rows = (
+        db.query(Cat4StudentBaselineModel)
+        .filter(Cat4StudentBaselineModel.baseline_set_id == selected_baseline.id)
+        .all()
+    )
+    latest_rows = (
+        db.query(Cat4StudentTermResultModel)
+        .filter(Cat4StudentTermResultModel.result_set_id == selected_term.id)
+        .all()
+    )
+    all_term_rows = (
+        db.query(Cat4StudentTermResultModel)
+        .filter(Cat4StudentTermResultModel.result_set_id.in_([term.id for term in ordered_term_sets]))
+        .all()
+    )
+    previous_rows = (
+        db.query(Cat4StudentTermResultModel)
+        .filter(Cat4StudentTermResultModel.result_set_id == previous_term.id)
+        .all()
+        if previous_term
+        else []
+    )
+    return _cat4_build_report_payload_from_loaded(
+        baseline_sets,
+        term_sets,
+        baseline_rows,
+        latest_rows,
+        all_term_rows,
+        previous_rows,
+        baseline_id=baseline_id,
+        term_set_id=term_set_id,
+        threshold_percent=threshold_percent,
+    )
+
+
+def _build_cat4_report_payload_legacy(
+    class_id: int,
+    db: Session,
+    baseline_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+    threshold_percent: Optional[int] = None,
+) -> dict[str, Any]:
+    baseline_sets = _cat4_legacy_baseline_sets_for_class(class_id, db)
+    term_sets = _cat4_legacy_term_sets_for_class(class_id, db)
+    if not baseline_sets or not term_sets:
+        return _cat4_build_report_payload_from_loaded(
+            baseline_sets,
+            term_sets,
+            [],
+            [],
+            [],
+            [],
+            baseline_id=baseline_id,
+            term_set_id=term_set_id,
+            threshold_percent=threshold_percent,
+        )
+    selected_baseline = next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]) if baseline_id else baseline_sets[0]
+    selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_set_id else term_sets[0]
+    ordered_term_sets = sorted(term_sets, key=_cat4_term_sort_key)
+    selected_index = next((index for index, item in enumerate(ordered_term_sets) if item.id == selected_term.id), -1)
+    previous_term = ordered_term_sets[selected_index - 1] if selected_index > 0 else None
+    baseline_rows = _cat4_legacy_baseline_rows_for_set(int(selected_baseline.id), db)
+    latest_rows = _cat4_legacy_term_rows_for_set(int(selected_term.id), db)
+    all_term_rows: list[SimpleNamespace] = []
+    for term in ordered_term_sets:
+        all_term_rows.extend(_cat4_legacy_term_rows_for_set(int(term.id), db))
+    previous_rows = _cat4_legacy_term_rows_for_set(int(previous_term.id), db) if previous_term else []
+    return _cat4_build_report_payload_from_loaded(
+        baseline_sets,
+        term_sets,
+        baseline_rows,
+        latest_rows,
+        all_term_rows,
+        previous_rows,
+        baseline_id=baseline_id,
+        term_set_id=term_set_id,
+        threshold_percent=threshold_percent,
+    )
+
+
+def _cat4_build_report_payload_from_loaded(
+    baseline_sets: list[Any],
+    term_sets: list[Any],
+    baseline_rows: list[Any],
+    latest_rows: list[Any],
+    all_term_rows: list[Any],
+    previous_rows: list[Any],
+    baseline_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+    threshold_percent: Optional[int] = None,
+) -> dict[str, Any]:
     if not baseline_sets or not term_sets:
         return {
             "feature_enabled": True,
@@ -3256,34 +3755,11 @@ def _build_cat4_report_payload(
         }
 
     threshold_value = threshold_percent if threshold_percent in {5, 10, 15} else None
-
     selected_baseline = next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]) if baseline_id else baseline_sets[0]
     selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_set_id else term_sets[0]
-    previous_term = next((item for item in term_sets if item.id != selected_term.id), None)
-
-    baseline_rows = (
-        db.query(Cat4StudentBaselineModel)
-        .filter(Cat4StudentBaselineModel.baseline_set_id == selected_baseline.id)
-        .all()
-    )
-    latest_rows = (
-        db.query(Cat4StudentTermResultModel)
-        .filter(Cat4StudentTermResultModel.result_set_id == selected_term.id)
-        .all()
-    )
-    ordered_term_sets = sorted(term_sets, key=lambda item: (item.created_at or datetime.min, item.id))
-    all_term_rows = (
-        db.query(Cat4StudentTermResultModel)
-        .filter(Cat4StudentTermResultModel.result_set_id.in_([term.id for term in ordered_term_sets]))
-        .all()
-    )
-    previous_rows = (
-        db.query(Cat4StudentTermResultModel)
-        .filter(Cat4StudentTermResultModel.result_set_id == previous_term.id)
-        .all()
-        if previous_term
-        else []
-    )
+    ordered_term_sets = sorted(term_sets, key=_cat4_term_sort_key)
+    selected_index = next((index for index, item in enumerate(ordered_term_sets) if item.id == selected_term.id), -1)
+    previous_term = ordered_term_sets[selected_index - 1] if selected_index > 0 else None
 
     baseline_by_identity = {
         _cat4_identity_key(str(row.raw_name or "")): row
@@ -4084,12 +4560,107 @@ CAT4_SUBJECT_ALIASES: dict[str, str] = {
 }
 
 CAT4_IGNORED_SCORE_VALUES = {"", "-", "n/a", "na"}
+CAT4_DEFAULT_COHORT_KEY = "default"
+CAT4_DEFAULT_COHORT_NAME = "Default Cohort"
+CAT4_TERM_KEY_ORDER: dict[str, int] = {
+    "autumn": 10,
+    "halloween": 20,
+    "winter": 30,
+    "christmas": 30,
+    "xmas": 30,
+    "spring": 40,
+    "mock": 50,
+    "mocks": 50,
+    "easter": 60,
+    "summer": 70,
+}
 
 
 def _normalise_subject_key(value: str) -> str:
     key = _normalise_student_name(value).replace("/", " ").replace("-", " ").replace(".", " ")
     key = re.sub(r"\s+", "_", key.strip())
     return CAT4_SUBJECT_ALIASES.get(key, key)
+
+
+def _normalise_cat4_cohort_key(value: Any) -> str:
+    text_value = str(value or "").strip().lower()
+    if not text_value:
+        return CAT4_DEFAULT_COHORT_KEY
+    text_value = re.sub(r"[^a-z0-9]+", "-", text_value)
+    text_value = re.sub(r"-{2,}", "-", text_value).strip("-")
+    return text_value or CAT4_DEFAULT_COHORT_KEY
+
+
+def _cat4_cohort_name(value: Any, fallback_key: Optional[str] = None) -> str:
+    text_value = str(value or "").strip()
+    if text_value:
+        return text_value
+    key = _normalise_cat4_cohort_key(fallback_key)
+    if key == CAT4_DEFAULT_COHORT_KEY:
+        return CAT4_DEFAULT_COHORT_NAME
+    return " ".join(part.capitalize() for part in key.split("-") if part) or CAT4_DEFAULT_COHORT_NAME
+
+
+def _cat4_term_year_value(term: Cat4TermResultSetModel) -> int:
+    academic_year = str(term.academic_year or "").strip()
+    if academic_year:
+        match = re.search(r"(20\d{2})", academic_year)
+        if match:
+            return int(match.group(1))
+    created_at = term.created_at or datetime.min
+    return created_at.year if created_at != datetime.min else 0
+
+
+def _cat4_term_order_value(term: Cat4TermResultSetModel) -> int:
+    candidates = [
+        _normalise_student_name(str(term.term_key or "")),
+        _normalise_student_name(str(term.title or "")),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        for token, order_value in CAT4_TERM_KEY_ORDER.items():
+            if token in candidate:
+                return order_value
+    return 999
+
+
+def _cat4_term_sort_key(term: Cat4TermResultSetModel) -> tuple[Any, ...]:
+    created_at = term.created_at or datetime.min
+    return (
+        _cat4_term_year_value(term),
+        _cat4_term_order_value(term),
+        created_at,
+        int(term.id or 0),
+    )
+
+
+def _cat4_resolve_cohort_key(
+    class_id: int,
+    db: Session,
+    cohort_key: Optional[str] = None,
+    baseline_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+) -> str:
+    if cohort_key is not None:
+        return _normalise_cat4_cohort_key(cohort_key)
+    if baseline_id:
+        baseline = (
+            db.query(Cat4BaselineSetModel)
+            .filter(Cat4BaselineSetModel.class_id == class_id, Cat4BaselineSetModel.id == baseline_id)
+            .first()
+        )
+        if baseline:
+            return _normalise_cat4_cohort_key(baseline.cohort_key)
+    if term_set_id:
+        term_set = (
+            db.query(Cat4TermResultSetModel)
+            .filter(Cat4TermResultSetModel.class_id == class_id, Cat4TermResultSetModel.id == term_set_id)
+            .first()
+        )
+        if term_set:
+            return _normalise_cat4_cohort_key(term_set.cohort_key)
+    return CAT4_DEFAULT_COHORT_KEY
 
 
 CAT4_LEVEL_SENSITIVE_SUBJECTS = {
@@ -4398,6 +4969,73 @@ def _cat4_student_interpretation_facts(
         "top_improving_subjects": top_improving_subjects,
         "top_declining_subjects": top_declining_subjects,
         "subject_story_summary": row.get("subject_story_summary"),
+    }
+
+
+def _build_cat4_student_history_payload_legacy(
+    class_id: int,
+    db: Session,
+    baseline_id: int,
+    raw_name: str,
+) -> dict[str, Any]:
+    baseline_sets = _cat4_legacy_baseline_sets_for_class(class_id, db)
+    baseline = next((item for item in baseline_sets if int(item.id) == int(baseline_id)), None)
+    if not baseline:
+        raise HTTPException(status_code=404, detail="CAT4 baseline set not found")
+
+    requested_name = (raw_name or "").strip()
+    if not requested_name:
+        raise HTTPException(status_code=400, detail="raw_name is required")
+
+    baseline_rows = _cat4_legacy_baseline_rows_for_set(int(baseline_id), db)
+    cohort_identity_keys = {
+        _cat4_identity_key(str(row.raw_name or ""))
+        for row in baseline_rows
+        if _cat4_identity_key(str(row.raw_name or ""))
+    }
+    requested_identity = _cat4_identity_key(requested_name)
+    selected_baseline_row = next(
+        (row for row in baseline_rows if _cat4_identity_key(str(row.raw_name or "")) == requested_identity),
+        None,
+    )
+
+    term_sets = sorted(_cat4_legacy_term_sets_for_class(class_id, db), key=_cat4_term_sort_key)
+    rows_by_term_set: dict[int, list[SimpleNamespace]] = defaultdict(list)
+    for term_set in term_sets:
+        rows_by_term_set[int(term_set.id)] = _cat4_legacy_term_rows_for_set(int(term_set.id), db)
+
+    points = []
+    for term_set in term_sets:
+        cohort_rows = [
+            row
+            for row in rows_by_term_set.get(int(term_set.id), [])
+            if _cat4_identity_key(str(row.raw_name or "")) in cohort_identity_keys
+        ]
+        student_row = next(
+            (row for row in cohort_rows if _cat4_identity_key(str(row.raw_name or "")) == requested_identity),
+            None,
+        )
+        cohort_values = [row.average_percent for row in cohort_rows if row.average_percent is not None]
+        cohort_avg = round(sum(cohort_values) / len(cohort_values), 1) if cohort_values else None
+        points.append(
+            {
+                "term_set_id": term_set.id,
+                "title": term_set.title,
+                "date": term_set.created_at.isoformat() if term_set.created_at else None,
+                "student": student_row.average_percent if student_row and student_row.average_percent is not None else None,
+                "cohort_avg": cohort_avg,
+            }
+        )
+
+    return {
+        "student": {
+            "raw_name": (
+                selected_baseline_row.raw_name
+                if selected_baseline_row and selected_baseline_row.raw_name
+                else requested_name
+            )
+        },
+        "points": points,
     }
 
 
@@ -4775,16 +5413,41 @@ def _build_cat4_workbook_preview(sheets: dict[str, list[list[str]]]) -> dict[str
     }
 
 
-def _replace_cat4_data_from_workbook_payload(class_id: int, payload: dict[str, Any], db: Session) -> None:
-    db.query(Cat4StudentBaselineModel).filter(Cat4StudentBaselineModel.class_id == class_id).delete()
-    db.query(Cat4StudentTermResultModel).filter(Cat4StudentTermResultModel.class_id == class_id).delete()
-    db.query(Cat4BaselineSetModel).filter(Cat4BaselineSetModel.class_id == class_id).delete()
-    db.query(Cat4TermResultSetModel).filter(Cat4TermResultSetModel.class_id == class_id).delete()
+def _replace_cat4_data_from_workbook_payload(
+    class_id: int,
+    payload: dict[str, Any],
+    db: Session,
+    cohort_key: Optional[str] = None,
+    cohort_name: Optional[str] = None,
+) -> None:
+    resolved_cohort_key = _normalise_cat4_cohort_key(cohort_key)
+    resolved_cohort_name = _cat4_cohort_name(cohort_name, resolved_cohort_key)
+    baseline_ids = [
+        row.id
+        for row in db.query(Cat4BaselineSetModel.id)
+        .filter(Cat4BaselineSetModel.class_id == class_id, Cat4BaselineSetModel.cohort_key == resolved_cohort_key)
+        .all()
+    ]
+    if baseline_ids:
+        db.query(Cat4StudentBaselineModel).filter(Cat4StudentBaselineModel.baseline_set_id.in_(baseline_ids)).delete()
+        db.query(Cat4BaselineSetModel).filter(Cat4BaselineSetModel.id.in_(baseline_ids)).delete()
+
+    term_set_ids = [
+        row.id
+        for row in db.query(Cat4TermResultSetModel.id)
+        .filter(Cat4TermResultSetModel.class_id == class_id, Cat4TermResultSetModel.cohort_key == resolved_cohort_key)
+        .all()
+    ]
+    if term_set_ids:
+        db.query(Cat4StudentTermResultModel).filter(Cat4StudentTermResultModel.result_set_id.in_(term_set_ids)).delete()
+        db.query(Cat4TermResultSetModel).filter(Cat4TermResultSetModel.id.in_(term_set_ids)).delete()
 
     baseline_rows = payload.get("baseline_rows") or []
     if baseline_rows:
         baseline_set = Cat4BaselineSetModel(
             class_id=class_id,
+            cohort_key=resolved_cohort_key,
+            cohort_name=resolved_cohort_name,
             title=(payload.get("baseline_sheet_name") or "CAT4 Baseline").strip() or "CAT4 Baseline",
             is_locked=True,
             locked_at=datetime.utcnow(),
@@ -4830,6 +5493,8 @@ def _replace_cat4_data_from_workbook_payload(class_id: int, payload: dict[str, A
     for term_set_payload in payload.get("term_sets") or []:
         term_set = Cat4TermResultSetModel(
             class_id=class_id,
+            cohort_key=resolved_cohort_key,
+            cohort_name=resolved_cohort_name,
             title=(term_set_payload.get("title") or "Term Results").strip() or "Term Results",
             academic_year=term_set_payload.get("academic_year"),
             term_key=term_set_payload.get("term_key"),
@@ -4863,6 +5528,219 @@ def _replace_cat4_data_from_workbook_payload(class_id: int, payload: dict[str, A
                     spatial_domain_score=domain_scores.get("spatial_domain_score"),
                 )
             )
+
+
+def _cat4_legacy_baseline_locked(class_id: int, db: Session) -> bool:
+    row = db.execute(
+        text(
+            """
+            SELECT 1
+            FROM cat4_baseline_sets
+            WHERE class_id = :class_id AND is_locked = true
+            LIMIT 1
+            """
+        ),
+        {"class_id": class_id},
+    ).first()
+    return bool(row)
+
+
+def _replace_cat4_data_from_workbook_payload_legacy(
+    class_id: int,
+    payload: dict[str, Any],
+    db: Session,
+) -> None:
+    db.execute(text("DELETE FROM cat4_student_baselines WHERE class_id = :class_id"), {"class_id": class_id})
+    db.execute(text("DELETE FROM cat4_student_term_results WHERE class_id = :class_id"), {"class_id": class_id})
+    db.execute(text("DELETE FROM cat4_baseline_sets WHERE class_id = :class_id"), {"class_id": class_id})
+    db.execute(text("DELETE FROM cat4_term_result_sets WHERE class_id = :class_id"), {"class_id": class_id})
+
+    students = (
+        db.query(StudentModel)
+        .filter(StudentModel.class_id == class_id)
+        .filter(StudentModel.active == True)  # noqa: E712
+        .all()
+    )
+    name_index = _cat4_name_index(students)
+
+    baseline_rows = payload.get("baseline_rows") or []
+    if baseline_rows:
+        baseline_insert = db.execute(
+            text(
+                """
+                INSERT INTO cat4_baseline_sets (class_id, title, test_date, is_locked, locked_at, created_at)
+                VALUES (:class_id, :title, NULL, true, :locked_at, :created_at)
+                RETURNING id
+                """
+            ),
+            {
+                "class_id": class_id,
+                "title": (payload.get("baseline_sheet_name") or "CAT4 Baseline").strip() or "CAT4 Baseline",
+                "locked_at": datetime.utcnow(),
+                "created_at": datetime.utcnow(),
+            },
+        ).first()
+        baseline_set_id = int(baseline_insert[0]) if baseline_insert else None
+
+        if baseline_set_id is not None:
+            for row in baseline_rows:
+                student_id, matched_name, match_note = _match_cat4_student_name(str(row.get("raw_name") or ""), name_index)
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO cat4_student_baselines (
+                            baseline_set_id, class_id, student_id, raw_name, matched_name,
+                            verbal_sas, quantitative_sas, non_verbal_sas, spatial_sas,
+                            overall_sas, profile_label, confidence_note
+                        ) VALUES (
+                            :baseline_set_id, :class_id, :student_id, :raw_name, :matched_name,
+                            :verbal_sas, :quantitative_sas, :non_verbal_sas, :spatial_sas,
+                            :overall_sas, :profile_label, :confidence_note
+                        )
+                        """
+                    ),
+                    {
+                        "baseline_set_id": baseline_set_id,
+                        "class_id": class_id,
+                        "student_id": student_id,
+                        "raw_name": str(row.get("raw_name") or "").strip(),
+                        "matched_name": matched_name,
+                        "verbal_sas": row.get("verbal_sas"),
+                        "quantitative_sas": row.get("quantitative_sas"),
+                        "non_verbal_sas": row.get("non_verbal_sas"),
+                        "spatial_sas": row.get("spatial_sas"),
+                        "overall_sas": row.get("overall_sas"),
+                        "profile_label": row.get("profile_label"),
+                        "confidence_note": row.get("confidence_note") or match_note,
+                    },
+                )
+
+    for term_set_payload in payload.get("term_sets") or []:
+        term_set_insert = db.execute(
+            text(
+                """
+                INSERT INTO cat4_term_result_sets (class_id, title, academic_year, term_key, created_at)
+                VALUES (:class_id, :title, :academic_year, :term_key, :created_at)
+                RETURNING id
+                """
+            ),
+            {
+                "class_id": class_id,
+                "title": (term_set_payload.get("title") or "Term Results").strip() or "Term Results",
+                "academic_year": term_set_payload.get("academic_year"),
+                "term_key": term_set_payload.get("term_key"),
+                "created_at": datetime.utcnow(),
+            },
+        ).first()
+        term_set_id = int(term_set_insert[0]) if term_set_insert else None
+        if term_set_id is None:
+            continue
+
+        for row in term_set_payload.get("rows") or []:
+            raw_name = str(row.get("raw_name") or "").strip()
+            if not raw_name:
+                continue
+            student_id, matched_name, _ = _match_cat4_student_name(raw_name, name_index)
+            average_percent, subject_count, domain_scores, raw_json = _calculate_cat4_term_metrics(
+                _json_text_or_none(row.get("raw_subjects_json")),
+                row.get("average_percent"),
+                row.get("subject_count"),
+            )
+            db.execute(
+                text(
+                    """
+                    INSERT INTO cat4_student_term_results (
+                        result_set_id, class_id, student_id, raw_name, matched_name,
+                        average_percent, subject_count, raw_subjects_json,
+                        verbal_domain_score, quantitative_domain_score,
+                        non_verbal_domain_score, spatial_domain_score
+                    ) VALUES (
+                        :result_set_id, :class_id, :student_id, :raw_name, :matched_name,
+                        :average_percent, :subject_count, :raw_subjects_json,
+                        :verbal_domain_score, :quantitative_domain_score,
+                        :non_verbal_domain_score, :spatial_domain_score
+                    )
+                    """
+                ),
+                {
+                    "result_set_id": term_set_id,
+                    "class_id": class_id,
+                    "student_id": student_id,
+                    "raw_name": raw_name,
+                    "matched_name": matched_name,
+                    "average_percent": average_percent,
+                    "subject_count": subject_count,
+                    "raw_subjects_json": raw_json,
+                    "verbal_domain_score": domain_scores.get("verbal_domain_score"),
+                    "quantitative_domain_score": domain_scores.get("quantitative_domain_score"),
+                    "non_verbal_domain_score": domain_scores.get("non_verbal_domain_score"),
+                    "spatial_domain_score": domain_scores.get("spatial_domain_score"),
+                },
+            )
+
+
+def _create_cat4_workbook_version_legacy(
+    class_id: int,
+    workbook_name: str,
+    uploaded_by_email: str,
+    preview: dict[str, Any],
+    db: Session,
+) -> dict[str, Any]:
+    current_version = db.execute(
+        text(
+            """
+            SELECT version_number
+            FROM cat4_workbook_versions
+            WHERE class_id = :class_id
+            ORDER BY version_number DESC
+            LIMIT 1
+            """
+        ),
+        {"class_id": class_id},
+    ).first()
+    next_version_number = (int(current_version[0]) + 1) if current_version else 1
+
+    db.execute(
+        text("UPDATE cat4_workbook_versions SET is_active = false WHERE class_id = :class_id"),
+        {"class_id": class_id},
+    )
+    inserted = db.execute(
+        text(
+            """
+            INSERT INTO cat4_workbook_versions (
+                class_id, version_number, workbook_name, uploaded_by_email,
+                uploaded_at, is_active, validation_summary_json, parsed_payload_json
+            ) VALUES (
+                :class_id, :version_number, :workbook_name, :uploaded_by_email,
+                :uploaded_at, true, :validation_summary_json, :parsed_payload_json
+            )
+            RETURNING id, version_number, uploaded_at
+            """
+        ),
+        {
+            "class_id": class_id,
+            "version_number": next_version_number,
+            "workbook_name": workbook_name,
+            "uploaded_by_email": uploaded_by_email,
+            "uploaded_at": datetime.utcnow(),
+            "validation_summary_json": json.dumps(
+                {
+                    "baseline_sheet_name": preview.get("baseline_sheet_name"),
+                    "term_sheet_names": preview.get("term_sheet_names"),
+                    "warnings": preview.get("warnings", []),
+                    "matched_student_count": sum(1 for row in preview.get("baseline_rows", []) if row.get("raw_name")),
+                    "baseline_locked": bool(preview.get("baseline_rows")),
+                },
+                ensure_ascii=False,
+            ),
+            "parsed_payload_json": json.dumps(preview, ensure_ascii=False),
+        },
+    ).first()
+    return {
+        "id": int(inserted[0]),
+        "version_number": int(inserted[1]),
+        "uploaded_at": inserted[2].isoformat() if inserted and inserted[2] else None,
+    }
 
 
 def _build_percentile_map(pairs: list[tuple[Any, float]]) -> dict[Any, float]:
@@ -6154,10 +7032,33 @@ def ensure_columns():
         if "locked_at" not in cat4_baseline_col_names and cat4_baseline_cols:
             conn.execute(text("ALTER TABLE cat4_baseline_sets ADD COLUMN locked_at DATETIME"))
             conn.commit()
+        if "cohort_key" not in cat4_baseline_col_names and cat4_baseline_cols:
+            conn.execute(text("ALTER TABLE cat4_baseline_sets ADD COLUMN cohort_key TEXT DEFAULT 'default' NOT NULL"))
+            conn.commit()
+        if "cohort_name" not in cat4_baseline_col_names and cat4_baseline_cols:
+            conn.execute(text("ALTER TABLE cat4_baseline_sets ADD COLUMN cohort_name TEXT DEFAULT 'Default Cohort' NOT NULL"))
+            conn.commit()
+        if cat4_baseline_cols:
+            conn.execute(text("UPDATE cat4_baseline_sets SET cohort_key = 'default' WHERE cohort_key IS NULL OR TRIM(cohort_key) = ''"))
+            conn.execute(text("UPDATE cat4_baseline_sets SET cohort_name = 'Default Cohort' WHERE cohort_name IS NULL OR TRIM(cohort_name) = ''"))
+            conn.commit()
 
         # -------------------------
         # cat4_term_result_sets table
         # -------------------------
+        cat4_term_set_cols = conn.execute(text("PRAGMA table_info(cat4_term_result_sets)")).fetchall()
+        cat4_term_set_col_names = {c[1] for c in cat4_term_set_cols}
+        if "cohort_key" not in cat4_term_set_col_names and cat4_term_set_cols:
+            conn.execute(text("ALTER TABLE cat4_term_result_sets ADD COLUMN cohort_key TEXT DEFAULT 'default' NOT NULL"))
+            conn.commit()
+        if "cohort_name" not in cat4_term_set_col_names and cat4_term_set_cols:
+            conn.execute(text("ALTER TABLE cat4_term_result_sets ADD COLUMN cohort_name TEXT DEFAULT 'Default Cohort' NOT NULL"))
+            conn.commit()
+        if cat4_term_set_cols:
+            conn.execute(text("UPDATE cat4_term_result_sets SET cohort_key = 'default' WHERE cohort_key IS NULL OR TRIM(cohort_key) = ''"))
+            conn.execute(text("UPDATE cat4_term_result_sets SET cohort_name = 'Default Cohort' WHERE cohort_name IS NULL OR TRIM(cohort_name) = ''"))
+            conn.commit()
+
         cat4_term_row_cols = conn.execute(text("PRAGMA table_info(cat4_student_term_results)")).fetchall()
         cat4_term_row_col_names = {c[1] for c in cat4_term_row_cols}
         for column_name in [
@@ -6169,6 +7070,19 @@ def ensure_columns():
             if column_name not in cat4_term_row_col_names and cat4_term_row_cols:
                 conn.execute(text(f"ALTER TABLE cat4_student_term_results ADD COLUMN {column_name} INTEGER"))
                 conn.commit()
+
+        cat4_workbook_cols = conn.execute(text("PRAGMA table_info(cat4_workbook_versions)")).fetchall()
+        cat4_workbook_col_names = {c[1] for c in cat4_workbook_cols}
+        if "cohort_key" not in cat4_workbook_col_names and cat4_workbook_cols:
+            conn.execute(text("ALTER TABLE cat4_workbook_versions ADD COLUMN cohort_key TEXT DEFAULT 'default' NOT NULL"))
+            conn.commit()
+        if "cohort_name" not in cat4_workbook_col_names and cat4_workbook_cols:
+            conn.execute(text("ALTER TABLE cat4_workbook_versions ADD COLUMN cohort_name TEXT DEFAULT 'Default Cohort' NOT NULL"))
+            conn.commit()
+        if cat4_workbook_cols:
+            conn.execute(text("UPDATE cat4_workbook_versions SET cohort_key = 'default' WHERE cohort_key IS NULL OR TRIM(cohort_key) = ''"))
+            conn.execute(text("UPDATE cat4_workbook_versions SET cohort_name = 'Default Cohort' WHERE cohort_name IS NULL OR TRIM(cohort_name) = ''"))
+            conn.commit()
 
         # -------------------------
         # livequiz_sessions table
@@ -10127,11 +11041,55 @@ def upsert_assessment_results(
 @app.get("/classes/{class_id}/cat4/meta")
 def cat4_meta(
     class_id: int,
+    cohort_key: Optional[str] = None,
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    logger.info("CAT4 meta load requested for class_id=%s cohort_key=%r", class_id, cohort_key)
     _get_owned_class_for_cat4_or_403(class_id, db, user)
-    return _build_cat4_meta_payload(class_id, db)
+    schema_available = _cat4_cohort_columns_available(db)
+    logger.info(
+        "CAT4 meta schema check for class_id=%s cohort_key=%r passed=%s",
+        class_id,
+        cohort_key,
+        schema_available,
+    )
+
+    cohort_error: Optional[Exception] = None
+    if schema_available:
+        logger.info("CAT4 meta attempting cohort-aware path for class_id=%s cohort_key=%r", class_id, cohort_key)
+        try:
+            return _build_cat4_meta_payload(class_id, db, cohort_key=cohort_key)
+        except Exception as exc:
+            cohort_error = exc
+            logger.exception(
+                "CAT4 cohort-aware meta path failed for class_id=%s cohort_key=%r: %s",
+                class_id,
+                cohort_key,
+                exc,
+            )
+    else:
+        logger.warning(
+            "CAT4 cohort schema unavailable for class_id=%s cohort_key=%r; using legacy meta path",
+            class_id,
+            cohort_key,
+        )
+
+    logger.info("CAT4 meta attempting legacy fallback path for class_id=%s cohort_key=%r", class_id, cohort_key)
+    try:
+        return _build_cat4_meta_payload_legacy(class_id, db)
+    except Exception as legacy_exc:
+        logger.exception(
+            "CAT4 legacy meta fallback failed for class_id=%s cohort_key=%r after cohort_error=%r: %s",
+            class_id,
+            cohort_key,
+            cohort_error,
+            legacy_exc,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="CAT4 meta load failed after cohort and legacy fallback paths",
+        )
 
 
 @app.post("/classes/{class_id}/cat4/baselines")
@@ -10145,7 +11103,11 @@ def create_cat4_baseline_set(
 
     existing_locked = (
         db.query(Cat4BaselineSetModel)
-        .filter(Cat4BaselineSetModel.class_id == class_id, Cat4BaselineSetModel.is_locked == True)  # noqa: E712
+        .filter(
+            Cat4BaselineSetModel.class_id == class_id,
+            Cat4BaselineSetModel.cohort_key == _normalise_cat4_cohort_key(payload.cohort_key),
+            Cat4BaselineSetModel.is_locked == True,
+        )  # noqa: E712
         .first()
     )
     if existing_locked:
@@ -10157,6 +11119,8 @@ def create_cat4_baseline_set(
 
     baseline = Cat4BaselineSetModel(
         class_id=class_id,
+        cohort_key=_normalise_cat4_cohort_key(payload.cohort_key),
+        cohort_name=_cat4_cohort_name(payload.cohort_name, payload.cohort_key),
         title=title,
         test_date=_parse_optional_date(payload.test_date),
         is_locked=False,
@@ -10168,6 +11132,8 @@ def create_cat4_baseline_set(
     return {
         "id": baseline.id,
         "class_id": baseline.class_id,
+        "cohort_key": baseline.cohort_key,
+        "cohort_name": baseline.cohort_name,
         "title": baseline.title,
         "test_date": baseline.test_date.date().isoformat() if baseline.test_date else None,
         "is_locked": bool(baseline.is_locked),
@@ -10275,6 +11241,8 @@ def create_cat4_term_set(
 
     term_set = Cat4TermResultSetModel(
         class_id=class_id,
+        cohort_key=_normalise_cat4_cohort_key(payload.cohort_key),
+        cohort_name=_cat4_cohort_name(payload.cohort_name, payload.cohort_key),
         title=title,
         academic_year=(payload.academic_year or "").strip() or None,
         term_key=(payload.term_key or "").strip() or None,
@@ -10286,6 +11254,8 @@ def create_cat4_term_set(
     return {
         "id": term_set.id,
         "class_id": term_set.class_id,
+        "cohort_key": term_set.cohort_key,
+        "cohort_name": term_set.cohort_name,
         "title": term_set.title,
         "academic_year": term_set.academic_year,
         "term_key": term_set.term_key,
@@ -10402,21 +11372,61 @@ def cat4_term_entry(
     class_id: int,
     baseline_id: Optional[int] = None,
     term_set_id: Optional[int] = None,
+    cohort_key: Optional[str] = None,
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    logger.info(
+        "CAT4 term-entry load requested for class_id=%s baseline_id=%r term_set_id=%r cohort_key=%r",
+        class_id,
+        baseline_id,
+        term_set_id,
+        cohort_key,
+    )
     _get_owned_class_for_cat4_or_403(class_id, db, user)
-    return _build_cat4_term_entry_payload(class_id, db, baseline_id=baseline_id, term_set_id=term_set_id)
+    schema_available = _cat4_cohort_columns_available(db)
+    logger.info(
+        "CAT4 term-entry schema check for class_id=%s baseline_id=%r term_set_id=%r cohort_key=%r passed=%s",
+        class_id,
+        baseline_id,
+        term_set_id,
+        cohort_key,
+        schema_available,
+    )
+    logger.info(
+        "CAT4 term-entry using %s path for class_id=%s baseline_id=%r term_set_id=%r cohort_key=%r",
+        "cohort-aware" if schema_available else "legacy",
+        class_id,
+        baseline_id,
+        term_set_id,
+        cohort_key,
+    )
+    return _build_cat4_term_entry_payload(class_id, db, baseline_id=baseline_id, term_set_id=term_set_id, cohort_key=cohort_key)
 
 
 @app.post("/classes/{class_id}/cat4/workbook/validate")
 async def validate_cat4_workbook(
     class_id: int,
     file: UploadFile = File(...),
+    cohort_key: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    logger.info("CAT4 workbook validate requested for class_id=%s cohort_key=%r", class_id, cohort_key)
     _get_owned_class_for_cat4_or_403(class_id, db, user)
+    schema_available = _cat4_cohort_columns_available(db)
+    logger.info(
+        "CAT4 workbook validate schema check for class_id=%s cohort_key=%r passed=%s",
+        class_id,
+        cohort_key,
+        schema_available,
+    )
+    logger.info(
+        "CAT4 workbook validate using %s path for class_id=%s cohort_key=%r",
+        "cohort-aware" if schema_available else "legacy",
+        class_id,
+        cohort_key,
+    )
 
     filename = (file.filename or "").strip().lower()
     if not filename.endswith(".xlsx"):
@@ -10430,14 +11440,34 @@ async def validate_cat4_workbook(
         logger.exception("Failed to validate CAT4 workbook for class %s", class_id)
         raise HTTPException(status_code=400, detail="Could not read workbook structure")
 
+    try:
+        baseline_locked = (
+            bool(
+                db.query(Cat4BaselineSetModel)
+                .filter(
+                    Cat4BaselineSetModel.class_id == class_id,
+                    Cat4BaselineSetModel.cohort_key == _normalise_cat4_cohort_key(cohort_key),
+                    Cat4BaselineSetModel.is_locked == True,
+                )  # noqa: E712
+                .first()
+            )
+            if schema_available
+            else _cat4_legacy_baseline_locked(class_id, db)
+        )
+    except Exception as exc:
+        logger.exception(
+            "CAT4 workbook validate failed for class_id=%s cohort_key=%r on %s path: %s",
+            class_id,
+            cohort_key,
+            "cohort-aware" if schema_available else "legacy",
+            exc,
+        )
+        raise HTTPException(status_code=500, detail="CAT4 workbook validation failed")
+
     return {
         "ok": len(preview["errors"]) == 0,
         "workbook_name": file.filename,
-        "baseline_locked": bool(
-            db.query(Cat4BaselineSetModel)
-            .filter(Cat4BaselineSetModel.class_id == class_id, Cat4BaselineSetModel.is_locked == True)  # noqa: E712
-            .first()
-        ),
+        "baseline_locked": baseline_locked,
         **preview,
     }
 
@@ -10446,10 +11476,31 @@ async def validate_cat4_workbook(
 async def upload_cat4_workbook(
     class_id: int,
     file: UploadFile = File(...),
+    cohort_key: Optional[str] = Form(None),
+    cohort_name: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    logger.info(
+        "CAT4 workbook upload requested for class_id=%s cohort_key=%r cohort_name=%r",
+        class_id,
+        cohort_key,
+        cohort_name,
+    )
     _get_owned_class_for_cat4_or_403(class_id, db, user)
+    schema_available = _cat4_cohort_columns_available(db)
+    logger.info(
+        "CAT4 workbook upload schema check for class_id=%s cohort_key=%r passed=%s",
+        class_id,
+        cohort_key,
+        schema_available,
+    )
+    logger.info(
+        "CAT4 workbook upload using %s path for class_id=%s cohort_key=%r",
+        "cohort-aware" if schema_available else "legacy",
+        class_id,
+        cohort_key,
+    )
 
     filename = (file.filename or "").strip().lower()
     if not filename.endswith(".xlsx"):
@@ -10466,38 +11517,83 @@ async def upload_cat4_workbook(
     if preview["errors"]:
         raise HTTPException(status_code=400, detail={"message": "Workbook validation failed", "errors": preview["errors"], "warnings": preview["warnings"]})
 
-    current_version = (
-        db.query(Cat4WorkbookVersionModel)
-        .filter(Cat4WorkbookVersionModel.class_id == class_id)
-        .order_by(Cat4WorkbookVersionModel.version_number.desc())
-        .first()
-    )
-    next_version_number = (current_version.version_number + 1) if current_version else 1
-
-    db.query(Cat4WorkbookVersionModel).filter(Cat4WorkbookVersionModel.class_id == class_id).update({"is_active": False})
-    _replace_cat4_data_from_workbook_payload(class_id, preview, db)
-
-    version = Cat4WorkbookVersionModel(
-        class_id=class_id,
-        version_number=next_version_number,
-        workbook_name=file.filename or f"cat4-workbook-v{next_version_number}.xlsx",
-        uploaded_by_email=user.email,
-        is_active=True,
-        validation_summary_json=json.dumps(
-            {
-                "baseline_sheet_name": preview.get("baseline_sheet_name"),
-                "term_sheet_names": preview.get("term_sheet_names"),
+    if not schema_available:
+        try:
+            _replace_cat4_data_from_workbook_payload_legacy(class_id, preview, db)
+            version = _create_cat4_workbook_version_legacy(
+                class_id=class_id,
+                workbook_name=file.filename or "cat4-workbook.xlsx",
+                uploaded_by_email=user.email,
+                preview=preview,
+                db=db,
+            )
+            db.commit()
+            return {
+                "ok": True,
+                "version_id": version["id"],
+                "version_number": version["version_number"],
+                "uploaded_at": version["uploaded_at"],
                 "warnings": preview.get("warnings", []),
-                "matched_student_count": sum(1 for row in preview.get("baseline_rows", []) if row.get("raw_name")),
-                "baseline_locked": bool(preview.get("baseline_rows")),
-            },
-            ensure_ascii=False,
-        ),
-        parsed_payload_json=json.dumps(preview, ensure_ascii=False),
-    )
-    db.add(version)
-    db.commit()
-    db.refresh(version)
+            }
+        except Exception as exc:
+            db.rollback()
+            logger.exception(
+                "CAT4 workbook upload failed for class_id=%s cohort_key=%r on legacy path: %s",
+                class_id,
+                cohort_key,
+                exc,
+            )
+            raise HTTPException(status_code=500, detail="CAT4 workbook upload failed")
+
+    resolved_cohort_key = _normalise_cat4_cohort_key(cohort_key)
+    resolved_cohort_name = _cat4_cohort_name(cohort_name, resolved_cohort_key)
+    try:
+        current_version = (
+            db.query(Cat4WorkbookVersionModel)
+            .filter(Cat4WorkbookVersionModel.class_id == class_id, Cat4WorkbookVersionModel.cohort_key == resolved_cohort_key)
+            .order_by(Cat4WorkbookVersionModel.version_number.desc())
+            .first()
+        )
+        next_version_number = (current_version.version_number + 1) if current_version else 1
+
+        db.query(Cat4WorkbookVersionModel).filter(
+            Cat4WorkbookVersionModel.class_id == class_id,
+            Cat4WorkbookVersionModel.cohort_key == resolved_cohort_key,
+        ).update({"is_active": False})
+        _replace_cat4_data_from_workbook_payload(class_id, preview, db, cohort_key=resolved_cohort_key, cohort_name=resolved_cohort_name)
+
+        version = Cat4WorkbookVersionModel(
+            class_id=class_id,
+            cohort_key=resolved_cohort_key,
+            cohort_name=resolved_cohort_name,
+            version_number=next_version_number,
+            workbook_name=file.filename or f"cat4-workbook-v{next_version_number}.xlsx",
+            uploaded_by_email=user.email,
+            is_active=True,
+            validation_summary_json=json.dumps(
+                {
+                    "baseline_sheet_name": preview.get("baseline_sheet_name"),
+                    "term_sheet_names": preview.get("term_sheet_names"),
+                    "warnings": preview.get("warnings", []),
+                    "matched_student_count": sum(1 for row in preview.get("baseline_rows", []) if row.get("raw_name")),
+                    "baseline_locked": bool(preview.get("baseline_rows")),
+                },
+                ensure_ascii=False,
+            ),
+            parsed_payload_json=json.dumps(preview, ensure_ascii=False),
+        )
+        db.add(version)
+        db.commit()
+        db.refresh(version)
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "CAT4 workbook upload failed for class_id=%s cohort_key=%r on cohort-aware path: %s",
+            class_id,
+            cohort_key,
+            exc,
+        )
+        raise HTTPException(status_code=500, detail="CAT4 workbook upload failed")
 
     return {
         "ok": True,
@@ -10526,8 +11622,17 @@ def restore_cat4_workbook_version(
         raise HTTPException(status_code=404, detail="Workbook version not found")
 
     payload = json.loads(version.parsed_payload_json or "{}")
-    db.query(Cat4WorkbookVersionModel).filter(Cat4WorkbookVersionModel.class_id == class_id).update({"is_active": False})
-    _replace_cat4_data_from_workbook_payload(class_id, payload, db)
+    db.query(Cat4WorkbookVersionModel).filter(
+        Cat4WorkbookVersionModel.class_id == class_id,
+        Cat4WorkbookVersionModel.cohort_key == version.cohort_key,
+    ).update({"is_active": False})
+    _replace_cat4_data_from_workbook_payload(
+        class_id,
+        payload,
+        db,
+        cohort_key=version.cohort_key,
+        cohort_name=version.cohort_name,
+    )
     version.is_active = True
     db.commit()
     db.refresh(version)
@@ -10538,19 +11643,37 @@ def restore_cat4_workbook_version(
 @app.post("/classes/{class_id}/cat4/reset")
 def reset_cat4_for_class(
     class_id: int,
+    cohort_key: Optional[str] = None,
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
     _get_owned_class_for_cat4_or_403(class_id, db, user)
-
-    db.query(Cat4StudentBaselineModel).filter(Cat4StudentBaselineModel.class_id == class_id).delete()
-    db.query(Cat4StudentTermResultModel).filter(Cat4StudentTermResultModel.class_id == class_id).delete()
-    db.query(Cat4BaselineSetModel).filter(Cat4BaselineSetModel.class_id == class_id).delete()
-    db.query(Cat4TermResultSetModel).filter(Cat4TermResultSetModel.class_id == class_id).delete()
-    db.query(Cat4WorkbookVersionModel).filter(Cat4WorkbookVersionModel.class_id == class_id).delete()
+    resolved_cohort_key = _normalise_cat4_cohort_key(cohort_key)
+    baseline_ids = [
+        row.id
+        for row in db.query(Cat4BaselineSetModel.id)
+        .filter(Cat4BaselineSetModel.class_id == class_id, Cat4BaselineSetModel.cohort_key == resolved_cohort_key)
+        .all()
+    ]
+    if baseline_ids:
+        db.query(Cat4StudentBaselineModel).filter(Cat4StudentBaselineModel.baseline_set_id.in_(baseline_ids)).delete()
+        db.query(Cat4BaselineSetModel).filter(Cat4BaselineSetModel.id.in_(baseline_ids)).delete()
+    term_set_ids = [
+        row.id
+        for row in db.query(Cat4TermResultSetModel.id)
+        .filter(Cat4TermResultSetModel.class_id == class_id, Cat4TermResultSetModel.cohort_key == resolved_cohort_key)
+        .all()
+    ]
+    if term_set_ids:
+        db.query(Cat4StudentTermResultModel).filter(Cat4StudentTermResultModel.result_set_id.in_(term_set_ids)).delete()
+        db.query(Cat4TermResultSetModel).filter(Cat4TermResultSetModel.id.in_(term_set_ids)).delete()
+    db.query(Cat4WorkbookVersionModel).filter(
+        Cat4WorkbookVersionModel.class_id == class_id,
+        Cat4WorkbookVersionModel.cohort_key == resolved_cohort_key,
+    ).delete()
     db.commit()
 
-    return {"ok": True, "class_id": class_id, "reset": True}
+    return {"ok": True, "class_id": class_id, "cohort_key": resolved_cohort_key, "reset": True}
 
 
 @app.post("/classes/{class_id}/cat4/baselines/{baseline_id}/reset")
@@ -10584,16 +11707,43 @@ def cat4_report(
     baseline_id: Optional[int] = None,
     term_set_id: Optional[int] = None,
     threshold_percent: Optional[int] = None,
+    cohort_key: Optional[str] = None,
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    logger.info(
+        "CAT4 report load requested for class_id=%s baseline_id=%r term_set_id=%r threshold_percent=%r cohort_key=%r",
+        class_id,
+        baseline_id,
+        term_set_id,
+        threshold_percent,
+        cohort_key,
+    )
     _get_owned_class_for_cat4_or_403(class_id, db, user)
+    schema_available = _cat4_cohort_columns_available(db)
+    logger.info(
+        "CAT4 report schema check for class_id=%s baseline_id=%r term_set_id=%r cohort_key=%r passed=%s",
+        class_id,
+        baseline_id,
+        term_set_id,
+        cohort_key,
+        schema_available,
+    )
+    logger.info(
+        "CAT4 report using %s path for class_id=%s baseline_id=%r term_set_id=%r cohort_key=%r",
+        "cohort-aware" if schema_available else "legacy",
+        class_id,
+        baseline_id,
+        term_set_id,
+        cohort_key,
+    )
     return _build_cat4_report_payload(
         class_id,
         db,
         baseline_id=baseline_id,
         term_set_id=term_set_id,
         threshold_percent=threshold_percent,
+        cohort_key=cohort_key,
     )
 
 
@@ -10605,7 +11755,37 @@ def cat4_student_history(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    logger.info(
+        "CAT4 student-history load requested for class_id=%s baseline_id=%r raw_name=%r",
+        class_id,
+        baseline_id,
+        raw_name,
+    )
     _get_owned_class_for_cat4_or_403(class_id, db, user)
+    schema_available = _cat4_cohort_columns_available(db)
+    logger.info(
+        "CAT4 student-history schema check for class_id=%s baseline_id=%r passed=%s",
+        class_id,
+        baseline_id,
+        schema_available,
+    )
+    if not schema_available:
+        logger.info(
+            "CAT4 student-history using legacy path for class_id=%s baseline_id=%r",
+            class_id,
+            baseline_id,
+        )
+        return _build_cat4_student_history_payload_legacy(
+            class_id,
+            db,
+            baseline_id=baseline_id,
+            raw_name=raw_name,
+        )
+    logger.info(
+        "CAT4 student-history using cohort-aware path for class_id=%s baseline_id=%r",
+        class_id,
+        baseline_id,
+    )
 
     baseline = (
         db.query(Cat4BaselineSetModel)
@@ -10638,10 +11818,13 @@ def cat4_student_history(
 
     term_sets = (
         db.query(Cat4TermResultSetModel)
-        .filter(Cat4TermResultSetModel.class_id == class_id)
-        .order_by(Cat4TermResultSetModel.created_at.asc(), Cat4TermResultSetModel.id.asc())
+        .filter(
+            Cat4TermResultSetModel.class_id == class_id,
+            Cat4TermResultSetModel.cohort_key == baseline.cohort_key,
+        )
         .all()
     )
+    term_sets = sorted(term_sets, key=_cat4_term_sort_key)
     term_set_ids = [term_set.id for term_set in term_sets]
     term_rows = (
         db.query(Cat4StudentTermResultModel)

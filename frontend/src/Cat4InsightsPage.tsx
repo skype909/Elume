@@ -10,6 +10,8 @@ const API_BASE = "/api";
 type Cat4SetSummary = {
   id: number;
   title: string;
+  cohort_key?: string | null;
+  cohort_name?: string | null;
   test_date?: string | null;
   is_locked?: boolean;
   locked_at?: string | null;
@@ -21,14 +23,26 @@ type Cat4SetSummary = {
   unmatched_count: number;
 };
 
+type Cat4CohortSummary = {
+  key: string;
+  name: string;
+  baseline_count?: number;
+  term_count?: number;
+  workbook_count?: number;
+};
+
 type Cat4MetaPayload = {
   feature_enabled: boolean;
+  selected_cohort?: Cat4CohortSummary | null;
+  cohorts?: Cat4CohortSummary[];
   active_workbook?: {
     id: number;
     version_number: number;
     workbook_name: string;
     uploaded_by_email: string;
     uploaded_at?: string | null;
+    cohort_key?: string | null;
+    cohort_name?: string | null;
     validation_summary?: {
       baseline_sheet_name?: string | null;
       term_sheet_names?: string[];
@@ -44,6 +58,8 @@ type Cat4MetaPayload = {
     uploaded_by_email: string;
     uploaded_at?: string | null;
     is_active: boolean;
+    cohort_key?: string | null;
+    cohort_name?: string | null;
     validation_summary?: {
       baseline_sheet_name?: string | null;
       term_sheet_names?: string[];
@@ -603,6 +619,27 @@ function downloadTextFile(filename: string, contents: string) {
   URL.revokeObjectURL(url);
 }
 
+function buildCat4CohortKey(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return normalized || "default";
+}
+
+function buildCat4CohortName(value: string, fallbackKey?: string) {
+  const trimmed = value.trim();
+  if (trimmed) return trimmed;
+  const key = buildCat4CohortKey(fallbackKey || "");
+  if (key === "default") return "Default Cohort";
+  return key
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function rowHasSavedLevels(row: Cat4TermEntryRow) {
+  return Object.values(row.subject_levels || {}).some((value) => value === "Higher" || value === "Ordinary");
+}
+
 function buildEmptySubjectScores() {
   return Object.fromEntries(TERM_SUBJECT_COLUMNS.map((subject) => [subject, null])) as Record<string, number | null>;
 }
@@ -697,12 +734,28 @@ function StudentTable({
   onStudentClick: (row: Cat4StudentReportRow) => void;
   showComparisonContext?: boolean;
 }) {
+  const [query, setQuery] = useState("");
+  const filteredRows = useMemo(() => {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return rows;
+    return rows.filter((row) => row.student_name.toLowerCase().includes(trimmed));
+  }, [query, rows]);
+
   if (!rows.length) {
     return <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">{empty}</div>;
   }
 
   return (
-    <div className="overflow-x-auto rounded-3xl border-2 border-slate-200 bg-white">
+    <div className="rounded-3xl border-2 border-slate-200 bg-white">
+      <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search student"
+          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 md:max-w-sm"
+        />
+      </div>
+      <div className="overflow-x-auto">
       <table className="min-w-full text-sm">
         <thead className="bg-slate-50 text-left text-slate-600">
           <tr>
@@ -720,7 +773,7 @@ function StudentTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200">
-          {rows.map((row) => (
+          {filteredRows.map((row) => (
             <tr key={`${row.student_id || row.student_name}-${row.status}`}>
               <td className="px-4 py-3">
                 <button
@@ -819,6 +872,10 @@ function StudentTable({
           ))}
         </tbody>
       </table>
+      </div>
+      {!filteredRows.length ? (
+        <div className="border-t border-slate-200 px-4 py-4 text-sm text-slate-600">No students match that search.</div>
+      ) : null}
     </div>
   );
 }
@@ -831,19 +888,19 @@ function signedOneDecimal(value?: number | null) {
 
 function domainPillTone(domain?: string | null) {
   const normalized = (domain || "").trim().toLowerCase();
-  if (normalized === "verbal") return "border-indigo-200 bg-indigo-50 text-indigo-800";
-  if (normalized === "quantitative") return "border-blue-200 bg-blue-50 text-blue-800";
-  if (normalized === "non-verbal") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (normalized === "spatial") return "border-amber-200 bg-amber-50 text-amber-900";
+  if (normalized === "verbal") return "border-violet-200 bg-violet-50 text-violet-800";
+  if (normalized === "quantitative") return "border-sky-200 bg-sky-50 text-sky-800";
+  if (normalized === "non-verbal") return "border-lime-200 bg-lime-50 text-lime-800";
+  if (normalized === "spatial") return "border-orange-200 bg-orange-50 text-orange-900";
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
 function domainChartColor(domain?: string | null) {
   const normalized = (domain || "").trim().toLowerCase();
-  if (normalized === "verbal") return "#5b5bd6";
-  if (normalized === "quantitative") return "#0891b2";
-  if (normalized === "non-verbal") return "#0f9f78";
-  if (normalized === "spatial") return "#d97706";
+  if (normalized === "verbal") return "#7c3aed";
+  if (normalized === "quantitative") return "#0ea5e9";
+  if (normalized === "non-verbal") return "#84cc16";
+  if (normalized === "spatial") return "#f97316";
   return "#94a3b8";
 }
 
@@ -1244,6 +1301,8 @@ export default function Cat4InsightsPage() {
   const [interpretationError, setInterpretationError] = useState<Record<string, string | null>>({});
   const [selectedBaselineId, setSelectedBaselineId] = useState<number | "">("");
   const [selectedTermSetId, setSelectedTermSetId] = useState<number | "">("");
+  const [selectedCohortKey, setSelectedCohortKey] = useState("default");
+  const [cohortDraftName, setCohortDraftName] = useState("");
   const [selectedThresholdPercent, setSelectedThresholdPercent] = useState<number | "">("");
   const [domainChartMode, setDomainChartMode] = useState<"concerns" | "strengths">("concerns");
   const [manualLevelsEnabled, setManualLevelsEnabled] = useState(false);
@@ -1266,6 +1325,7 @@ export default function Cat4InsightsPage() {
   const [workbookPreview, setWorkbookPreview] = useState<Cat4WorkbookPreview | null>(null);
   const [termEntryRows, setTermEntryRows] = useState<Cat4TermEntryRow[]>([]);
   const [termEntryStatus, setTermEntryStatus] = useState<string | null>(null);
+  const [termEntrySearch, setTermEntrySearch] = useState("");
   const [termPasteText, setTermPasteText] = useState("");
   const [validatingWorkbook, setValidatingWorkbook] = useState(false);
   const [importingWorkbook, setImportingWorkbook] = useState(false);
@@ -1312,6 +1372,28 @@ export default function Cat4InsightsPage() {
         : null,
     [meta, selectedTermSetId]
   );
+  const selectedCohort = useMemo(
+    () => meta?.cohorts?.find((item) => item.key === selectedCohortKey) ?? null,
+    [meta, selectedCohortKey]
+  );
+  const requestedCohort = useMemo(() => {
+    const draft = cohortDraftName.trim();
+    if (draft) {
+      const key = buildCat4CohortKey(draft);
+      return { key, name: buildCat4CohortName(draft, key) };
+    }
+    const key = buildCat4CohortKey(selectedCohortKey);
+    return {
+      key,
+      name: selectedCohort?.name || buildCat4CohortName("", key),
+    };
+  }, [cohortDraftName, selectedCohort, selectedCohortKey]);
+  const filteredTermEntryRows = useMemo(() => {
+    const query = termEntrySearch.trim().toLowerCase();
+    return termEntryRows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => (!query ? true : row.raw_name.toLowerCase().includes(query)));
+  }, [termEntryRows, termEntrySearch]);
   const rankedThresholdLabel = report?.selected_threshold_percent ? `${report.selected_threshold_percent}%` : null;
   const modalStudentRow = useMemo(() => {
     if (!selectedHistoryStudent) return null;
@@ -1583,10 +1665,18 @@ export default function Cat4InsightsPage() {
     }
   }
 
-  async function loadMeta(): Promise<Cat4MetaPayload | null> {
+  async function loadMeta(nextCohortKey?: string): Promise<Cat4MetaPayload | null> {
     if (!validClassId) return null;
-    const data = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/meta`)) as Cat4MetaPayload;
+    const params = new URLSearchParams();
+    const cohortKey = buildCat4CohortKey(nextCohortKey || selectedCohortKey);
+    if (cohortKey) params.set("cohort_key", cohortKey);
+    const data = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/meta?${params.toString()}`)) as Cat4MetaPayload;
     setMeta(data);
+    const resolvedCohortKey =
+      (data.cohorts || []).some((item) => item.key === cohortKey)
+        ? cohortKey
+        : data.selected_cohort?.key || data.cohorts?.[0]?.key || cohortKey;
+    setSelectedCohortKey((prev) => (prev === resolvedCohortKey ? prev : resolvedCohortKey));
     setSelectedBaselineId((prev) => (prev && data.baseline_sets.some((item) => item.id === prev) ? prev : data.baseline_sets[0]?.id || ""));
     setSelectedTermSetId((prev) => (prev && data.term_sets.some((item) => item.id === prev) ? prev : data.term_sets[0]?.id || ""));
     return data;
@@ -1599,6 +1689,7 @@ export default function Cat4InsightsPage() {
     const termSetId = nextTermSetId === undefined ? selectedTermSetId : nextTermSetId;
     if (baselineId) params.set("baseline_id", String(baselineId));
     if (termSetId) params.set("term_set_id", String(termSetId));
+    if (selectedCohortKey) params.set("cohort_key", buildCat4CohortKey(selectedCohortKey));
     if (selectedThresholdPercent) params.set("threshold_percent", String(selectedThresholdPercent));
     const query = params.toString();
     const data = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/report${query ? `?${query}` : ""}`)) as Cat4ReportPayload;
@@ -1619,8 +1710,13 @@ export default function Cat4InsightsPage() {
       const params = new URLSearchParams();
       params.set("baseline_id", String(baselineId));
       if (termSetId) params.set("term_set_id", String(termSetId));
+      if (selectedCohortKey) params.set("cohort_key", buildCat4CohortKey(selectedCohortKey));
       const data = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/term-entry?${params.toString()}`)) as Cat4TermEntryPayload;
-      setTermEntryRows(prepareTermEntryRows(data.rows || []));
+      const preparedRows = prepareTermEntryRows(data.rows || []);
+      setTermEntryRows(preparedRows);
+      if (preparedRows.some((row) => rowHasSavedLevels(row))) {
+        setManualLevelsEnabled(true);
+      }
     } finally {
       setLoadingTermEntry(false);
     }
@@ -1711,7 +1807,7 @@ export default function Cat4InsightsPage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classId, validClassId]);
+  }, [classId, validClassId, selectedCohortKey]);
 
   useEffect(() => {
     if (!selectedBaselineId && !selectedTermSetId) return;
@@ -1765,6 +1861,7 @@ export default function Cat4InsightsPage() {
     try {
       const form = new FormData();
       form.append("file", file);
+      form.append("cohort_key", requestedCohort.key);
       const preview = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/workbook/validate`, {
         method: "POST",
         body: form,
@@ -1775,11 +1872,17 @@ export default function Cat4InsightsPage() {
       setImportingWorkbook(true);
       const uploadForm = new FormData();
       uploadForm.append("file", file);
+      uploadForm.append("cohort_key", requestedCohort.key);
+      uploadForm.append("cohort_name", requestedCohort.name);
       await apiFetch(`${API_BASE}/classes/${classId}/cat4/workbooks`, {
         method: "POST",
         body: uploadForm,
       });
-      const metaData = await loadMeta();
+      if (selectedCohortKey !== requestedCohort.key) {
+        setSelectedCohortKey(requestedCohort.key);
+      }
+      setCohortDraftName("");
+      const metaData = await loadMeta(requestedCohort.key);
       await loadReport(metaData?.baseline_sets[0]?.id || "", metaData?.term_sets[0]?.id || "");
     } catch (e: any) {
       setError(e?.message || "Could not validate workbook");
@@ -1813,14 +1916,15 @@ export default function Cat4InsightsPage() {
     setError(null);
     try {
       setImportingWorkbook(true);
-      await apiFetch(`${API_BASE}/classes/${classId}/cat4/reset`, {
+      const params = new URLSearchParams({ cohort_key: buildCat4CohortKey(selectedCohortKey) });
+      await apiFetch(`${API_BASE}/classes/${classId}/cat4/reset?${params.toString()}`, {
         method: "POST",
       });
       setWorkbookPreview(null);
       setSelectedBaselineId("");
       setSelectedTermSetId("");
       setShowResetConfirm(false);
-      const metaData = await loadMeta();
+      const metaData = await loadMeta(selectedCohortKey);
       await loadReport(metaData?.baseline_sets[0]?.id || "", metaData?.term_sets[0]?.id || "");
     } catch (e: any) {
       setError(e?.message || "Could not reset CAT4 data");
@@ -1914,6 +2018,8 @@ export default function Cat4InsightsPage() {
         body: JSON.stringify({
           title: baselineTitle,
           test_date: baselineDate || null,
+          cohort_key: requestedCohort.key,
+          cohort_name: requestedCohort.name,
         }),
       })) as { id: number };
 
@@ -1928,7 +2034,11 @@ export default function Cat4InsightsPage() {
       setBaselineTitle("");
       setBaselineDate("");
       setBaselineRowsText("");
-      const metaData = await loadMeta();
+      if (selectedCohortKey !== requestedCohort.key) {
+        setSelectedCohortKey(requestedCohort.key);
+      }
+      setCohortDraftName("");
+      const metaData = await loadMeta(requestedCohort.key);
       setSelectedBaselineId(created.id);
       await loadReport(created.id, selectedTermSetId || metaData?.term_sets[0]?.id || "");
     } catch (e: any) {
@@ -1950,6 +2060,8 @@ export default function Cat4InsightsPage() {
           title: termTitle,
           academic_year: termAcademicYear || null,
           term_key: termKey || null,
+          cohort_key: requestedCohort.key,
+          cohort_name: requestedCohort.name,
         }),
       })) as { id: number };
 
@@ -1965,7 +2077,11 @@ export default function Cat4InsightsPage() {
       setTermAcademicYear("");
       setTermKey("");
       setTermRowsText("");
-      const metaData = await loadMeta();
+      if (selectedCohortKey !== requestedCohort.key) {
+        setSelectedCohortKey(requestedCohort.key);
+      }
+      setCohortDraftName("");
+      const metaData = await loadMeta(requestedCohort.key);
       setSelectedTermSetId(created.id);
       await loadReport(selectedBaselineId || metaData?.baseline_sets[0]?.id || "", created.id);
       await loadTermEntry(selectedBaselineId || metaData?.baseline_sets[0]?.id || "", created.id);
@@ -2129,7 +2245,7 @@ export default function Cat4InsightsPage() {
       const rows = termEntryRows
         .map((row) => {
           const subject_scores = mergeSubjectScores(row.subject_scores);
-          const subject_levels = manualLevelsEnabled ? mergeSubjectLevels(row.subject_levels) : buildEmptySubjectLevels();
+          const subject_levels = mergeSubjectLevels(row.subject_levels);
           const subjectValues = Object.entries(subject_scores).filter(([, value]) => typeof value === "number");
           const metrics = termMetricsFromSubjectScores(subject_scores);
           const subjectPayload = TERM_SUBJECT_COLUMNS.reduce<Record<string, number | { score: number | null; level: TermSubjectLevel }>>((acc, subject) => {
@@ -2245,7 +2361,7 @@ export default function Cat4InsightsPage() {
           <div className="mt-6 text-sm text-slate-600">Loading CAT4 insights...</div>
         ) : !meta ? (
           <div className="mt-6 rounded-3xl border-2 border-slate-200 bg-white p-6 text-sm text-slate-600">
-            CAT4 Insights is not enabled for this account yet.
+            CAT4 data could not be loaded. Please refresh and try again.
           </div>
         ) : (
           <>
@@ -2519,6 +2635,16 @@ export default function Cat4InsightsPage() {
                     </button>
                   </div>
 
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="text-sm font-semibold text-slate-800">Find a student in the manual results grid</div>
+                    <input
+                      value={termEntrySearch}
+                      onChange={(e) => setTermEntrySearch(e.target.value)}
+                      placeholder="Search student name"
+                      className="mt-3 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 md:max-w-sm"
+                    />
+                  </div>
+
                   {!selectedTermSetId ? (
                     <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                       Create a term set to start entering manual CAT4 results.
@@ -2548,7 +2674,7 @@ export default function Cat4InsightsPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-200">
-                            {termEntryRows.map((row, rowIndex) => (
+                            {filteredTermEntryRows.map(({ row, index: rowIndex }) => (
                               <tr key={`${row.raw_name}-${rowIndex}`}>
                                 <td className="px-3 py-3">
                                   <div className="font-semibold text-slate-900">{row.raw_name}</div>
@@ -2600,10 +2726,15 @@ export default function Cat4InsightsPage() {
                           </tbody>
                         </table>
                       </div>
+                      {!filteredTermEntryRows.length ? (
+                        <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                          No students match that search.
+                        </div>
+                      ) : null}
 
                       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                         <div className="text-sm text-slate-600">
-                          {termEntryRows.length} cohort row{termEntryRows.length === 1 ? "" : "s"} loaded for manual results entry.
+                          {filteredTermEntryRows.length} of {termEntryRows.length} cohort row{termEntryRows.length === 1 ? "" : "s"} shown in the manual results grid.
                         </div>
                         <button
                           type="button"
@@ -2926,7 +3057,7 @@ export default function Cat4InsightsPage() {
               <div className="grid gap-4 xl:grid-cols-2">
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title={rankedThresholdLabel ? `Bottom ${rankedThresholdLabel}` : "Bottom 10%"}
+                  title={rankedThresholdLabel ? `Bottom ${rankedThresholdLabel} Academically` : "Bottom 10% Academically"}
                   description="Students with the lowest latest academic averages. The domain labels highlight the CAT4 areas showing the strongest concern signals, to help guide support."
                   defaultOpen
                   sectionRef={setSectionRef("bottom-attainment")}
@@ -2937,7 +3068,7 @@ export default function Cat4InsightsPage() {
 
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title={rankedThresholdLabel ? `Top ${rankedThresholdLabel}` : "Top 5%"}
+                  title={rankedThresholdLabel ? `Top ${rankedThresholdLabel} Academically` : "Top 5% Academically"}
                   description="Students with the highest latest academic averages. The labels show one CAT4 strength and one watch area, so strong performance is viewed alongside the area that may still need attention."
                   defaultOpen
                   sectionRef={setSectionRef("top-attainment")}
@@ -3062,7 +3193,7 @@ export default function Cat4InsightsPage() {
           >
             <div
               ref={setSectionRef("student-modal-report")}
-              className="w-full max-w-2xl rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl"
+              className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-4">
@@ -3085,7 +3216,8 @@ export default function Cat4InsightsPage() {
                 </button>
               </div>
 
-              <div className="mt-4 grid gap-3 sm:grid-cols-4">
+              <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="grid gap-3 sm:grid-cols-4">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                   <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Latest Average</div>
                   <div className="mt-1 text-xl font-extrabold text-slate-900">{pct(selectedHistoryStudent.latest_average_percent)}</div>
@@ -3282,6 +3414,7 @@ export default function Cat4InsightsPage() {
                 <div className="mt-4">
                   <StudentDomainDoughnut row={modalStudentRow || selectedHistoryStudent} />
                 </div>
+              </div>
               </div>
               </div>
             </div>
