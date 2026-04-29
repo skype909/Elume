@@ -4891,15 +4891,11 @@ def _cat4_status_label(status: Any) -> str:
     }.get(str(status or "").strip().lower(), "Within Expected Range")
 
 
-def _cat4_student_interpretation_facts(
-    class_id: int,
-    db: Session,
-    baseline_id: int,
+def _cat4_student_interpretation_facts_from_report(
+    report: dict[str, Any],
     raw_name: str,
     student_id: Optional[int] = None,
-    term_set_id: Optional[int] = None,
 ) -> dict[str, Any]:
-    report = _build_cat4_report_payload(class_id, db, baseline_id=baseline_id, term_set_id=term_set_id)
     requested_identity = _cat4_identity_key(raw_name)
     report_rows = report.get("all_matched_students", [])
     row = None
@@ -4972,6 +4968,18 @@ def _cat4_student_interpretation_facts(
     }
 
 
+def _cat4_student_interpretation_facts(
+    class_id: int,
+    db: Session,
+    baseline_id: int,
+    raw_name: str,
+    student_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+) -> dict[str, Any]:
+    report = _build_cat4_report_payload(class_id, db, baseline_id=baseline_id, term_set_id=term_set_id)
+    return _cat4_student_interpretation_facts_from_report(report, raw_name=raw_name, student_id=student_id)
+
+
 def _build_cat4_student_history_payload_legacy(
     class_id: int,
     db: Session,
@@ -5036,6 +5044,356 @@ def _build_cat4_student_history_payload_legacy(
             )
         },
         "points": points,
+    }
+
+
+DEMO_CAT4_WORKBOOK_PATH = BASE_DIR.parent / "frontend" / "public" / "demo-data" / "DEMO_CAT4_RESULTS.xlsx"
+_demo_cat4_cache: dict[str, Any] = {"mtime_ns": None, "preview": None}
+
+
+def _load_demo_cat4_preview() -> dict[str, Any]:
+    workbook_path = DEMO_CAT4_WORKBOOK_PATH
+    if not workbook_path.exists():
+        raise HTTPException(status_code=500, detail="Demo CAT4 workbook file is missing")
+    try:
+        mtime_ns = workbook_path.stat().st_mtime_ns
+    except Exception:
+        mtime_ns = None
+
+    if _demo_cat4_cache.get("preview") is not None and _demo_cat4_cache.get("mtime_ns") == mtime_ns:
+        return dict(_demo_cat4_cache["preview"])
+
+    try:
+        preview = _build_cat4_workbook_preview(_read_xlsx_workbook(workbook_path.read_bytes()))
+    except Exception:
+        logger.exception("Failed to load demo CAT4 workbook from %s", workbook_path)
+        raise HTTPException(status_code=500, detail="Demo CAT4 workbook could not be loaded")
+
+    if preview.get("errors"):
+        logger.error("Demo CAT4 workbook has validation errors: %s", preview.get("errors"))
+        raise HTTPException(status_code=500, detail="Demo CAT4 workbook is invalid")
+
+    _demo_cat4_cache["mtime_ns"] = mtime_ns
+    _demo_cat4_cache["preview"] = dict(preview)
+    return preview
+
+
+def _demo_cat4_loaded_data() -> dict[str, Any]:
+    preview = _load_demo_cat4_preview()
+    baseline_rows_payload = preview.get("baseline_rows") or []
+    term_sets_payload = preview.get("term_sets") or []
+    baseline_id = 1
+    baseline_set = SimpleNamespace(
+        id=baseline_id,
+        class_id=0,
+        title=(preview.get("baseline_sheet_name") or "CAT4 Baseline").strip() or "CAT4 Baseline",
+        test_date=None,
+        is_locked=True,
+        locked_at=None,
+        created_at=datetime.utcnow(),
+    )
+    student_ids_by_identity: dict[str, int] = {}
+    baseline_rows: list[SimpleNamespace] = []
+    for index, row in enumerate(baseline_rows_payload, start=1):
+        identity = _cat4_identity_key(str(row.get("raw_name") or ""))
+        if identity:
+            student_ids_by_identity[identity] = index
+        baseline_rows.append(
+            SimpleNamespace(
+                id=index,
+                baseline_set_id=baseline_id,
+                class_id=0,
+                student_id=index,
+                raw_name=str(row.get("raw_name") or "").strip(),
+                matched_name=str(row.get("raw_name") or "").strip() or None,
+                verbal_sas=row.get("verbal_sas"),
+                quantitative_sas=row.get("quantitative_sas"),
+                non_verbal_sas=row.get("non_verbal_sas"),
+                spatial_sas=row.get("spatial_sas"),
+                overall_sas=row.get("overall_sas"),
+                profile_label=row.get("profile_label"),
+                confidence_note=row.get("confidence_note"),
+            )
+        )
+
+    term_sets: list[SimpleNamespace] = []
+    all_term_rows: list[SimpleNamespace] = []
+    for term_index, term_set_payload in enumerate(term_sets_payload, start=1):
+        term_set = SimpleNamespace(
+            id=term_index,
+            class_id=0,
+            title=(term_set_payload.get("title") or f"Term {term_index}").strip() or f"Term {term_index}",
+            academic_year=term_set_payload.get("academic_year"),
+            term_key=term_set_payload.get("term_key"),
+            created_at=datetime.utcnow() + timedelta(minutes=term_index),
+        )
+        term_sets.append(term_set)
+        for row_index, row in enumerate(term_set_payload.get("rows") or [], start=1):
+            raw_name = str(row.get("raw_name") or "").strip()
+            identity = _cat4_identity_key(raw_name)
+            student_id = student_ids_by_identity.get(identity) if identity else None
+            average_percent, subject_count, domain_scores, raw_json = _calculate_cat4_term_metrics(
+                _json_text_or_none(row.get("raw_subjects_json")),
+                row.get("average_percent"),
+                row.get("subject_count"),
+            )
+            all_term_rows.append(
+                SimpleNamespace(
+                    id=(term_index * 1000) + row_index,
+                    result_set_id=term_set.id,
+                    class_id=0,
+                    student_id=student_id,
+                    raw_name=raw_name,
+                    matched_name=raw_name or None,
+                    average_percent=average_percent,
+                    subject_count=subject_count,
+                    raw_subjects_json=raw_json,
+                    verbal_domain_score=domain_scores.get("verbal_domain_score"),
+                    quantitative_domain_score=domain_scores.get("quantitative_domain_score"),
+                    non_verbal_domain_score=domain_scores.get("non_verbal_domain_score"),
+                    spatial_domain_score=domain_scores.get("spatial_domain_score"),
+                )
+            )
+    return {
+        "preview": preview,
+        "baseline_sets": [baseline_set] if baseline_rows else [],
+        "term_sets": sorted(term_sets, key=_cat4_term_sort_key, reverse=True),
+        "baseline_rows": baseline_rows,
+        "all_term_rows": all_term_rows,
+    }
+
+
+def _build_demo_cat4_meta_payload() -> dict[str, Any]:
+    loaded = _demo_cat4_loaded_data()
+    preview = loaded["preview"]
+    baseline_sets = loaded["baseline_sets"]
+    term_sets = loaded["term_sets"]
+    baseline_rows = loaded["baseline_rows"]
+    all_term_rows = loaded["all_term_rows"]
+    overall_match_counts = _cat4_match_counts_for_rows(baseline_rows, all_term_rows)
+    active_workbook = {
+        "id": 1,
+        "version_number": 1,
+        "workbook_name": DEMO_CAT4_WORKBOOK_PATH.name,
+        "uploaded_by_email": "Demo data",
+        "uploaded_at": None,
+        "cohort_key": CAT4_DEFAULT_COHORT_KEY,
+        "cohort_name": CAT4_DEFAULT_COHORT_NAME,
+        "validation_summary": {
+            "baseline_sheet_name": preview.get("baseline_sheet_name"),
+            "term_sheet_names": preview.get("term_sheet_names") or [],
+            "warnings": preview.get("warnings") or [],
+            "matched_student_count": len(baseline_rows),
+            "baseline_locked": bool(baseline_rows),
+        },
+    }
+    return {
+        "feature_enabled": True,
+        "selected_cohort": {"key": CAT4_DEFAULT_COHORT_KEY, "name": CAT4_DEFAULT_COHORT_NAME},
+        "cohorts": [{"key": CAT4_DEFAULT_COHORT_KEY, "name": CAT4_DEFAULT_COHORT_NAME, "baseline_count": len(baseline_sets), "term_count": len(term_sets), "workbook_count": 1}],
+        "active_workbook": active_workbook,
+        "workbook_versions": [{**active_workbook, "is_active": True}],
+        "baseline_sets": [
+            {
+                "id": item.id,
+                "title": item.title,
+                "test_date": item.test_date.date().isoformat() if item.test_date else None,
+                "is_locked": bool(item.is_locked),
+                "locked_at": item.locked_at.isoformat() if item.locked_at else None,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+                "cohort_key": CAT4_DEFAULT_COHORT_KEY,
+                "cohort_name": CAT4_DEFAULT_COHORT_NAME,
+                **_cat4_set_summary(baseline_rows),
+            }
+            for item in baseline_sets
+        ],
+        "term_sets": [
+            {
+                "id": item.id,
+                "title": item.title,
+                "academic_year": item.academic_year,
+                "term_key": item.term_key,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+                "cohort_key": CAT4_DEFAULT_COHORT_KEY,
+                "cohort_name": CAT4_DEFAULT_COHORT_NAME,
+                **_cat4_set_summary([row for row in all_term_rows if int(row.result_set_id) == int(item.id)]),
+            }
+            for item in term_sets
+        ],
+        "matched_counts": {
+            "baseline_rows": overall_match_counts["baseline_rows"],
+            "baseline_unmatched": overall_match_counts["baseline_unmatched"],
+            "term_rows": overall_match_counts["term_rows"],
+            "term_unmatched": overall_match_counts["term_unmatched"],
+        },
+    }
+
+
+def _build_demo_cat4_report_payload(
+    baseline_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+    threshold_percent: Optional[int] = None,
+) -> dict[str, Any]:
+    loaded = _demo_cat4_loaded_data()
+    baseline_sets = loaded["baseline_sets"]
+    term_sets = loaded["term_sets"]
+    baseline_rows = loaded["baseline_rows"]
+    all_term_rows = loaded["all_term_rows"]
+    if not baseline_sets or not term_sets:
+        return _cat4_build_report_payload_from_loaded(
+            baseline_sets,
+            term_sets,
+            [],
+            [],
+            [],
+            [],
+            baseline_id=baseline_id,
+            term_set_id=term_set_id,
+            threshold_percent=threshold_percent,
+        )
+    selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_set_id else term_sets[0]
+    ordered_term_sets = sorted(term_sets, key=_cat4_term_sort_key)
+    selected_index = next((index for index, item in enumerate(ordered_term_sets) if item.id == selected_term.id), -1)
+    previous_term = ordered_term_sets[selected_index - 1] if selected_index > 0 else None
+    latest_rows = [row for row in all_term_rows if int(row.result_set_id) == int(selected_term.id)]
+    previous_rows = [row for row in all_term_rows if previous_term and int(row.result_set_id) == int(previous_term.id)]
+    return _cat4_build_report_payload_from_loaded(
+        baseline_sets,
+        term_sets,
+        baseline_rows,
+        latest_rows,
+        all_term_rows,
+        previous_rows,
+        baseline_id=baseline_id,
+        term_set_id=term_set_id,
+        threshold_percent=threshold_percent,
+    )
+
+
+def _build_demo_cat4_student_history_payload(baseline_id: int, raw_name: str) -> dict[str, Any]:
+    loaded = _demo_cat4_loaded_data()
+    baseline_sets = loaded["baseline_sets"]
+    baseline = next((item for item in baseline_sets if int(item.id) == int(baseline_id)), None)
+    if not baseline:
+        raise HTTPException(status_code=404, detail="CAT4 baseline set not found")
+    requested_name = (raw_name or "").strip()
+    if not requested_name:
+        raise HTTPException(status_code=400, detail="raw_name is required")
+    baseline_rows = loaded["baseline_rows"]
+    term_sets = sorted(loaded["term_sets"], key=_cat4_term_sort_key)
+    all_term_rows = loaded["all_term_rows"]
+    cohort_identity_keys = {
+        _cat4_identity_key(str(row.raw_name or ""))
+        for row in baseline_rows
+        if _cat4_identity_key(str(row.raw_name or ""))
+    }
+    requested_identity = _cat4_identity_key(requested_name)
+    selected_baseline_row = next(
+        (row for row in baseline_rows if _cat4_identity_key(str(row.raw_name or "")) == requested_identity),
+        None,
+    )
+    rows_by_term_set: dict[int, list[SimpleNamespace]] = defaultdict(list)
+    for row in all_term_rows:
+        rows_by_term_set[int(row.result_set_id)].append(row)
+    points = []
+    for term_set in term_sets:
+        cohort_rows = [
+            row
+            for row in rows_by_term_set.get(int(term_set.id), [])
+            if _cat4_identity_key(str(row.raw_name or "")) in cohort_identity_keys
+        ]
+        student_row = next(
+            (row for row in cohort_rows if _cat4_identity_key(str(row.raw_name or "")) == requested_identity),
+            None,
+        )
+        cohort_values = [row.average_percent for row in cohort_rows if row.average_percent is not None]
+        cohort_avg = round(sum(cohort_values) / len(cohort_values), 1) if cohort_values else None
+        points.append(
+            {
+                "term_set_id": term_set.id,
+                "title": term_set.title,
+                "date": term_set.created_at.isoformat() if term_set.created_at else None,
+                "student": student_row.average_percent if student_row and student_row.average_percent is not None else None,
+                "cohort_avg": cohort_avg,
+            }
+        )
+    return {
+        "student": {
+            "raw_name": selected_baseline_row.raw_name if selected_baseline_row and selected_baseline_row.raw_name else requested_name
+        },
+        "points": points,
+    }
+
+
+@app.get("/public/demo/cat4/meta")
+def public_demo_cat4_meta():
+    logger.info("Public demo CAT4 meta requested")
+    return _build_demo_cat4_meta_payload()
+
+
+@app.get("/public/demo/cat4/report")
+def public_demo_cat4_report(
+    baseline_id: Optional[int] = None,
+    term_set_id: Optional[int] = None,
+    threshold_percent: Optional[int] = None,
+):
+    logger.info(
+        "Public demo CAT4 report requested baseline_id=%r term_set_id=%r threshold_percent=%r",
+        baseline_id,
+        term_set_id,
+        threshold_percent,
+    )
+    return _build_demo_cat4_report_payload(
+        baseline_id=baseline_id,
+        term_set_id=term_set_id,
+        threshold_percent=threshold_percent,
+    )
+
+
+@app.get("/public/demo/cat4/student-history")
+def public_demo_cat4_student_history(
+    baseline_id: int,
+    raw_name: str,
+):
+    logger.info(
+        "Public demo CAT4 student history requested baseline_id=%r raw_name=%r",
+        baseline_id,
+        raw_name,
+    )
+    return _build_demo_cat4_student_history_payload(
+        baseline_id=baseline_id,
+        raw_name=raw_name,
+    )
+
+
+@app.post("/public/demo/cat4/student-interpretation")
+def public_demo_cat4_student_interpretation(
+    payload: Cat4StudentInterpretationRequest,
+):
+    raw_name = (payload.raw_name or "").strip()
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="raw_name is required")
+
+    logger.info(
+        "Public demo CAT4 student interpretation requested baseline_id=%r term_set_id=%r student_id=%r raw_name=%r",
+        payload.baseline_id,
+        payload.term_set_id,
+        payload.student_id,
+        raw_name,
+    )
+    report = _build_demo_cat4_report_payload(
+        baseline_id=payload.baseline_id,
+        term_set_id=payload.term_set_id,
+    )
+    facts = _cat4_student_interpretation_facts_from_report(
+        report,
+        raw_name=raw_name,
+        student_id=payload.student_id,
+    )
+    return {
+        "explanation": _cat4_fallback_interpretation(facts),
+        "facts": facts,
+        "source": "fallback",
     }
 
 
@@ -5934,6 +6292,15 @@ class WaitlistRequest(BaseModel):
     school: str | None = None
 
 
+class DemoEnquiryRequest(BaseModel):
+    school_name: str
+    contact_name: str
+    role: str
+    email: EmailStr
+    phone_number: str | None = None
+    message: str | None = None
+
+
 @app.post("/waitlist")
 def join_waitlist(payload: WaitlistRequest):
 
@@ -5960,6 +6327,55 @@ School: {payload.school or "Not provided"}
         raise HTTPException(status_code=500, detail=f"Email failed: {str(e)}")
 
     return {"success": True}
+
+
+@app.post("/demo-enquiries")
+def submit_demo_enquiry(payload: DemoEnquiryRequest):
+    school_name = (payload.school_name or "").strip()
+    contact_name = (payload.contact_name or "").strip()
+    role = (payload.role or "").strip()
+    email = str(payload.email).strip()
+    phone_number = (payload.phone_number or "").strip()
+    message = (payload.message or "").strip()
+
+    if not school_name or not contact_name or not role or not email:
+        raise HTTPException(status_code=400, detail="School name, contact name, role, and email are required")
+
+    enquiry_text = textwrap.dedent(
+        f"""
+        New Elume CAT4 demo enquiry
+
+        School name: {school_name}
+        Contact name: {contact_name}
+        Role: {role}
+        Email: {email}
+        Phone number: {phone_number or "Not provided"}
+        Message: {message or "Not provided"}
+        """
+    ).strip()
+
+    logger.info("CAT4 demo enquiry received\n%s", enquiry_text)
+
+    email_password = (os.getenv("EMAIL_PASSWORD") or "").strip()
+    if email_password:
+        msg = MIMEText(enquiry_text)
+        msg["Subject"] = "New Elume CAT4 Demo Enquiry"
+        msg["From"] = "admin@elume.ie"
+        msg["To"] = "admin@elume.ie"
+        try:
+            with smtplib.SMTP("smtp.zoho.eu", 587) as server:
+                server.starttls()
+                server.login("admin@elume.ie", email_password)
+                server.send_message(msg)
+        except Exception:
+            logger.exception("Failed to send CAT4 demo enquiry email for %s", email)
+    else:
+        logger.warning("EMAIL_PASSWORD missing; CAT4 demo enquiry logged only for %s", email)
+
+    return {
+        "success": True,
+        "message": "Thanks. We have your enquiry and will be in touch shortly.",
+    }
 
 # =========================================================
 # TEACHER ADMIN STATE (Profile + Timetable) — synced across devices

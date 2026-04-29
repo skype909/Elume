@@ -291,6 +291,10 @@ type Cat4TermEntryPayload = {
   rows: Cat4TermEntryRow[];
 };
 
+type Cat4InsightsPageProps = {
+  publicDemo?: boolean;
+};
+
 type ImportPreviewRow = {
   raw_name: string;
   matched_name: string | null;
@@ -1279,11 +1283,13 @@ function Sparkline({ points }: { points: Cat4StudentHistoryPoint[] }) {
   );
 }
 
-export default function Cat4InsightsPage() {
+export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPageProps) {
   const { id } = useParams<{ id: string }>();
   const classId = useMemo(() => Number(id), [id]);
   const validClassId = Number.isFinite(classId) && classId > 0;
+  const canLoadCat4 = publicDemo || validClassId;
   const navigate = useNavigate();
+  const cat4ApiBase = publicDemo ? `${API_BASE}/public/demo/cat4` : `${API_BASE}/classes/${classId}/cat4`;
 
   const card = "rounded-3xl border-2 border-slate-200 bg-white shadow-[0_2px_0_rgba(15,23,42,0.06)]";
   const cardPad = "p-4 md:p-5";
@@ -1555,6 +1561,10 @@ export default function Cat4InsightsPage() {
   }
 
   async function loadTeacherBranding() {
+    if (publicDemo) {
+      setTeacherSchoolName("Elume Demo School");
+      return;
+    }
     try {
       const data = (await apiFetch("/teacher-admin/state")) as TeacherAdminBrandingState;
       setTeacherSchoolName(String(data?.state?.profile?.schoolName ?? "").trim());
@@ -1666,11 +1676,12 @@ export default function Cat4InsightsPage() {
   }
 
   async function loadMeta(nextCohortKey?: string): Promise<Cat4MetaPayload | null> {
-    if (!validClassId) return null;
+    if (!canLoadCat4) return null;
     const params = new URLSearchParams();
-    const cohortKey = buildCat4CohortKey(nextCohortKey || selectedCohortKey);
-    if (cohortKey) params.set("cohort_key", cohortKey);
-    const data = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/meta?${params.toString()}`)) as Cat4MetaPayload;
+    const cohortKey = buildCat4CohortKey(nextCohortKey || selectedCohortKey || "default");
+    if (!publicDemo && cohortKey) params.set("cohort_key", cohortKey);
+    const query = params.toString();
+    const data = (await apiFetch(`${cat4ApiBase}/meta${query ? `?${query}` : ""}`)) as Cat4MetaPayload;
     setMeta(data);
     const resolvedCohortKey =
       (data.cohorts || []).some((item) => item.key === cohortKey)
@@ -1683,20 +1694,24 @@ export default function Cat4InsightsPage() {
   }
 
   async function loadReport(nextBaselineId?: number | "", nextTermSetId?: number | "") {
-    if (!validClassId) return;
+    if (!canLoadCat4) return;
     const params = new URLSearchParams();
     const baselineId = nextBaselineId === undefined ? selectedBaselineId : nextBaselineId;
     const termSetId = nextTermSetId === undefined ? selectedTermSetId : nextTermSetId;
     if (baselineId) params.set("baseline_id", String(baselineId));
     if (termSetId) params.set("term_set_id", String(termSetId));
-    if (selectedCohortKey) params.set("cohort_key", buildCat4CohortKey(selectedCohortKey));
+    if (!publicDemo && selectedCohortKey) params.set("cohort_key", buildCat4CohortKey(selectedCohortKey));
     if (selectedThresholdPercent) params.set("threshold_percent", String(selectedThresholdPercent));
     const query = params.toString();
-    const data = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/report${query ? `?${query}` : ""}`)) as Cat4ReportPayload;
+    const data = (await apiFetch(`${cat4ApiBase}/report${query ? `?${query}` : ""}`)) as Cat4ReportPayload;
     setReport(data);
   }
 
   async function loadTermEntry(nextBaselineId?: number | "", nextTermSetId?: number | "") {
+    if (publicDemo) {
+      setTermEntryRows([]);
+      return;
+    }
     if (!validClassId) return;
     const baselineId = nextBaselineId === undefined ? selectedBaselineId : nextBaselineId;
     const termSetId = nextTermSetId === undefined ? selectedTermSetId : nextTermSetId;
@@ -1723,7 +1738,7 @@ export default function Cat4InsightsPage() {
   }
 
   async function fetchStudentHistory(rawName: string) {
-    if (!validClassId || !activeHistoryBaselineId) return;
+    if (!canLoadCat4 || !activeHistoryBaselineId) return;
 
     const key = cat4HistoryCacheKey(activeHistoryBaselineId, rawName);
     if (Object.prototype.hasOwnProperty.call(historyCache, key) || historyLoading[key]) return;
@@ -1736,7 +1751,7 @@ export default function Cat4InsightsPage() {
         raw_name: rawName,
       });
       const data = (await apiFetch(
-        `${API_BASE}/classes/${classId}/cat4/student-history?${params.toString()}`
+        `${cat4ApiBase}/student-history?${params.toString()}`
       )) as Cat4StudentHistoryResp;
       setHistoryCache((prev) => ({ ...prev, [key]: data }));
     } catch {
@@ -1747,7 +1762,7 @@ export default function Cat4InsightsPage() {
   }
 
   async function fetchStudentInterpretation(student: Cat4StudentReportRow) {
-    if (!validClassId || !activeHistoryBaselineId || !activeInterpretationTermSetId) return;
+    if (!canLoadCat4 || !activeHistoryBaselineId || !activeInterpretationTermSetId) return;
 
     const key = cat4InterpretationCacheKey(activeHistoryBaselineId, activeInterpretationTermSetId, student.student_name);
     if (Object.prototype.hasOwnProperty.call(interpretationCache, key) || interpretationLoading[key]) return;
@@ -1756,7 +1771,7 @@ export default function Cat4InsightsPage() {
     setInterpretationError((prev) => ({ ...prev, [key]: null }));
 
     try {
-      const data = (await apiFetch(`${API_BASE}/classes/${classId}/cat4/student-interpretation`, {
+      const data = (await apiFetch(`${cat4ApiBase}/student-interpretation`, {
         method: "POST",
         body: JSON.stringify({
           baseline_id: activeHistoryBaselineId,
@@ -1783,19 +1798,21 @@ export default function Cat4InsightsPage() {
   }
 
   useEffect(() => {
-    if (!validClassId) return;
+    if (!canLoadCat4) return;
     setLoading(true);
     setError(null);
     (async () => {
       try {
         const [metaData, studentsData] = await Promise.all([
           loadMeta(),
-          apiFetch(`${API_BASE}/classes/${classId}/students`) as Promise<ClassStudent[]>,
+          publicDemo ? Promise.resolve([] as ClassStudent[]) : (apiFetch(`${API_BASE}/classes/${classId}/students`) as Promise<ClassStudent[]>),
           loadTeacherBranding(),
         ]);
         setStudents(Array.isArray(studentsData) ? studentsData : []);
         await loadReport(metaData?.baseline_sets[0]?.id || "", metaData?.term_sets[0]?.id || "");
-        await loadTermEntry(metaData?.baseline_sets[0]?.id || "", metaData?.term_sets[0]?.id || "");
+        if (!publicDemo) {
+          await loadTermEntry(metaData?.baseline_sets[0]?.id || "", metaData?.term_sets[0]?.id || "");
+        }
       } catch (e: any) {
         setError(e?.message || "Failed to load CAT4 insights");
         setMeta(null);
@@ -1807,15 +1824,17 @@ export default function Cat4InsightsPage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classId, validClassId, selectedCohortKey]);
+  }, [classId, validClassId, canLoadCat4, publicDemo, selectedCohortKey]);
 
   useEffect(() => {
     if (!selectedBaselineId && !selectedTermSetId) return;
     if (!meta) return;
     void loadReport();
-    void loadTermEntry();
+    if (!publicDemo) {
+      void loadTermEntry();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBaselineId, selectedTermSetId, selectedThresholdPercent]);
+  }, [publicDemo, selectedBaselineId, selectedTermSetId, selectedThresholdPercent]);
 
   async function onBaselineCsvSelected(file: File | null) {
     if (!file) return;
@@ -1999,7 +2018,7 @@ export default function Cat4InsightsPage() {
     writeLine("");
     writeStudentSection("Appendix: Full Student Comparison", report.all_matched_students);
 
-    doc.save(`elume-cat4-report-class-${classId}.pdf`);
+    doc.save(publicDemo ? "elume-cat4-demo-report.pdf" : `elume-cat4-report-class-${classId}.pdf`);
   }
 
   const baselineMatchedPreview = baselinePreview.filter((row) => row.matched).slice(0, 5);
@@ -2305,13 +2324,6 @@ export default function Cat4InsightsPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => navigate("/admin")}
-                className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-              >
-                Back to Admin
-              </button>
-              <button
-                type="button"
                 onClick={exportPdfReport}
                 className="rounded-2xl border-2 border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-900 hover:bg-sky-100"
               >
@@ -2327,13 +2339,24 @@ export default function Cat4InsightsPage() {
               >
                 Refresh
               </button>
-              <button
-                type="button"
-                onClick={() => setShowResetConfirm(true)}
-                className="rounded-2xl border-2 border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
-              >
-                Reset CAT4 Data
-              </button>
+              {!publicDemo && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/admin")}
+                    className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+                  >
+                    Back to Admin
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowResetConfirm(true)}
+                    className="rounded-2xl border-2 border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
+                  >
+                    Reset CAT4 Data
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -2344,7 +2367,7 @@ export default function Cat4InsightsPage() {
           </div>
         )}
 
-        {!loading && !teacherSchoolName && (
+        {!publicDemo && !loading && !teacherSchoolName && (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             <div>Add your school name in Teacher Admin to personalise CAT4 PDF exports.</div>
             <button
@@ -2365,6 +2388,8 @@ export default function Cat4InsightsPage() {
           </div>
         ) : (
           <>
+            {!publicDemo && (
+            <>
             <div className={`${card} ${cardPad} mt-6`}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -2750,6 +2775,8 @@ export default function Cat4InsightsPage() {
                 </>
               )}
             </div>
+            </>
+            )}
 
             <div className="mt-6 grid gap-4 md:grid-cols-4">
               {(report?.summary_cards || []).map((cardItem) => (
@@ -2837,10 +2864,10 @@ export default function Cat4InsightsPage() {
                 </div>
               </div>
 
-              <div className="grid gap-4 xl:grid-cols-2">
+              <div className={`grid gap-4 ${publicDemo ? "" : "xl:grid-cols-2"}`}>
                 <div className={`${card} ${cardPad}`}>
-                  <div className="text-lg font-extrabold tracking-tight text-slate-900">Active Workbook Summary</div>
-                  <div className="mt-1 text-sm text-slate-600">Current active workbook version driving the structured CAT4 report.</div>
+                  <div className="text-lg font-extrabold tracking-tight text-slate-900">{publicDemo ? "Demo Workbook Summary" : "Active Workbook Summary"}</div>
+                  <div className="mt-1 text-sm text-slate-600">{publicDemo ? "This read-only CAT4 analysis is loaded from Elume's generated demo workbook." : "Current active workbook version driving the structured CAT4 report."}</div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${report?.baseline_set?.is_locked ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
                       {report?.baseline_set?.is_locked ? "Baseline locked" : "Baseline not locked"}
@@ -2915,7 +2942,7 @@ export default function Cat4InsightsPage() {
                   </div>
                 </div>
 
-                <div className={`${card} ${cardPad}`}>
+                {!publicDemo && <div className={`${card} ${cardPad}`}>
                   <div className="text-lg font-extrabold tracking-tight text-slate-900">Workbook Version History</div>
                   <div className="mt-1 text-sm text-slate-600">Latest valid upload is active. Previous versions stay archived and can be restored.</div>
                   <div className="mt-4 space-y-3">
@@ -2957,7 +2984,7 @@ export default function Cat4InsightsPage() {
                       </div>
                     )}
                   </div>
-                </div>
+                </div>}
               </div>
 
               <div className="grid gap-4 xl:grid-cols-2">
@@ -3540,7 +3567,7 @@ export default function Cat4InsightsPage() {
                 </div>
               ) : (
                 <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
-                  {selectedInterpretationError || "Interpretation has not been generated yet. Generate an interpretation in Elume to include the written comment in this report."}
+                  {selectedInterpretationError || (publicDemo ? "Interpretation has not been generated yet. Use the button above to load the demo comment for this student." : "Interpretation has not been generated yet. Generate an interpretation in Elume to include the written comment in this report.")}
                 </div>
               )}
             </div>

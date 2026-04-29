@@ -36,6 +36,7 @@ import BillingSuccessPage from "./BillingSuccessPage";
 import BillingCancelPage from "./BillingCancelPage";
 import BillingOnboardingPage from "./BillingOnboardingPage";
 import ArchivedClassesPage from "./ArchivedClassesPage";
+import Cat4DemoPage from "./Cat4DemoPage";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -1934,6 +1935,7 @@ export default function App() {
   const isPublicRoute =
     location.pathname === "/register" ||
     location.pathname === "/verify-email" ||
+    location.pathname === "/demo/cat4-analysis" ||
     location.pathname.startsWith("/s/") ||
     location.pathname === "/student" ||
     location.pathname.startsWith("/student/") ||
@@ -2025,6 +2027,7 @@ export default function App() {
         <Route path="/class/:id/calendar" element={<CalendarPage />} />
         <Route path="/class/:id/admin" element={<ClassAdminPage />} />
         <Route path="/class/:id/admin/cat4" element={<Cat4InsightsPage />} />
+        <Route path="/demo/cat4-analysis" element={<Cat4DemoPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/student" element={<StudentPage />} />
         <Route path="/student/:token" element={<StudentClassPage />} />
@@ -2084,7 +2087,7 @@ export default function App() {
         )}
 
 
-      {userEmail && (
+      {userEmail && !isPublicRoute && (
         <div className="fixed bottom-3 right-3 z-50 flex flex-col items-end gap-2">
           {isDashboard && isPilotUser && (
             <img
