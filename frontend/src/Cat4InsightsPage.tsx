@@ -1431,6 +1431,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
   }
 
   function renderSectionExportButton(key: string, title: string) {
+    if (publicDemo) return null;
     return (
       <button
         type="button"
@@ -2322,13 +2323,15 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={exportPdfReport}
-                className="rounded-2xl border-2 border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-900 hover:bg-sky-100"
-              >
-                Export PDF
-              </button>
+              {!publicDemo && (
+                <button
+                  type="button"
+                  onClick={exportPdfReport}
+                  className="rounded-2xl border-2 border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-900 hover:bg-sky-100"
+                >
+                  Export PDF
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -3281,7 +3284,17 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
                       disabled={selectedInterpretationBusy}
                       className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {selectedInterpretation ? "Refresh Interpretation" : selectedInterpretationBusy ? "Generating..." : "Generate Interpretation"}
+                      {publicDemo
+                        ? selectedInterpretationBusy
+                          ? "Loading..."
+                          : selectedInterpretation
+                            ? "Reload Demo Summary"
+                            : "Load Demo Summary"
+                        : selectedInterpretation
+                          ? "Refresh Interpretation"
+                          : selectedInterpretationBusy
+                            ? "Generating..."
+                            : "Generate Interpretation"}
                     </button>
                   </div>
                 </div>
@@ -3289,8 +3302,8 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
                 {selectedInterpretation?.explanation ? (
                   <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
                     <div className="mb-3">
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${selectedInterpretation.source === "fallback" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
-                        {selectedInterpretation.source === "fallback" ? "Elume fallback summary" : "Elume summary"}
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${publicDemo || selectedInterpretation.source !== "fallback" ? "border-sky-200 bg-sky-50 text-sky-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                        {publicDemo ? "Elume summary" : selectedInterpretation.source === "fallback" ? "Elume fallback summary" : "Elume summary"}
                       </span>
                     </div>
                     <div className="text-sm leading-6 text-slate-700">{selectedInterpretation.explanation}</div>

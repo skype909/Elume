@@ -5325,6 +5325,152 @@ def _build_demo_cat4_student_history_payload(baseline_id: int, raw_name: str) ->
     }
 
 
+def _cat4_demo_interpretation(facts: dict[str, Any]) -> str:
+    student_name = str(facts.get("student_name") or "This student")
+    status_label = str(facts.get("status_label") or "Within Expected Range")
+    latest = facts.get("latest_average_percent")
+    previous = facts.get("previous_average_percent")
+    trend = facts.get("trend_delta")
+    movement = facts.get("movement_score")
+    confidence = facts.get("comparison_confidence")
+    concern_domain = str(facts.get("primary_concern_domain") or "").strip()
+    strength_domain = str(facts.get("primary_strength_domain") or "").strip()
+    top_improving_subjects = [
+        str(item).strip() for item in (facts.get("top_improving_subjects") or []) if str(item).strip()
+    ]
+    top_declining_subjects = [
+        str(item).strip() for item in (facts.get("top_declining_subjects") or []) if str(item).strip()
+    ]
+    subject_story_summary = str(facts.get("subject_story_summary") or "").strip()
+    section_memberships = [
+        str(item).strip() for item in (facts.get("section_memberships") or []) if str(item).strip()
+    ]
+
+    def _pct(value: Any) -> str:
+        if value is None:
+            return "—"
+        try:
+            numeric = float(value)
+        except Exception:
+            return "—"
+        rounded = int(numeric) if numeric.is_integer() else round(numeric, 1)
+        return f"{rounded}%"
+
+    def _signed(value: Any, suffix: str = "") -> str:
+        if value is None:
+            return "—"
+        try:
+            numeric = float(value)
+        except Exception:
+            return "—"
+        rounded = int(numeric) if numeric.is_integer() else round(numeric, 1)
+        if rounded > 0:
+            return f"+{rounded}{suffix}"
+        return f"{rounded}{suffix}"
+
+    trend_is_strong_positive = trend is not None and float(trend) >= 5
+    trend_is_strong_negative = trend is not None and float(trend) <= -5
+    trend_is_stable = trend is not None and abs(float(trend)) < 5
+    movement_is_strong_positive = movement is not None and float(movement) >= 5
+    movement_is_strong_negative = movement is not None and float(movement) <= -5
+    section_label = section_memberships[0] if section_memberships else status_label
+
+    if status_label == "Excelling" and trend_is_strong_negative:
+        first_sentence = (
+            f"{student_name} remains in the Excelling band overall, although recent academic performance has declined from "
+            f"{_pct(previous)} to {_pct(latest)}."
+        )
+    elif status_label == "At Risk" and trend_is_strong_positive:
+        first_sentence = (
+            f"{student_name} has improved since the previous term, moving from {_pct(previous)} to {_pct(latest)}, "
+            f"but remains in the At Risk band overall."
+        )
+    elif status_label == "Within Expected Range" and trend_is_strong_positive:
+        first_sentence = (
+            f"{student_name} is currently performing within the expected range and has made clear recent academic gains, "
+            f"moving from {_pct(previous)} to {_pct(latest)}."
+        )
+    elif trend_is_strong_positive:
+        first_sentence = (
+            f"{student_name}'s recent academic picture is positive, with attainment rising from {_pct(previous)} to {_pct(latest)}."
+        )
+    elif trend_is_strong_negative:
+        first_sentence = (
+            f"{student_name}'s current picture needs attention because attainment has fallen from {_pct(previous)} to {_pct(latest)}."
+        )
+    elif trend_is_stable and latest is not None:
+        first_sentence = (
+            f"{student_name} is currently in the {status_label} band, with overall attainment broadly steady at {_pct(latest)}."
+        )
+    else:
+        first_sentence = f"{student_name} is currently in the {status_label} band overall."
+
+    if movement_is_strong_positive and trend_is_stable:
+        second_sentence = (
+            f"{student_name} is appearing here mainly as a {section_label} because current attainment remains well above the CAT4 baseline picture, "
+            f"with CAT4-relative movement at {_signed(movement)} rather than because of a large recent grade jump."
+        )
+    elif movement_is_strong_negative and trend_is_strong_positive:
+        second_sentence = (
+            f"This is a mixed picture: recent attainment has improved by {_signed(trend, '%')}, but CAT4-relative movement remains { _signed(movement) }, "
+            f"which means {student_name} is still performing below CAT4 expectation overall."
+        )
+    elif movement_is_strong_positive and trend_is_strong_negative:
+        second_sentence = (
+            f"The decline of {_signed(trend, '%')} sits alongside CAT4-relative movement of {_signed(movement)}, so {student_name} still looks stronger than the CAT4 baseline would suggest overall."
+        )
+    elif movement_is_strong_negative:
+        second_sentence = (
+            f"{student_name} appears in this comparison because current attainment is below the CAT4 baseline picture overall, with CAT4-relative movement at {_signed(movement)}."
+        )
+    elif movement_is_strong_positive:
+        second_sentence = (
+            f"{student_name} appears in this comparison because current attainment is stronger than the CAT4 baseline picture would suggest, with CAT4-relative movement at {_signed(movement)}."
+        )
+    elif trend is not None:
+        second_sentence = (
+            f"The recent change is {_signed(trend, '%')}, which helps explain why {student_name} is appearing in the {section_label} group in this demo analysis."
+        )
+    else:
+        second_sentence = (
+            f"{student_name} is included here because the current academic and CAT4 comparison pattern is distinct enough to warrant review."
+        )
+
+    if subject_story_summary:
+        third_sentence = subject_story_summary
+    else:
+        story_bits = []
+        if top_improving_subjects:
+            story_bits.append(f"the clearest recent gains are in {_cat4_join_labels(top_improving_subjects)}")
+        if top_declining_subjects:
+            story_bits.append(f"the areas that have softened most are {_cat4_join_labels(top_declining_subjects)}")
+        if concern_domain:
+            story_bits.append(f"the main CAT4 concern signal is in {concern_domain}")
+        if strength_domain:
+            story_bits.append(f"the clearest CAT4 strength signal is in {strength_domain}")
+        if story_bits:
+            third_sentence = f"For subject and CAT4 context, {', while '.join(story_bits[:2])}."
+        else:
+            third_sentence = f"There is no single standout subject pattern for {student_name} from the available comparison data."
+
+    cautions = []
+    if facts.get("subject_basket_changed"):
+        cautions.append("subject choices changed between comparisons")
+    if facts.get("level_change_detected"):
+        cautions.append("subject level changes are present")
+    if facts.get("missed_results_flag"):
+        cautions.append("some results appear to be missing")
+    if facts.get("low_coverage_flag") or confidence == "Low":
+        cautions.append("coverage is limited")
+    elif confidence == "Moderate":
+        cautions.append("the comparison is moderate-confidence")
+
+    sentences = [first_sentence, second_sentence, third_sentence]
+    if cautions:
+        sentences.append(f"This should be read with some caution because {', '.join(cautions)}.")
+    return " ".join(sentences[:4])
+
+
 @app.get("/public/demo/cat4/meta")
 def public_demo_cat4_meta():
     logger.info("Public demo CAT4 meta requested")
@@ -5391,9 +5537,9 @@ def public_demo_cat4_student_interpretation(
         student_id=payload.student_id,
     )
     return {
-        "explanation": _cat4_fallback_interpretation(facts),
+        "explanation": _cat4_demo_interpretation(facts),
         "facts": facts,
-        "source": "fallback",
+        "source": "ai",
     }
 
 
@@ -6099,6 +6245,18 @@ def _create_cat4_workbook_version_legacy(
         "version_number": int(inserted[1]),
         "uploaded_at": inserted[2].isoformat() if inserted and inserted[2] else None,
     }
+
+
+def _reset_cat4_for_class_legacy(
+    class_id: int,
+    db: Session,
+) -> dict[str, Any]:
+    db.execute(text("DELETE FROM cat4_student_baselines WHERE class_id = :class_id"), {"class_id": class_id})
+    db.execute(text("DELETE FROM cat4_student_term_results WHERE class_id = :class_id"), {"class_id": class_id})
+    db.execute(text("DELETE FROM cat4_workbook_versions WHERE class_id = :class_id"), {"class_id": class_id})
+    db.execute(text("DELETE FROM cat4_baseline_sets WHERE class_id = :class_id"), {"class_id": class_id})
+    db.execute(text("DELETE FROM cat4_term_result_sets WHERE class_id = :class_id"), {"class_id": class_id})
+    return {"ok": True, "class_id": class_id, "cohort_key": CAT4_DEFAULT_COHORT_KEY, "reset": True}
 
 
 def _build_percentile_map(pairs: list[tuple[Any, float]]) -> dict[Any, float]:
@@ -12063,33 +12221,53 @@ def reset_cat4_for_class(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    logger.info("CAT4 reset requested for class_id=%s cohort_key=%r", class_id, cohort_key)
     _get_owned_class_for_cat4_or_403(class_id, db, user)
-    resolved_cohort_key = _normalise_cat4_cohort_key(cohort_key)
-    baseline_ids = [
-        row.id
-        for row in db.query(Cat4BaselineSetModel.id)
-        .filter(Cat4BaselineSetModel.class_id == class_id, Cat4BaselineSetModel.cohort_key == resolved_cohort_key)
-        .all()
-    ]
-    if baseline_ids:
-        db.query(Cat4StudentBaselineModel).filter(Cat4StudentBaselineModel.baseline_set_id.in_(baseline_ids)).delete()
-        db.query(Cat4BaselineSetModel).filter(Cat4BaselineSetModel.id.in_(baseline_ids)).delete()
-    term_set_ids = [
-        row.id
-        for row in db.query(Cat4TermResultSetModel.id)
-        .filter(Cat4TermResultSetModel.class_id == class_id, Cat4TermResultSetModel.cohort_key == resolved_cohort_key)
-        .all()
-    ]
-    if term_set_ids:
-        db.query(Cat4StudentTermResultModel).filter(Cat4StudentTermResultModel.result_set_id.in_(term_set_ids)).delete()
-        db.query(Cat4TermResultSetModel).filter(Cat4TermResultSetModel.id.in_(term_set_ids)).delete()
-    db.query(Cat4WorkbookVersionModel).filter(
-        Cat4WorkbookVersionModel.class_id == class_id,
-        Cat4WorkbookVersionModel.cohort_key == resolved_cohort_key,
-    ).delete()
-    db.commit()
+    schema_available = _cat4_cohort_columns_available(db)
+    logger.info(
+        "CAT4 reset schema check for class_id=%s cohort_key=%r passed=%s",
+        class_id,
+        cohort_key,
+        schema_available,
+    )
 
-    return {"ok": True, "class_id": class_id, "cohort_key": resolved_cohort_key, "reset": True}
+    try:
+        if not schema_available:
+            logger.info("CAT4 reset using legacy path for class_id=%s", class_id)
+            result = _reset_cat4_for_class_legacy(class_id, db)
+            db.commit()
+            return result
+
+        resolved_cohort_key = _normalise_cat4_cohort_key(cohort_key)
+        logger.info("CAT4 reset using cohort-aware path for class_id=%s cohort_key=%r", class_id, resolved_cohort_key)
+        baseline_ids = [
+            row.id
+            for row in db.query(Cat4BaselineSetModel.id)
+            .filter(Cat4BaselineSetModel.class_id == class_id, Cat4BaselineSetModel.cohort_key == resolved_cohort_key)
+            .all()
+        ]
+        if baseline_ids:
+            db.query(Cat4StudentBaselineModel).filter(Cat4StudentBaselineModel.baseline_set_id.in_(baseline_ids)).delete()
+            db.query(Cat4BaselineSetModel).filter(Cat4BaselineSetModel.id.in_(baseline_ids)).delete()
+        term_set_ids = [
+            row.id
+            for row in db.query(Cat4TermResultSetModel.id)
+            .filter(Cat4TermResultSetModel.class_id == class_id, Cat4TermResultSetModel.cohort_key == resolved_cohort_key)
+            .all()
+        ]
+        if term_set_ids:
+            db.query(Cat4StudentTermResultModel).filter(Cat4StudentTermResultModel.result_set_id.in_(term_set_ids)).delete()
+            db.query(Cat4TermResultSetModel).filter(Cat4TermResultSetModel.id.in_(term_set_ids)).delete()
+        db.query(Cat4WorkbookVersionModel).filter(
+            Cat4WorkbookVersionModel.class_id == class_id,
+            Cat4WorkbookVersionModel.cohort_key == resolved_cohort_key,
+        ).delete()
+        db.commit()
+        return {"ok": True, "class_id": class_id, "cohort_key": resolved_cohort_key, "reset": True}
+    except Exception as exc:
+        db.rollback()
+        logger.exception("CAT4 reset failed for class_id=%s cohort_key=%r: %s", class_id, cohort_key, exc)
+        raise HTTPException(status_code=500, detail="CAT4 reset failed. Please try again or refresh the page.")
 
 
 @app.post("/classes/{class_id}/cat4/baselines/{baseline_id}/reset")
