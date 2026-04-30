@@ -124,6 +124,15 @@ type Cat4ReportPayload = {
   previous_term_set: { id: number; title: string; academic_year?: string | null; term_key?: string | null } | null;
   selected_threshold_percent?: number | null;
   summary_cards: { key: string; label: string; value: number }[];
+  subject_performance_summary?: {
+    subject_key: string;
+    subject_label: string;
+    latest_average_percent: number | null;
+    previous_average_percent: number | null;
+    change_percent: number | null;
+    student_count: number;
+    previous_student_count: number;
+  }[];
   at_risk: Cat4StudentReportRow[];
   excelling: Cat4StudentReportRow[];
   within_expected_range: Cat4StudentReportRow[];
@@ -346,6 +355,41 @@ const TERM_SUBJECT_LABELS: Record<string, string> = {
   learning_support: "Support",
   visual_art: "Art",
 };
+
+const CAT4_DEMO_TOOLTIPS = {
+  header:
+    "Compare CAT4 reasoning profiles with academic performance to highlight useful patterns for support, monitoring and challenge.",
+  summaryCards:
+    "A quick snapshot of the cohort, including students at risk, excelling, or broadly within expected range.",
+  subjectPerformance:
+    "Shows how the cohort is performing across individual subjects, including strongest subjects, areas needing monitoring, improvements and declines.",
+  domainSummary:
+    "Shows which CAT4 reasoning areas are most commonly linked to current concern or strength patterns across the cohort.",
+  rankedThreshold: "Adjusts how selective the top and bottom academic groups are.",
+  subjectMapping:
+    "Shows how subjects are linked to CAT4 domains. Some subjects appear in more than one domain because they draw on more than one type of reasoning.",
+  bottomAcademically:
+    "Students with the lowest current academic averages. Use this as an early support and review group.",
+  topAcademically:
+    "Students with the strongest current academic averages. Use this to identify stretch and challenge opportunities.",
+  downwardMovers:
+    "Students showing the sharpest recent decline. This is about change over time, not just current position.",
+  upwardMovers:
+    "Students showing the strongest recent improvement. Useful for recognising progress and identifying what is working.",
+  academicImproversDecliners:
+    "Compares academic performance between terms to highlight meaningful gains or declines.",
+  mixedSignals:
+    "Students where academic performance and CAT4-relative movement do not tell a simple story. These cases need teacher judgement and context.",
+  comparisonGroups:
+    "These groups compare current academic performance with CAT4 expectation. Use them to plan support, challenge or monitoring.",
+  fullComparison:
+    "A full matched list of students, combining CAT4 profile, academic performance, movement and key reasons.",
+  studentModal:
+    "A deeper view of one student, including recent performance, CAT4 movement, domain profile and a plain-English Elume summary.",
+  elumeSummary: "Plain-English explanation designed to support teacher judgement, not replace it.",
+} as const;
+
+type Cat4DemoTooltipKey = keyof typeof CAT4_DEMO_TOOLTIPS;
 
 const LEVEL_SENSITIVE_SUBJECTS = new Set([
   "english",
@@ -1059,6 +1103,51 @@ function StudentDomainDoughnut({ row }: { row: Cat4StudentReportRow }) {
   );
 }
 
+function DemoTooltip({
+  text,
+}: {
+  text: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <span
+      className="relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        aria-label="Show help"
+        aria-expanded={open}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-[11px] font-bold text-slate-500 shadow-sm transition hover:bg-slate-50 hover:text-slate-700"
+      >
+        ?
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-8 z-[80] w-72 rounded-2xl border border-slate-200 bg-white p-3 text-xs font-medium leading-5 text-slate-700 shadow-[0_16px_36px_rgba(15,23,42,0.14)]">
+          {text}
+        </div>
+      ) : null}
+    </span>
+  );
+}
+
+function demoTitle(title: string, publicDemo: boolean, tooltipKey?: Cat4DemoTooltipKey) {
+  if (!publicDemo || !tooltipKey) {
+    return title;
+  }
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span>{title}</span>
+      <DemoTooltip text={CAT4_DEMO_TOOLTIPS[tooltipKey]} />
+    </span>
+  );
+}
+
 function CollapsibleCard({
   title,
   description,
@@ -1107,6 +1196,129 @@ function compactStudentInsight(row: Cat4StudentReportRow) {
     `Change ${signedPct(row.trend_delta)}`,
     `Movement ${signedOneDecimal(row.movement_score || row.value_added_delta)}`,
   ].join(" | ");
+}
+
+function subjectPerformanceChangeTone(change?: number | null) {
+  if (change == null || Number.isNaN(change)) return "text-slate-500";
+  if (change >= 5) return "text-emerald-700";
+  if (change > 0) return "text-cyan-700";
+  if (change <= -5) return "text-rose-700";
+  if (change < 0) return "text-amber-700";
+  return "text-slate-600";
+}
+
+function SubjectPerformanceOverview({
+  rows,
+  previousTermLabel,
+}: {
+  rows: NonNullable<Cat4ReportPayload["subject_performance_summary"]>;
+  previousTermLabel?: string | null;
+}) {
+  const visibleRows = rows.filter((row) => row.student_count > 0 || row.previous_student_count > 0);
+  const strongestSubjects = [...visibleRows]
+    .filter((row) => row.latest_average_percent != null)
+    .sort((a, b) => (b.latest_average_percent || 0) - (a.latest_average_percent || 0) || a.subject_label.localeCompare(b.subject_label))
+    .slice(0, 3);
+  const monitoringSubjects = [...visibleRows]
+    .filter((row) => row.latest_average_percent != null)
+    .sort((a, b) => (a.latest_average_percent || 0) - (b.latest_average_percent || 0) || a.subject_label.localeCompare(b.subject_label))
+    .slice(0, 3);
+  const biggestImprovements = [...visibleRows]
+    .filter((row) => row.change_percent != null && row.change_percent > 0)
+    .sort((a, b) => (b.change_percent || 0) - (a.change_percent || 0) || a.subject_label.localeCompare(b.subject_label))
+    .slice(0, 3);
+  const biggestDeclines = [...visibleRows]
+    .filter((row) => row.change_percent != null && row.change_percent < 0)
+    .sort((a, b) => (a.change_percent || 0) - (b.change_percent || 0) || a.subject_label.localeCompare(b.subject_label))
+    .slice(0, 3);
+
+  if (!visibleRows.length) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        No subject-level academic performance data is available for the selected term yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-emerald-800">Strongest Subjects</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {strongestSubjects.length ? strongestSubjects.map((row) => (
+              <span key={`strong-${row.subject_key}`} className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-900">
+                {row.subject_label} {pct(row.latest_average_percent)}
+              </span>
+            )) : <span className="text-sm text-emerald-800">No clear subject leaders yet.</span>}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-amber-800">Needs Monitoring</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {monitoringSubjects.length ? monitoringSubjects.map((row) => (
+              <span key={`monitor-${row.subject_key}`} className="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900">
+                {row.subject_label} {pct(row.latest_average_percent)}
+              </span>
+            )) : <span className="text-sm text-amber-800">No clear monitoring pattern yet.</span>}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-cyan-800">Biggest Improvements</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {biggestImprovements.length ? biggestImprovements.map((row) => (
+              <span key={`improve-${row.subject_key}`} className="rounded-full border border-cyan-200 bg-white px-2.5 py-1 text-xs font-semibold text-cyan-900">
+                {row.subject_label} {signedPct(row.change_percent)}
+              </span>
+            )) : <span className="text-sm text-cyan-800">No subject improvements are showing yet.</span>}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-rose-800">Biggest Declines</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {biggestDeclines.length ? biggestDeclines.map((row) => (
+              <span key={`decline-${row.subject_key}`} className="rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-900">
+                {row.subject_label} {signedPct(row.change_percent)}
+              </span>
+            )) : <span className="text-sm text-rose-800">No subject declines are showing yet.</span>}
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-slate-200">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="bg-slate-50 text-left text-slate-600">
+            <tr>
+              <th className="px-4 py-3 font-semibold">Subject</th>
+              <th className="px-4 py-3 font-semibold">Latest Average</th>
+              <th className="px-4 py-3 font-semibold">{previousTermLabel ? `Previous Average (${previousTermLabel})` : "Previous Average"}</th>
+              <th className="px-4 py-3 font-semibold">Change</th>
+              <th className="px-4 py-3 font-semibold">Students Included</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 bg-white">
+            {visibleRows.map((row) => (
+              <tr key={row.subject_key} className="align-top">
+                <td className="px-4 py-3 font-semibold text-slate-900">{TERM_SUBJECT_LABELS[row.subject_key] || row.subject_label}</td>
+                <td className="px-4 py-3 text-slate-700">{pct(row.latest_average_percent)}</td>
+                <td className="px-4 py-3 text-slate-600">{pct(row.previous_average_percent)}</td>
+                <td className={`px-4 py-3 font-semibold ${subjectPerformanceChangeTone(row.change_percent)}`}>{signedPct(row.change_percent)}</td>
+                <td className="px-4 py-3 text-slate-600">
+                  {row.student_count}
+                  {row.previous_student_count ? (
+                    <span className="ml-2 text-xs text-slate-400">previous {row.previous_student_count}</span>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function normaliseCat4HistoryName(value: string) {
@@ -1796,6 +2008,9 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
   async function openStudentHistoryModal(student: Cat4StudentReportRow) {
     setSelectedHistoryStudent(student);
     await fetchStudentHistory(student.student_name);
+    if (publicDemo) {
+      await fetchStudentInterpretation(student);
+    }
   }
 
   useEffect(() => {
@@ -2316,7 +2531,10 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-emerald-600">Insights</div>
-              <div className="mt-1 text-3xl font-extrabold tracking-tight text-slate-900">CAT4 Insights</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-3xl font-extrabold tracking-tight text-slate-900">
+                <span>CAT4 Insights</span>
+                {publicDemo ? <DemoTooltip text={CAT4_DEMO_TOOLTIPS.header} /> : null}
+              </div>
               <div className="mt-2 text-sm text-slate-600">
                 Compare CAT4 baseline ability against named term result sets without touching ordinary assessment data.
               </div>
@@ -2781,7 +2999,14 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
             </>
             )}
 
-            <div className="mt-6 grid gap-4 md:grid-cols-4">
+            <div className="mt-6">
+              {publicDemo ? (
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <div className="text-sm font-bold text-slate-900">Cohort Snapshot</div>
+                  <DemoTooltip text={CAT4_DEMO_TOOLTIPS.summaryCards} />
+                </div>
+              ) : null}
+            <div className="grid gap-4 md:grid-cols-4">
               {(report?.summary_cards || []).map((cardItem) => (
                 <div key={cardItem.key} className="rounded-3xl border-2 border-slate-200 bg-white p-4">
                   <div className="text-sm font-semibold text-slate-600">{cardItem.label}</div>
@@ -2789,12 +3014,27 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
                 </div>
               ))}
             </div>
+            </div>
 
             <div className="mt-6 space-y-6">
+              <CollapsibleCard
+                className={`${card} ${cardPad}`}
+                title={demoTitle("Subject Performance Overview", publicDemo, "subjectPerformance")}
+                description="See how the cohort is performing across individual subjects in the selected term."
+                defaultOpen
+                sectionRef={setSectionRef("subject-performance-overview")}
+                headerActions={renderSectionExportButton("subject-performance-overview", "Subject Performance Overview")}
+              >
+                <SubjectPerformanceOverview
+                  rows={report?.subject_performance_summary || []}
+                  previousTermLabel={report?.previous_term_set?.title || null}
+                />
+              </CollapsibleCard>
+
               <div ref={setSectionRef("domain-concern-summary")} className={`${card} ${cardPad}`}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <div className="text-lg font-extrabold tracking-tight text-slate-900">Domain Concern Summary</div>
+                    <div className="text-lg font-extrabold tracking-tight text-slate-900">{demoTitle("Domain Concern Summary", publicDemo, "domainSummary")}</div>
                     <div className="mt-1 text-sm text-slate-600">Shows where concern is most common, where strengths are also appearing, and how varied each CAT4 area is across the cohort.</div>
                   </div>
                   {renderSectionExportButton("domain-concern-summary", "Domain Concern Summary")}
@@ -3035,7 +3275,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
               <div className="rounded-3xl border-2 border-slate-200 bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-bold text-slate-900">Ranked Group Threshold</div>
+                    <div className="text-sm font-bold text-slate-900">{demoTitle("Ranked Group Threshold", publicDemo, "rankedThreshold")}</div>
                     <div className="mt-1 text-sm text-slate-600">
                       Apply one cohort threshold across top/bottom academic and CAT4-relative movement groups.
                     </div>
@@ -3063,7 +3303,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
               </div>
 
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-sm font-bold text-slate-900">Current subject mapping used for CAT4 domain analysis</div>
+                <div className="text-sm font-bold text-slate-900">{demoTitle("Current subject mapping used for CAT4 domain analysis", publicDemo, "subjectMapping")}</div>
                 <div className="mt-1 text-sm text-slate-600">Default subject-to-domain mapping used for Elume&apos;s current CAT4 domain analysis.</div>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
@@ -3087,7 +3327,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
               <div className="grid gap-4 xl:grid-cols-2">
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title={rankedThresholdLabel ? `Bottom ${rankedThresholdLabel} Academically` : "Bottom 10% Academically"}
+                  title={demoTitle(rankedThresholdLabel ? `Bottom ${rankedThresholdLabel} Academically` : "Bottom 10% Academically", publicDemo, "bottomAcademically")}
                   description="Students with the lowest latest academic averages. The domain labels highlight the CAT4 areas showing the strongest concern signals, to help guide support."
                   defaultOpen
                   sectionRef={setSectionRef("bottom-attainment")}
@@ -3098,7 +3338,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
 
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title={rankedThresholdLabel ? `Top ${rankedThresholdLabel} Academically` : "Top 5% Academically"}
+                  title={demoTitle(rankedThresholdLabel ? `Top ${rankedThresholdLabel} Academically` : "Top 5% Academically", publicDemo, "topAcademically")}
                   description="Students with the highest latest academic averages. The labels show one CAT4 strength and one watch area, so strong performance is viewed alongside the area that may still need attention."
                   defaultOpen
                   sectionRef={setSectionRef("top-attainment")}
@@ -3111,7 +3351,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
               <div className="grid gap-4 xl:grid-cols-2">
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title={rankedThresholdLabel ? `Downward Movers ${rankedThresholdLabel}` : "Biggest Downward Movers"}
+                  title={demoTitle(rankedThresholdLabel ? `Downward Movers ${rankedThresholdLabel}` : "Biggest Downward Movers", publicDemo, "downwardMovers")}
                   description="Students showing the sharpest negative CAT4-relative movement. The domain labels show the areas contributing most to the decline, to help target support."
                   defaultOpen
                   sectionRef={setSectionRef("downward-movers")}
@@ -3122,7 +3362,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
 
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title={rankedThresholdLabel ? `Upward Movers ${rankedThresholdLabel}` : "Biggest Upward Movers"}
+                  title={demoTitle(rankedThresholdLabel ? `Upward Movers ${rankedThresholdLabel}` : "Biggest Upward Movers", publicDemo, "upwardMovers")}
                   description="Students showing the strongest positive CAT4-relative movement. The labels show the main area of strength and one watch area, so improvement is viewed with balance."
                   defaultOpen
                   sectionRef={setSectionRef("upward-movers")}
@@ -3135,7 +3375,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
               <div className="grid gap-4 xl:grid-cols-2">
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title="Biggest Academic Improvers"
+                  title={demoTitle("Biggest Academic Improvers", publicDemo, "academicImproversDecliners")}
                   description="Students showing the strongest academic gains between the selected term and the previous comparable term."
                   defaultOpen={false}
                   sectionRef={setSectionRef("attainment-improvers")}
@@ -3146,7 +3386,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
 
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title="Biggest Academic Decliners"
+                  title={demoTitle("Biggest Academic Decliners", publicDemo, "academicImproversDecliners")}
                   description="Students showing the sharpest academic decline between the selected term and the previous comparable term."
                   defaultOpen={false}
                   sectionRef={setSectionRef("attainment-decliners")}
@@ -3158,7 +3398,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
 
               <CollapsibleCard
                 className={`${card} ${cardPad}`}
-                title="Mixed Signals / Requires Interpretation"
+                title={demoTitle("Mixed Signals / Requires Interpretation", publicDemo, "mixedSignals")}
                 description="Cases where academic results changed sharply but CAT4-relative movement still points in the opposite direction."
                 defaultOpen={false}
                 sectionRef={setSectionRef("mixed-signals")}
@@ -3170,7 +3410,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
               <div className="grid gap-4 xl:grid-cols-2">
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title="At Risk"
+                  title={demoTitle("At Risk", publicDemo, "comparisonGroups")}
                   description="Bottom movement band relative to CAT4 baseline, with at least one student flagged in smaller cohorts."
                   defaultOpen={false}
                   sectionRef={setSectionRef("at-risk")}
@@ -3181,7 +3421,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
 
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title="Excelling"
+                  title={demoTitle("Excelling", publicDemo, "comparisonGroups")}
                   description="Top movement band relative to CAT4 baseline, with at least one student flagged in smaller cohorts."
                   defaultOpen={false}
                   sectionRef={setSectionRef("excelling")}
@@ -3192,7 +3432,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
 
                 <CollapsibleCard
                   className={`${card} ${cardPad}`}
-                  title="Within Expected Range"
+                  title={demoTitle("Within Expected Range", publicDemo, "comparisonGroups")}
                   description="Students in the middle cohort band after structured movement scoring."
                   defaultOpen={false}
                   sectionRef={setSectionRef("within-expected-range")}
@@ -3204,7 +3444,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
 
               <CollapsibleCard
                 className={`${card} ${cardPad}`}
-                title="Full Student Comparison"
+                title={demoTitle("Full Student Comparison", publicDemo, "fullComparison")}
                 description="Matched students only, comparing CAT4 cohort percentile against the selected named term set."
                 defaultOpen={false}
                 sectionRef={setSectionRef("full-student-comparison")}
@@ -3228,8 +3468,9 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xl font-extrabold tracking-tight text-slate-900">
-                    {selectedHistoryStudent.student_name}
+                  <div className="flex flex-wrap items-center gap-2 text-xl font-extrabold tracking-tight text-slate-900">
+                    <span>{selectedHistoryStudent.student_name}</span>
+                    {publicDemo ? <DemoTooltip text={CAT4_DEMO_TOOLTIPS.studentModal} /> : null}
                   </div>
                   {!!selectedHistoryStudent.profile_label && (
                     <div className="mt-1 text-sm text-slate-500">{selectedHistoryStudent.profile_label}</div>
@@ -3273,29 +3514,28 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
               <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-bold text-slate-900">Elume's Interpretation</div>
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-slate-900">
+                      <span>Elume&apos;s Interpretation</span>
+                      {publicDemo ? <DemoTooltip text={CAT4_DEMO_TOOLTIPS.elumeSummary} /> : null}
+                    </div>
                     <div className="mt-1 text-xs text-slate-500">Plain-English interpretation of the current CAT4 picture, based on the available comparison data.</div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {renderSectionExportButton("student-modal-report", `${selectedHistoryStudent.student_name} CAT4 Report`)}
-                    <button
-                      type="button"
-                      onClick={() => void fetchStudentInterpretation(selectedHistoryStudent)}
-                      disabled={selectedInterpretationBusy}
-                      className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {publicDemo
-                        ? selectedInterpretationBusy
-                          ? "Loading..."
-                          : selectedInterpretation
-                            ? "Reload Demo Summary"
-                            : "Load Demo Summary"
-                        : selectedInterpretation
+                    {!publicDemo && (
+                      <button
+                        type="button"
+                        onClick={() => void fetchStudentInterpretation(selectedHistoryStudent)}
+                        disabled={selectedInterpretationBusy}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {selectedInterpretation
                           ? "Refresh Interpretation"
                           : selectedInterpretationBusy
                             ? "Generating..."
                             : "Generate Interpretation"}
-                    </button>
+                      </button>
+                    )}
                   </div>
                 </div>
 

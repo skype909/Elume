@@ -3733,6 +3733,7 @@ def _cat4_build_report_payload_from_loaded(
             "latest_term_set": None,
             "previous_term_set": None,
             "summary_cards": [],
+            "subject_performance_summary": [],
             "at_risk": [],
             "excelling": [],
             "within_expected_range": [],
@@ -4193,6 +4194,8 @@ def _cat4_build_report_payload_from_loaded(
             }
         )
 
+    subject_performance_summary = _cat4_subject_performance_summary(latest_rows, previous_rows)
+
     return {
         "feature_enabled": True,
         "baseline_set": {
@@ -4225,6 +4228,7 @@ def _cat4_build_report_payload_from_loaded(
             {"key": "excelling", "label": "Excelling", "value": sum(1 for row in matched_students if row["status"] == "excelling")},
             {"key": "within_expected_range", "label": "Within Expected Range", "value": sum(1 for row in matched_students if row["status"] == "within_expected_range")},
         ],
+        "subject_performance_summary": subject_performance_summary,
         "at_risk": [row for row in matched_students if row["status"] == "at_risk"],
         "excelling": [row for row in matched_students if row["status"] == "excelling"],
         "within_expected_range": [row for row in matched_students if row["status"] == "within_expected_range"],
@@ -4855,11 +4859,30 @@ CAT4_SUBJECT_DISPLAY_NAMES: dict[str, str] = {
     "history": "History",
     "home_economics": "Home Economics",
     "irish": "Irish",
+    "learning_support": "Learning Support",
     "mathematics": "Maths",
+    "music": "Music",
     "science": "Science",
     "spanish": "Spanish",
     "visual_art": "Visual Art",
 }
+
+CAT4_REPORT_SUBJECT_KEYS: list[str] = [
+    "irish",
+    "english",
+    "mathematics",
+    "history",
+    "geography",
+    "french",
+    "spanish",
+    "business_studies",
+    "music",
+    "home_economics",
+    "science",
+    "graphics",
+    "learning_support",
+    "visual_art",
+]
 
 
 def _cat4_subject_display_name(subject_key: str) -> str:
@@ -4881,6 +4904,57 @@ def _cat4_join_labels(labels: list[str]) -> str:
     if len(clean) == 2:
         return f"{clean[0]} and {clean[1]}"
     return f"{', '.join(clean[:-1])} and {clean[-1]}"
+
+
+def _cat4_subject_performance_summary(
+    latest_rows: list[Any],
+    previous_rows: list[Any],
+) -> list[dict[str, Any]]:
+    latest_values_by_subject: dict[str, list[int]] = defaultdict(list)
+    previous_values_by_subject: dict[str, list[int]] = defaultdict(list)
+
+    for row in latest_rows:
+        for subject_key, score in _parse_cat4_subject_scores(getattr(row, "raw_subjects_json", None)).items():
+            latest_values_by_subject[subject_key].append(score)
+
+    for row in previous_rows:
+        for subject_key, score in _parse_cat4_subject_scores(getattr(row, "raw_subjects_json", None)).items():
+            previous_values_by_subject[subject_key].append(score)
+
+    ordered_subject_keys = list(CAT4_REPORT_SUBJECT_KEYS)
+    extra_subject_keys = sorted(
+        (set(latest_values_by_subject.keys()) | set(previous_values_by_subject.keys())) - set(ordered_subject_keys)
+    )
+    ordered_subject_keys.extend(extra_subject_keys)
+
+    summary_rows: list[dict[str, Any]] = []
+    for subject_key in ordered_subject_keys:
+        latest_values = latest_values_by_subject.get(subject_key, [])
+        previous_values = previous_values_by_subject.get(subject_key, [])
+        latest_average = round(sum(latest_values) / len(latest_values), 1) if latest_values else None
+        previous_average = round(sum(previous_values) / len(previous_values), 1) if previous_values else None
+        change_percent = (
+            round(latest_average - previous_average, 1)
+            if latest_average is not None and previous_average is not None
+            else None
+        )
+        summary_rows.append(
+            {
+                "subject_key": subject_key,
+                "subject_label": _cat4_subject_display_name(subject_key),
+                "latest_average_percent": latest_average,
+                "previous_average_percent": previous_average,
+                "change_percent": change_percent,
+                "student_count": len(latest_values),
+                "previous_student_count": len(previous_values),
+            }
+        )
+
+    return [
+        row
+        for row in summary_rows
+        if row["student_count"] > 0 or row["previous_student_count"] > 0
+    ]
 
 
 def _cat4_status_label(status: Any) -> str:
@@ -5537,173 +5611,14 @@ def public_demo_cat4_student_interpretation(
         student_id=payload.student_id,
     )
     return {
-        "explanation": _cat4_demo_interpretation(facts),
+        "explanation": _cat4_fallback_interpretation(facts),
         "facts": facts,
-        "source": "ai",
+        "source": "fallback",
     }
 
 
 def _cat4_fallback_interpretation(facts: dict[str, Any]) -> str:
-    student_name = str(facts.get("student_name") or "This student")
-    latest = facts.get("latest_average_percent")
-    previous = facts.get("previous_average_percent")
-    trend = facts.get("trend_delta")
-    movement = facts.get("movement_score")
-    status = str(facts.get("status") or "").strip().lower()
-    status_label = str(facts.get("status_label") or _cat4_status_label(status))
-    confidence = facts.get("comparison_confidence")
-    section_memberships = [
-        str(item).strip() for item in (facts.get("section_memberships") or []) if str(item).strip()
-    ]
-    top_improving_subjects = [
-        str(item).strip() for item in (facts.get("top_improving_subjects") or []) if str(item).strip()
-    ]
-    top_declining_subjects = [
-        str(item).strip() for item in (facts.get("top_declining_subjects") or []) if str(item).strip()
-    ]
-    subject_story_summary = str(facts.get("subject_story_summary") or "").strip()
-
-    trend_is_strong_positive = trend is not None and trend >= 5
-    trend_is_strong_negative = trend is not None and trend <= -5
-    trend_is_stable = trend is not None and abs(float(trend)) < 5
-    movement_is_strong_positive = movement is not None and movement >= 5
-    movement_is_strong_negative = movement is not None and movement <= -5
-    movement_is_neutral = movement is not None and abs(float(movement)) < 5
-    is_academic_improver = "Academic Improver" in section_memberships or bool(facts.get("major_attainment_improver"))
-    is_academic_decliner = "Academic Decliner" in section_memberships or bool(facts.get("major_attainment_decliner"))
-    is_upward_mover = "Biggest Upward Mover" in section_memberships
-    is_downward_mover = "Biggest Downward Mover" in section_memberships
-    improved_from_low_base = (
-        trend_is_strong_positive and previous is not None and float(previous) < 50 and status == "at_risk"
-    )
-
-    if status == "at_risk" and trend_is_strong_positive:
-        first_sentence = f"{student_name} has improved clearly since the previous term, but remains in the {status_label} band overall."
-    elif status == "excelling" and trend_is_strong_negative:
-        first_sentence = f"{student_name} remains in the {status_label} band overall, although recent attainment has dipped."
-    elif status == "within_expected_range" and trend_is_strong_positive:
-        first_sentence = f"{student_name} has made clear recent gains and is currently in the {status_label} band."
-    elif status == "at_risk" and movement_is_strong_negative:
-        first_sentence = f"{student_name} is currently in the {status_label} band and remains below the CAT4 baseline picture overall."
-    elif status == "excelling" and movement_is_strong_positive:
-        first_sentence = f"{student_name} is currently in the {status_label} band and remains strong relative to the CAT4 baseline picture."
-    elif trend is None and movement is None:
-        first_sentence = f"{student_name} has a CAT4 comparison record, but the available evidence is limited."
-    elif trend_is_strong_positive:
-        first_sentence = f"{student_name}'s recent attainment has improved overall."
-    elif trend_is_strong_negative:
-        first_sentence = f"{student_name}'s recent attainment has weakened overall."
-    elif trend_is_stable:
-        first_sentence = f"{student_name}'s overall attainment is broadly steady."
-    elif movement_is_strong_positive:
-        first_sentence = f"{student_name} is holding above the CAT4 baseline picture overall."
-    elif movement_is_strong_negative:
-        first_sentence = f"{student_name} is currently sitting below the CAT4 baseline picture overall."
-    elif latest is not None:
-        first_sentence = f"{student_name}'s current attainment picture is fairly mixed."
-    else:
-        first_sentence = f"{student_name}'s current CAT4 comparison is mixed and should be read carefully."
-
-    if is_academic_improver and status == "at_risk":
-        second_sentence = (
-            "They appear as an academic improver because recent results have moved up, "
-            "but they remain At Risk because current attainment is still below the CAT4 baseline picture overall."
-        )
-    elif is_upward_mover and trend_is_stable:
-        second_sentence = (
-            "They are appearing as a strong positive mover not because of a large recent grade jump, "
-            "but because current attainment remains well above the CAT4 baseline picture."
-        )
-    elif is_academic_improver and movement_is_strong_negative:
-        second_sentence = (
-            "They appear as an academic improver because recent results have risen, "
-            "but they are still performing below the CAT4 baseline picture overall."
-        )
-    elif is_academic_decliner and status == "excelling":
-        second_sentence = (
-            "They appear among the recent decliners because results have slipped, "
-            "but they remain in the Excelling band because current attainment is still strong relative to CAT4."
-        )
-    elif is_academic_decliner and movement_is_strong_positive:
-        second_sentence = (
-            "They are appearing here because recent results have fallen, "
-            "while the CAT4-relative picture still remains stronger than expected overall."
-        )
-    elif improved_from_low_base:
-        second_sentence = (
-            "That improvement appears to be from a low base, so the student is not yet secure and still sits below the CAT4 baseline picture overall."
-        )
-    elif trend_is_stable and movement_is_strong_positive:
-        second_sentence = (
-            "This student is appearing here mainly because their CAT4-relative position is strongly positive, "
-            "not because of a large recent change in grades."
-        )
-    elif trend_is_stable and movement_is_strong_negative:
-        second_sentence = (
-            "This student is appearing here mainly because their CAT4-relative position is notably below the baseline picture, "
-            "rather than because of a sharp recent grade drop."
-        )
-    elif trend_is_strong_positive and movement_is_strong_positive:
-        second_sentence = (
-            "They are appearing here because recent results have moved up and their current attainment also sits above the CAT4 baseline picture."
-        )
-    elif trend_is_strong_negative and movement_is_strong_negative:
-        second_sentence = (
-            "They are appearing here because recent results have fallen and their current attainment now sits below the CAT4 baseline picture."
-        )
-    elif trend_is_strong_positive and movement_is_strong_negative:
-        second_sentence = (
-            "They are appearing here because recent results have improved, but they still look below the CAT4 baseline picture overall."
-        )
-    elif trend_is_strong_negative and movement_is_strong_positive:
-        second_sentence = (
-            "They are appearing here because recent results have slipped, although overall attainment still looks above the CAT4 baseline picture."
-        )
-    elif is_upward_mover:
-        second_sentence = "They are appearing as a positive mover because current attainment looks stronger than the CAT4 baseline picture would suggest."
-    elif is_downward_mover:
-        second_sentence = "They are appearing as a downward mover because current attainment looks weaker than the CAT4 baseline picture would suggest."
-    elif movement_is_strong_positive:
-        second_sentence = "They are appearing here because current attainment looks stronger than the CAT4 baseline picture would suggest."
-    elif movement_is_strong_negative:
-        second_sentence = "They are appearing here because current attainment looks weaker than the CAT4 baseline picture would suggest."
-    elif movement_is_neutral and trend_is_stable:
-        second_sentence = f"They are currently in the {status_label} band, with little recent academic change and a CAT4 picture that is broadly in line overall."
-    elif trend is not None:
-        second_sentence = f"They are currently in the {status_label} band because the recent academic picture has shifted enough to stand out in the current comparison."
-    else:
-        second_sentence = f"They are currently in the {status_label} band because the CAT4 comparison picture is distinct enough to merit attention."
-
-    if subject_story_summary:
-        third_sentence = subject_story_summary
-    elif top_improving_subjects and top_declining_subjects:
-        third_sentence = (
-            f"The clearest gains are in {_cat4_join_labels(top_improving_subjects)}, "
-            f"while {_cat4_join_labels(top_declining_subjects)} appears to be the main area that has softened."
-        )
-    elif top_improving_subjects:
-        third_sentence = f"The clearest recent gains are in {_cat4_join_labels(top_improving_subjects)}."
-    elif top_declining_subjects:
-        third_sentence = f"The main area that appears to have softened is {_cat4_join_labels(top_declining_subjects)}."
-    else:
-        third_sentence = "There is no strong like-for-like subject pattern to point to from the available results."
-
-    cautions = []
-    if facts.get("low_coverage_flag") or confidence == "Low":
-        cautions.append("coverage is limited")
-    if facts.get("subject_basket_changed"):
-        cautions.append("the subject choices changed between comparisons")
-    if facts.get("level_change_detected"):
-        cautions.append("subject level changes are present")
-    if facts.get("missed_results_flag"):
-        cautions.append("some results appear to be missing")
-    if confidence == "Moderate" and not cautions:
-        cautions.append("the comparison is moderate-confidence rather than fully settled")
-
-    sentences = [first_sentence, second_sentence, third_sentence]
-    if cautions:
-        sentences.append(f"This should be read with some caution because {', '.join(cautions)}.")
-    return " ".join(sentences[:4])
+    return _cat4_demo_interpretation(facts)
 
 
 def _cat4_identity_key(value: str) -> str:

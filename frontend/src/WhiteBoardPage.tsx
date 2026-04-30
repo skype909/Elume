@@ -51,6 +51,69 @@ const PEN_SIZES = [2, 6, 12];
 const ERASER_SIZES = [10, 24, 40];
 const VISIBLE_RESIZE_HANDLE_SIZE = 14;
 const RESIZE_HIT_SIZE = 28;
+const IMAGE_MIN_SIZE = 40;
+const DELETE_W = 76;
+const DELETE_H = 30;
+const DELETE_GAP = 8;
+const DELETE_HIT_PAD = 8;
+
+type ResizeCornerMode = "nw" | "ne" | "sw" | "se";
+
+function resizePlacedImageFromCorner(
+  mode: ResizeCornerMode,
+  orig: { x: number; y: number; w: number; h: number; aspect?: number },
+  dx: number,
+  dy: number,
+  minSize = IMAGE_MIN_SIZE
+): { x: number; y: number; w: number; h: number } {
+  const aspect =
+    Number.isFinite(orig.aspect) && (orig.aspect || 0) > 0
+      ? (orig.aspect as number)
+      : Math.max(1, orig.w) / Math.max(1, orig.h);
+
+  const signedWidthDelta =
+    mode === "se" || mode === "ne" ? dx : -dx;
+  const signedHeightDelta =
+    mode === "se" || mode === "sw" ? dy : -dy;
+
+  const widthCandidate = orig.w + signedWidthDelta;
+  const heightCandidate = orig.h + signedHeightDelta;
+
+  const widthScale = widthCandidate / Math.max(orig.w, 1);
+  const heightScale = heightCandidate / Math.max(orig.h, 1);
+  const dominantScale =
+    Math.abs(signedWidthDelta) >= Math.abs(signedHeightDelta) ? widthScale : heightScale;
+
+  const minWidthFromHeight = minSize * aspect;
+  const minWidth = Math.max(minSize, minWidthFromHeight);
+  const nextWidth = Math.max(minWidth, orig.w * dominantScale);
+  const nextHeight = Math.max(minSize, nextWidth / aspect);
+
+  const right = orig.x + orig.w;
+  const bottom = orig.y + orig.h;
+
+  if (mode === "se") {
+    return { x: orig.x, y: orig.y, w: nextWidth, h: nextHeight };
+  }
+  if (mode === "ne") {
+    return { x: orig.x, y: bottom - nextHeight, w: nextWidth, h: nextHeight };
+  }
+  if (mode === "sw") {
+    return { x: right - nextWidth, y: orig.y, w: nextWidth, h: nextHeight };
+  }
+  return { x: right - nextWidth, y: bottom - nextHeight, w: nextWidth, h: nextHeight };
+}
+
+function getDeletePillRect(img: { x: number; y: number; w: number }) {
+  const preferredY = img.y - DELETE_H - DELETE_GAP;
+  const y = preferredY >= 8 ? preferredY : img.y + 8;
+  return {
+    x: img.x + img.w - DELETE_W,
+    y,
+    w: DELETE_W,
+    h: DELETE_H,
+  };
+}
 
 function formatKindLabel(kind: "notes" | "exam" | "exam-library" | "formula-booklet") {
   if (kind === "notes") return "Notes";
@@ -853,7 +916,7 @@ export default function WhiteBoardPage() {
       mode: "move" | "nw" | "ne" | "sw" | "se";
       startX: number;
       startY: number;
-      orig: { x: number; y: number; w: number; h: number };
+      orig: { x: number; y: number; w: number; h: number; aspect?: number };
     }
   >(null);
 
@@ -1021,6 +1084,23 @@ export default function WhiteBoardPage() {
       if (gridApplied) drawGridOverlay();
       else if (axesApplied) drawAxesOverlay();
     });
+  }
+
+  function scheduleBoardVisualRedrawBurst() {
+    const redraw = () => {
+      void redrawImages();
+      if (gridApplied) drawGridOverlay();
+      else if (axesApplied) drawAxesOverlay();
+    };
+
+    requestAnimationFrame(() => {
+      redraw();
+      requestAnimationFrame(redraw);
+    });
+
+    window.setTimeout(redraw, 80);
+    window.setTimeout(redraw, 180);
+    window.setTimeout(redraw, 360);
   }
 
   function scheduleViewportRedraw() {
@@ -1728,9 +1808,11 @@ export default function WhiteBoardPage() {
     const onResize = () => {
       if (isBoardGeometryLocked()) {
         scheduleViewportRedraw();
+        scheduleBoardVisualRedrawBurst();
         return;
       }
       scheduleCanvasSync(true);
+      scheduleBoardVisualRedrawBurst();
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -1894,7 +1976,7 @@ export default function WhiteBoardPage() {
         ctx.drawImage(img, p.x, p.y, p.w, p.h);
         if (p.id === selectedImageId) {
           const handle = VISIBLE_RESIZE_HANDLE_SIZE;
-          const xBox = 22;
+          const deleteRect = getDeletePillRect(p);
           ctx.save();
           ctx.strokeStyle = "#2563eb";
           ctx.lineWidth = 2;
@@ -1912,13 +1994,22 @@ export default function WhiteBoardPage() {
             ctx.fillRect(hx - handle / 2, hy - handle / 2, handle, handle);
             ctx.strokeRect(hx - handle / 2, hy - handle / 2, handle, handle);
           }
+          ctx.shadowColor = "rgba(15,23,42,0.18)";
+          ctx.shadowBlur = 14;
+          ctx.shadowOffsetY = 4;
           ctx.fillStyle = "#dc2626";
-          ctx.fillRect(p.x + p.w - xBox, p.y - xBox, xBox, xBox);
+          ctx.beginPath();
+          ctx.roundRect(deleteRect.x, deleteRect.y, deleteRect.w, deleteRect.h, 999);
+          ctx.fill();
+          ctx.shadowColor = "transparent";
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = "rgba(255,255,255,0.32)";
+          ctx.stroke();
           ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 16px system-ui";
+          ctx.font = "bold 13px system-ui";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText("×", p.x + p.w - xBox / 2, p.y - xBox / 2 + 1);
+          ctx.fillText("Delete", deleteRect.x + deleteRect.w / 2, deleteRect.y + deleteRect.h / 2 + 0.5);
           ctx.restore();
         }
       } catch { }
@@ -1993,6 +2084,36 @@ export default function WhiteBoardPage() {
   }
 
   function beginImageInteraction(x: number, y: number) {
+    const inRect = (px: number, py: number, rx: number, ry: number, rw: number, rh: number) =>
+      px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+
+    const hitDeletePill = (px: number, py: number, img: PlacedImage) => {
+      const r = getDeletePillRect(img);
+      return inRect(
+        px,
+        py,
+        r.x - DELETE_HIT_PAD,
+        r.y - DELETE_HIT_PAD,
+        r.w + DELETE_HIT_PAD * 2,
+        r.h + DELETE_HIT_PAD * 2
+      );
+    };
+
+    const deletePlacedImageById = (id: string) => {
+      snapshotObjects();
+      markDirty();
+      setPlacedImages((arr) => arr.filter((p) => p.id !== id));
+      setSelectedImageId(null);
+    };
+
+    const selectedImage = selectedImageId
+      ? placedImages.find((p) => p.id === selectedImageId) ?? null
+      : null;
+    if (selectedImage && hitDeletePill(x, y, selectedImage)) {
+      deletePlacedImageById(selectedImage.id);
+      return true;
+    }
+
     const hit = findTopImageAt(x, y);
     if (!hit) {
       setSelectedImageId(null);
@@ -2001,20 +2122,11 @@ export default function WhiteBoardPage() {
 
     setSelectedImageId(hit.id);
 
-    const inRect = (px: number, py: number, rx: number, ry: number, rw: number, rh: number) =>
-      px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
-
     const visibleHandleHalf = VISIBLE_RESIZE_HANDLE_SIZE / 2;
     const resizeHitHalf = RESIZE_HIT_SIZE / 2;
-    const XBOX = 22;
-    const xbx = hit.x + hit.w - XBOX;
-    const xby = hit.y - XBOX;
 
-    if (inRect(x, y, xbx, xby, XBOX, XBOX)) {
-      snapshotObjects();
-      markDirty();
-      setPlacedImages((arr) => arr.filter((p) => p.id !== hit.id));
-      setSelectedImageId(null);
+    if (hitDeletePill(x, y, hit)) {
+      deletePlacedImageById(hit.id);
       return true;
     }
 
@@ -2047,7 +2159,7 @@ export default function WhiteBoardPage() {
       mode,
       startX: x,
       startY: y,
-      orig: { x: hit.x, y: hit.y, w: hit.w, h: hit.h },
+      orig: { x: hit.x, y: hit.y, w: hit.w, h: hit.h, aspect: hit.w / Math.max(hit.h, 1) },
     };
     return true;
   }
@@ -2090,42 +2202,16 @@ export default function WhiteBoardPage() {
 
     const { id, mode, orig } = imgDragRef.current;
 
-    const MIN = 40; // minimum size so it never collapses
-
     setPlacedImages((arr) =>
       arr.map((p) => {
         if (p.id !== id) return p;
 
-        // MOVE
         if (mode === "move") {
           return { ...p, x: orig.x + dx, y: orig.y + dy };
         }
 
-        // RESIZE
-        let nx = orig.x;
-        let ny = orig.y;
-        let nw = orig.w;
-        let nh = orig.h;
-
-        if (mode === "se") {
-          nw = Math.max(MIN, orig.w + dx);
-          nh = Math.max(MIN, orig.h + dy);
-        } else if (mode === "ne") {
-          nw = Math.max(MIN, orig.w + dx);
-          nh = Math.max(MIN, orig.h - dy);
-          ny = orig.y + (orig.h - nh);
-        } else if (mode === "sw") {
-          nw = Math.max(MIN, orig.w - dx);
-          nh = Math.max(MIN, orig.h + dy);
-          nx = orig.x + (orig.w - nw);
-        } else if (mode === "nw") {
-          nw = Math.max(MIN, orig.w - dx);
-          nh = Math.max(MIN, orig.h - dy);
-          nx = orig.x + (orig.w - nw);
-          ny = orig.y + (orig.h - nh);
-        }
-
-        return { ...p, x: nx, y: ny, w: nw, h: nh };
+        const resized = resizePlacedImageFromCorner(mode, orig, dx, dy, IMAGE_MIN_SIZE);
+        return { ...p, ...resized };
       })
     );
   };
@@ -2170,7 +2256,6 @@ export default function WhiteBoardPage() {
       const dy = y - imgDragRef.current.startY;
 
       const { id, mode, orig } = imgDragRef.current;
-      const MIN = 40;
 
       setPlacedImages((arr) =>
         arr.map((p) => {
@@ -2180,30 +2265,8 @@ export default function WhiteBoardPage() {
             return { ...p, x: orig.x + dx, y: orig.y + dy };
           }
 
-          let nx = orig.x;
-          let ny = orig.y;
-          let nw = orig.w;
-          let nh = orig.h;
-
-          if (mode === "se") {
-            nw = Math.max(MIN, orig.w + dx);
-            nh = Math.max(MIN, orig.h + dy);
-          } else if (mode === "ne") {
-            nw = Math.max(MIN, orig.w + dx);
-            nh = Math.max(MIN, orig.h - dy);
-            ny = orig.y + (orig.h - nh);
-          } else if (mode === "sw") {
-            nw = Math.max(MIN, orig.w - dx);
-            nh = Math.max(MIN, orig.h + dy);
-            nx = orig.x + (orig.w - nw);
-          } else if (mode === "nw") {
-            nw = Math.max(MIN, orig.w - dx);
-            nh = Math.max(MIN, orig.h - dy);
-            nx = orig.x + (orig.w - nw);
-            ny = orig.y + (orig.h - nh);
-          }
-
-          return { ...p, x: nx, y: ny, w: nw, h: nh };
+          const resized = resizePlacedImageFromCorner(mode, orig, dx, dy, IMAGE_MIN_SIZE);
+          return { ...p, ...resized };
         })
       );
       return;
@@ -3501,9 +3564,11 @@ export default function WhiteBoardPage() {
       setIsFullscreen(Boolean(document.fullscreenElement));
       if (isBoardGeometryLocked()) {
         scheduleViewportRedraw();
+        scheduleBoardVisualRedrawBurst();
         return;
       }
       scheduleCanvasSync(true, 140);
+      scheduleBoardVisualRedrawBurst();
     };
 
     document.addEventListener("fullscreenchange", onFsChange);
@@ -3518,9 +3583,11 @@ export default function WhiteBoardPage() {
     const onVV = () => {
       if (isBoardGeometryLocked()) {
         scheduleViewportRedraw();
+        scheduleBoardVisualRedrawBurst();
         return;
       }
       scheduleCanvasSync(true, 140);
+      scheduleBoardVisualRedrawBurst();
     };
 
     vv.addEventListener("resize", onVV);
