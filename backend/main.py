@@ -10057,6 +10057,30 @@ def archive_class(
     db.refresh(cls)
     return cls
 
+
+@app.post("/classes/{class_id}/restore")
+def restore_class(
+    class_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    cls = db.query(ClassModel).filter(
+        ClassModel.id == class_id,
+        ClassModel.owner_user_id == user.id,
+    ).first()
+
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    if not cls.is_archived:
+        return cls
+
+    cls.is_archived = False
+    cls.archived_at = None
+    db.commit()
+    db.refresh(cls)
+    return cls
+
 # =========================================================
 # POSTS (links stored as JSON string)
 # =========================================================

@@ -49,6 +49,7 @@ export default function ArchivedClassesPage() {
   const [classes, setClasses] = useState<ArchivedClassItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +74,19 @@ export default function ArchivedClassesPage() {
       cancelled = true;
     };
   }, []);
+
+  async function restoreClass(classId: number) {
+    setRestoringId(classId);
+    setError(null);
+    try {
+      await apiFetch(`/classes/${classId}/restore`, { method: "POST" });
+      setClasses((items) => items.filter((item) => item.id !== classId));
+    } catch (e: any) {
+      setError(e?.message || "Could not restore class.");
+    } finally {
+      setRestoringId(null);
+    }
+  }
 
   const grouped = useMemo(() => {
     const initial = Object.fromEntries(STREAM_ORDER.map((group) => [group, [] as ArchivedClassItem[]])) as Record<StreamGroup, ArchivedClassItem[]>;
@@ -144,6 +158,14 @@ export default function ArchivedClassesPage() {
                             Archived {new Date(item.archived_at).toLocaleDateString("en-IE")}
                           </div>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => void restoreClass(item.id)}
+                          disabled={restoringId === item.id}
+                          className="mt-4 rounded-xl border border-emerald-600 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {restoringId === item.id ? "Restoring..." : "Restore Class"}
+                        </button>
                       </div>
                     ))}
                   </div>
