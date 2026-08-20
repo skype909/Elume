@@ -56,6 +56,10 @@ const DELETE_W = 76;
 const DELETE_H = 30;
 const DELETE_GAP = 8;
 const DELETE_HIT_PAD = 8;
+// Raster ink snapshots are large on classroom panels. Keep history useful while
+// bounding retained ImageData memory.
+const MAX_INK_HISTORY_ENTRIES = 5;
+const MAX_INK_HISTORY_BYTES = 64 * 1024 * 1024;
 
 type ResizeCornerMode = "nw" | "ne" | "sw" | "se";
 
@@ -962,6 +966,33 @@ export default function WhiteBoardPage() {
 
   const [inkUndoStack, setInkUndoStack] = useState<InkSnap[]>([]);
   const [inkRedoStack, setInkRedoStack] = useState<InkSnap[]>([]);
+  const inkUndoStackRef = useRef<InkSnap[]>([]);
+  const inkRedoStackRef = useRef<InkSnap[]>([]);
+
+  function retainBoundedInkHistory(history: InkSnap[], newest: InkSnap): InkSnap[] {
+    const next = [...history, newest];
+    let retainedBytes = next.reduce((total, entry) => total + entry.data.data.byteLength, 0);
+    let firstRetainedIndex = 0;
+
+    // Discard oldest entries first, but always retain the just-created snapshot
+    // so the immediately available undo operation remains valid.
+    while (
+      next.length - firstRetainedIndex > 1 &&
+      (next.length - firstRetainedIndex > MAX_INK_HISTORY_ENTRIES || retainedBytes > MAX_INK_HISTORY_BYTES)
+    ) {
+      retainedBytes -= next[firstRetainedIndex].data.data.byteLength;
+      firstRetainedIndex += 1;
+    }
+
+    return firstRetainedIndex === 0 ? next : next.slice(firstRetainedIndex);
+  }
+
+  function commitInkHistory(undoHistory: InkSnap[], redoHistory: InkSnap[]) {
+    inkUndoStackRef.current = undoHistory;
+    inkRedoStackRef.current = redoHistory;
+    setInkUndoStack(undoHistory);
+    setInkRedoStack(redoHistory);
+  }
 
   const [objUndoStack, setObjUndoStack] = useState<PlacedImage[][]>([]);
   const [objRedoStack, setObjRedoStack] = useState<PlacedImage[][]>([]);
@@ -1447,8 +1478,8 @@ export default function WhiteBoardPage() {
 
     const snap = ctx.getImageData(0, yPx, wPx, hPx);
 
-    setInkUndoStack((s) => [...s, { y: yPx, h: hPx, data: snap }]);
-    setInkRedoStack([]); // clear redo on new action
+    const snapshot = { y: yPx, h: hPx, data: snap };
+    commitInkHistory(retainBoundedInkHistory(inkUndoStackRef.current, snapshot), []);
   }
 
   function snapshotObjects() {
@@ -2053,22 +2084,40 @@ export default function WhiteBoardPage() {
   }, [canvasHeight, placedImages]);
 
   function stampTextToBoard(text: string) {
-    const bgCtx = bgCtxRef.current;
     const container = containerRef.current;
-    if (!bgCtx || !container) return;
+    if (!container) return;
 
-    pushBgUndo();
+    // Use the existing movable image layer so calculator results can be
+    // selected and moved with the Hand tool after insertion.
+    const textCanvas = document.createElement("canvas");
+    const textCtx = textCanvas.getContext("2d");
+    if (!textCtx) return;
 
-    const x = 24;
-    const y = Math.max(0, container.scrollTop + 56);
+    const font = "28px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    textCtx.font = font;
+    const padding = 2;
+    textCanvas.width = Math.max(1, Math.ceil(textCtx.measureText(text).width + padding * 2));
+    textCanvas.height = 40;
 
-    bgCtx.save();
-    bgCtx.globalCompositeOperation = "source-over";
-    bgCtx.fillStyle = "#111827";
-    bgCtx.font = "28px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-    bgCtx.fillText(text, x, y);
-    bgCtx.restore();
+    textCtx.font = font;
+    textCtx.fillStyle = "#111827";
+    textCtx.textBaseline = "alphabetic";
+    textCtx.fillText(text, padding, 28);
+
+    snapshotObjects();
     markDirty();
+    setPlacedImages((arr) => [
+      ...arr,
+      {
+        id: `calc_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        src: textCanvas.toDataURL("image/png"),
+        // Match the previous visible text origin and baseline.
+        x: 24 - padding,
+        y: Math.max(0, container.scrollTop + 28),
+        w: textCanvas.width,
+        h: textCanvas.height,
+      },
+    ]);
   }
   /* ---------- Ink drawing + Hand tool ---------- */
   function getBoardPoint(e: React.PointerEvent) {
@@ -2456,6 +2505,10 @@ export default function WhiteBoardPage() {
     handDragRef.current = false;
     handStartRef.current = null;
 
+    // Commit the final buffered pen points before another action (including Undo)
+    // can read or restore the ink canvas.
+    if (tool === "pen") flushPen();
+
     try {
       inkCanvas.releasePointerCapture(e.pointerId);
     } catch { }
@@ -2497,20 +2550,18 @@ export default function WhiteBoardPage() {
     const ctx = inkCtxRef.current;
     if (!ink || !ctx) return;
 
-    setInkUndoStack((u) => {
-      if (u.length === 0) return u;
+    const undoHistory = inkUndoStackRef.current;
+    if (undoHistory.length === 0) return;
 
-      const prev = u[u.length - 1];
+    const prev = undoHistory[undoHistory.length - 1];
 
-      // Save current region into redo
-      const curImg = ctx.getImageData(0, prev.y, ink.width, prev.h);
-      setInkRedoStack((r) => [...r, { y: prev.y, h: prev.h, data: curImg }]);
-
-      // Restore previous region
-      ctx.putImageData(prev.data, 0, prev.y);
-
-      return u.slice(0, -1);
-    });
+    // Save the current region into redo, then restore the pre-action pixels.
+    const curImg = ctx.getImageData(0, prev.y, ink.width, prev.h);
+    ctx.putImageData(prev.data, 0, prev.y);
+    commitInkHistory(undoHistory.slice(0, -1), [
+      ...inkRedoStackRef.current,
+      { y: prev.y, h: prev.h, data: curImg },
+    ]);
   }
 
   function redo() {
@@ -2518,20 +2569,18 @@ export default function WhiteBoardPage() {
     const ctx = inkCtxRef.current;
     if (!ink || !ctx) return;
 
-    setInkRedoStack((r) => {
-      if (r.length === 0) return r;
+    const redoHistory = inkRedoStackRef.current;
+    if (redoHistory.length === 0) return;
 
-      const next = r[r.length - 1];
+    const next = redoHistory[redoHistory.length - 1];
 
-      // Save current region into undo
-      const curImg = ctx.getImageData(0, next.y, ink.width, next.h);
-      setInkUndoStack((u) => [...u, { y: next.y, h: next.h, data: curImg }]);
-
-      // Restore redo region
-      ctx.putImageData(next.data, 0, next.y);
-
-      return r.slice(0, -1);
-    });
+    // Save the current region into undo, then restore the redone pixels.
+    const curImg = ctx.getImageData(0, next.y, ink.width, next.h);
+    ctx.putImageData(next.data, 0, next.y);
+    commitInkHistory(
+      retainBoundedInkHistory(inkUndoStackRef.current, { y: next.y, h: next.h, data: curImg }),
+      redoHistory.slice(0, -1)
+    );
   }
 
   const repaintAfterLayout = () => {
