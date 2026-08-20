@@ -1028,9 +1028,23 @@ export default function TeacherAdminPage() {
   }
 
   function resetTimetableFromSettings() {
+    const schedule = {} as Record<DayKey, DaySchedule>;
+    for (const day of DAYS) {
+      const daySchedule = state.schedule[day];
+      schedule[day] = {
+        ...daySchedule,
+        entries: Object.fromEntries(
+          Object.entries(daySchedule.entries).map(([slotId, entry]) => [
+            slotId,
+            { ...entry, classId: null, classLabel: "", room: "" },
+          ])
+        ),
+      };
+    }
+
     touch({
       ...state,
-      schedule: buildScheduleFromConfig(state.timetableConfig, state.schedule),
+      schedule,
     });
     setResetTimetableModalOpen(false);
   }
@@ -2104,7 +2118,7 @@ export default function TeacherAdminPage() {
                   Reset timetable?
                 </div>
                 <div className="mt-1 text-sm text-slate-600">
-                  Elume will rebuild the timetable from your saved settings. Some slot assignments may be cleared or moved.
+                  This clears class and room assignments only. Period times, breaks, lunch and timetable settings stay unchanged.
                 </div>
                 <div className="mt-2 text-sm font-semibold text-rose-700">
                   This action cannot be undone.
