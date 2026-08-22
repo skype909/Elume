@@ -7105,11 +7105,13 @@ class CollabRoomManager:
     def __init__(self):
         # key = (session_code, room_key)
         self.rooms: dict[tuple[str, str], list[WebSocket]] = defaultdict(list)
+        self.socket_participants: dict[WebSocket, Optional[str]] = {}
 
-    async def connect(self, session_code: str, room_key: str, websocket: WebSocket):
+    async def connect(self, session_code: str, room_key: str, websocket: WebSocket, participant_anon_id: Optional[str] = None):
         await websocket.accept()
         key = (session_code, room_key)
         self.rooms[key].append(websocket)
+        self.socket_participants[websocket] = participant_anon_id
 
     def disconnect(self, session_code: str, room_key: str, websocket: WebSocket):
         key = (session_code, room_key)
@@ -7117,6 +7119,20 @@ class CollabRoomManager:
             self.rooms[key].remove(websocket)
         if key in self.rooms and not self.rooms[key]:
             del self.rooms[key]
+        self.socket_participants.pop(websocket, None)
+
+    async def close_participant_connections(self, session_code: str, participant_anon_id: str, current_room_key: str):
+        for (code, room_key), sockets in list(self.rooms.items()):
+            if code != session_code or room_key == current_room_key:
+                continue
+            for websocket in list(sockets):
+                if self.socket_participants.get(websocket) != participant_anon_id:
+                    continue
+                try:
+                    await websocket.close(code=4008, reason="Room assignment changed")
+                except Exception:
+                    pass
+                self.disconnect(session_code, room_key, websocket)
 
     async def broadcast(self, session_code: str, room_key: str, payload: dict):
         key = (session_code, room_key)
@@ -7987,6 +8003,31 @@ def _clear_collab_session_history(session_code: str) -> None:
     for key in dead_keys:
         del collab_room_history[key]
 
+
+def _collab_participant_matches_room(session_code: str, room_key: str, participant_anon_id: str) -> bool:
+    db = SessionLocal()
+    try:
+        session = db.query(CollabSessionModel).filter(
+            CollabSessionModel.session_code == session_code
+        ).first()
+        if not session:
+            return False
+
+        participant = (
+            db.query(CollabParticipantModel)
+            .filter(CollabParticipantModel.session_id == session.id)
+            .filter(CollabParticipantModel.anon_id == participant_anon_id)
+            .first()
+        )
+        return bool(
+            participant
+            and participant.room_number is not None
+            and room_key == _collab_room_key(participant.room_number)
+        )
+    finally:
+        db.close()
+
+
 @app.get("/collab/{code}/me/{anon_id}")
 def collab_me(code: str, anon_id: str, db: Session = Depends(get_db)):
     s = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == code).first()
@@ -8013,11 +8054,14 @@ def collab_me(code: str, anon_id: str, db: Session = Depends(get_db)):
 
 @app.websocket("/ws/collab/{session_code}/{room_key}")
 async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
-    print("WS connect attempt:", session_code, room_key)
-    await websocket.accept()
-    print("WS accepted")
+    participant_anon_id = (websocket.query_params.get("anon_id") or "").strip() or None
+    print("WS connect attempt:", session_code, room_key, participant_anon_id or "observer")
+    if participant_anon_id and not _collab_participant_matches_room(session_code, room_key, participant_anon_id):
+        await websocket.close(code=4008, reason="Room assignment does not match")
+        return
 
-    collab_room_manager.rooms[(session_code, room_key)].append(websocket)
+    await collab_room_manager.connect(session_code, room_key, websocket, participant_anon_id)
+    print("WS accepted")
 
     try:
         for evt in _get_collab_history(session_code, room_key):
@@ -8030,6 +8074,15 @@ async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
 
         while True:
             raw = await websocket.receive_text()
+
+            if participant_anon_id and not _collab_participant_matches_room(session_code, room_key, participant_anon_id):
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Room assignment changed",
+                })
+                await websocket.close(code=4008, reason="Room assignment changed")
+                collab_room_manager.disconnect(session_code, room_key, websocket)
+                break
 
             try:
                 data = json.loads(raw)
@@ -9528,13 +9581,14 @@ def collab_participants(
 
 
 @app.post("/collab/{code}/assignments")
-def collab_assignments(
+async def collab_assignments(
     code: str,
     payload: CollabAssignmentsPayload,
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
     s = get_owned_collab_session_or_404(code, db, user)
+    changed_assignments: list[tuple[str, Optional[int]]] = []
 
     for item in payload.assignments:
         p = (
@@ -9552,9 +9606,14 @@ def collab_assignments(
             if room_number > int(s.room_count):
                 room_number = int(s.room_count)
 
-        p.room_number = room_number
+        if p.room_number != room_number:
+            p.room_number = room_number
+            changed_assignments.append((p.anon_id, room_number))
 
     db.commit()
+    for participant_anon_id, room_number in changed_assignments:
+        current_room_key = _collab_room_key(room_number) if room_number is not None else ""
+        await collab_room_manager.close_participant_connections(code, participant_anon_id, current_room_key)
     return {"message": "ok"}
 
 

@@ -81,6 +81,7 @@ type Props = {
     sessionCode: string;
     roomKey: string;
     participantId: string;
+    participantAnonId?: string;
     tool: ToolKey;
     penColor: string;
     penSize: number;
@@ -247,6 +248,7 @@ export default function CollabBoard({
     sessionCode,
     roomKey,
     participantId,
+    participantAnonId,
     tool,
     penColor,
     penSize,
@@ -1229,7 +1231,10 @@ export default function CollabBoard({
 
             let ws: WebSocket;
             try {
-                ws = new WebSocket(`${getWsBase()}/ws/collab/${sessionCode}/${roomKey}`);
+                const participantQuery = participantAnonId
+                    ? `?anon_id=${encodeURIComponent(participantAnonId)}`
+                    : "";
+                ws = new WebSocket(`${getWsBase()}/ws/collab/${sessionCode}/${roomKey}${participantQuery}`);
             } catch {
                 scheduleReconnect();
                 return;
@@ -1353,7 +1358,7 @@ export default function CollabBoard({
             wsRef.current?.close();
             wsRef.current = null;
         };
-    }, [participantId, readOnly, roomKey, sessionCode]);
+    }, [participantAnonId, participantId, readOnly, roomKey, sessionCode]);
 
     useEffect(() => {
         if (!onUndoReady) return;

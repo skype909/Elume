@@ -470,6 +470,7 @@ export default function StudentCollabRoomPage() {
             sessionCode={sessionCode}
             roomKey={`room-${roomNumber}`}
             participantId={anonId}
+            participantAnonId={anonId}
             tool={viewportMode === "pan" ? "select" : tool}
             penColor={penColor}
             penSize={penSize}
