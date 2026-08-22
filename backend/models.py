@@ -1,14 +1,35 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 
 from db import Base
 
+
+class SchoolModel(Base):
+    __tablename__ = "schools"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'suspended', 'inactive')", name="ck_schools_status"),
+        CheckConstraint("seat_limit >= 0", name="ck_schools_seat_limit_nonnegative"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    status = Column(String(32), nullable=False, default="active")
+    seat_limit = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    users = relationship("UserModel", back_populates="school")
+
+
 class UserModel(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("role IN ('teacher', 'school_admin', 'platform_admin')", name="ck_users_role"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, nullable=False, unique=True, index=True)
@@ -16,6 +37,9 @@ class UserModel(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     school_name = Column(String, nullable=True)
+    role = Column(String(32), nullable=False, default="teacher")
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="RESTRICT"), nullable=True, index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
     email_verified = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
@@ -43,6 +67,7 @@ class UserModel(Base):
     storage_warning_sent_at = Column(DateTime, nullable=True)
 
     classes = relationship("ClassModel", back_populates="owner")
+    school = relationship("SchoolModel", back_populates="users")
 
 
 class PasswordResetTokenModel(Base):
