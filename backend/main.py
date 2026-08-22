@@ -65,6 +65,7 @@ from uuid import uuid4
 from datetime import datetime, timedelta
 
 from models import CollabSessionModel, CollabParticipantModel
+from authorization import require_platform_admin
 from schemas import (
     CollabCreatePayload,
     CollabCreateResponse,
@@ -2363,6 +2364,8 @@ def auth_login(payload: AuthLogin, db: Session = Depends(get_db)):
     user = db.query(models.UserModel).filter(models.UserModel.email == email).first()
     if not user or not PWD_CONTEXT.verify(password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if getattr(user, "is_active", True) is False:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
     if not bool(user.email_verified):
         raise HTTPException(status_code=401, detail="Please verify your email before signing in.")
 
@@ -2489,8 +2492,7 @@ def auth_reset_password(payload: schemas.ResetPasswordRequest, db: Session = Dep
     return {"success": True, "message": "Password reset successful."}
 
 def _require_super_admin(user: models.UserModel) -> None:
-    if (getattr(user, "email", "") or "").strip().lower() != "admin@elume.ie":
-        raise HTTPException(status_code=403, detail="Super admin access required.")
+    require_platform_admin(user)
 
 
 def _user_operational_status(user: models.UserModel) -> str:
@@ -2533,8 +2535,25 @@ def get_current_user(
     user = db.query(models.UserModel).filter(models.UserModel.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if getattr(user, "is_active", True) is False:
+        raise HTTPException(status_code=401, detail="Account unavailable")
 
     return user
+
+
+@app.get("/auth/me", response_model=schemas.CurrentUserOut)
+def auth_me(user: models.UserModel = Depends(get_current_user)):
+    school = getattr(user, "school", None)
+    return {
+        "id": user.id,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "role": getattr(user, "role", None) or "teacher",
+        "school_id": getattr(user, "school_id", None),
+        "is_active": getattr(user, "is_active", True),
+        "school_name": getattr(school, "name", None),
+    }
 
 @app.post("/billing/create-checkout-session", response_model=CreateCheckoutSessionResponse)
 def create_checkout_session(
@@ -4439,8 +4458,7 @@ def _safe_whiteboard_note_filename(title: str, suffix: str) -> str:
     return f"{safe}{ext}"
 
 def require_super_admin(user: models.UserModel):
-    if (user.email or "").strip().lower() != "admin@elume.ie":
-        raise HTTPException(status_code=403, detail="Not authorised")
+    require_platform_admin(user)
 
 
 def user_has_cat4_access(user: models.UserModel) -> bool:

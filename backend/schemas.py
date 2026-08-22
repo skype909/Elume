@@ -5,6 +5,17 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
 
 
+class CurrentUserOut(BaseModel):
+    id: int
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: str
+    school_id: Optional[int] = None
+    is_active: bool
+    school_name: Optional[str] = None
+
+
 class ClassCreate(BaseModel):
     name: str
     subject: str
