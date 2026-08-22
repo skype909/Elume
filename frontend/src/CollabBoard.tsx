@@ -271,10 +271,12 @@ export default function CollabBoard({
     const committedCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
+    const reconnectTimerRef = useRef<number | null>(null);
     const connectionVersionRef = useRef(0);
     const editable = !readOnly;
 
     const [isConnected, setIsConnected] = useState(false);
+    const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "reconnecting" | "lost">("connecting");
     const [cursor, setCursor] = useState<{ x: number; y: number; size: number } | null>(null);
     const [objects, setObjects] = useState<BoardObject[]>([]);
     const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
@@ -447,9 +449,18 @@ export default function CollabBoard({
         return blobUrl;
     }
 
+    function hasOpenSocket() {
+        return wsRef.current?.readyState === WebSocket.OPEN;
+    }
+
     function sendWsMessage(payload: SocketPayload) {
-        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-        wsRef.current.send(JSON.stringify(payload));
+        if (!hasOpenSocket()) return false;
+        try {
+            wsRef.current!.send(JSON.stringify(payload));
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     function broadcastObjectCreate(object: BoardObject) {
@@ -547,6 +558,7 @@ export default function CollabBoard({
     }
 
     function undoLastAction() {
+        if (!hasOpenSocket()) return;
         const previous = historyRef.current.pop();
         if (!previous) return;
 
@@ -556,6 +568,11 @@ export default function CollabBoard({
 
 
     function cancelActiveInteraction() {
+        const interaction = interactionRef.current;
+        if (interaction.mode === "creating-object") {
+            setObjects((prev) => prev.filter((obj) => obj.id !== interaction.objectId));
+            historyRef.current.pop();
+        }
         liveStrokeRef.current = null;
         interactionRef.current = { mode: "idle" };
         eraserGestureSnapshotTakenRef.current = false;
@@ -673,6 +690,12 @@ export default function CollabBoard({
     function commitLiveStroke() {
         if (!liveStrokeRef.current) return;
 
+        if (!hasOpenSocket()) {
+            liveStrokeRef.current = null;
+            clearPreview();
+            return;
+        }
+
         pushHistorySnapshot();
 
         strokesRef.current.push(liveStrokeRef.current);
@@ -724,7 +747,7 @@ export default function CollabBoard({
     }
 
     function insertImageObject(src: string, x = 48, y = 48, w = 320, h = 220) {
-        if (!editable) return;
+        if (!editable || !hasOpenSocket()) return;
 
         const obj: BoardObject = {
             id: uid("obj"),
@@ -774,6 +797,7 @@ export default function CollabBoard({
     }
 
     function eraseAtPoint(pt: StrokePoint) {
+        if (!hasOpenSocket()) return;
         const threshold = eraserSize * 8;
 
         if (!eraserGestureSnapshotTakenRef.current) {
@@ -1160,41 +1184,86 @@ export default function CollabBoard({
     useEffect(() => {
         connectionVersionRef.current += 1;
         const connectionVersion = connectionVersionRef.current;
+        const maxReconnectAttempts = 5;
+        let reconnectAttempts = 0;
+        let disposed = false;
         console.log("[CollabBoard] websocket effect run", { sessionCode, roomKey, participantId, readOnly, connectionVersion });
 
+        if (reconnectTimerRef.current !== null) {
+            window.clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+        }
+        setIsConnected(false);
+        setConnectionStatus("connecting");
         clearBoardStateRef.current(false);
 
         if (!sessionCode || !roomKey) {
-            setIsConnected(false);
+            setConnectionStatus("lost");
             return;
         }
 
-        const ws = new WebSocket(`${getWsBase()}/ws/collab/${sessionCode}/${roomKey}`);
-        wsRef.current = ws;
+        const scheduleReconnect = () => {
+            if (disposed || connectionVersion !== connectionVersionRef.current || reconnectTimerRef.current !== null) return;
+            if (reconnectAttempts >= maxReconnectAttempts) {
+                setConnectionStatus("lost");
+                return;
+            }
 
-        ws.onopen = () => {
-            if (connectionVersion !== connectionVersionRef.current) return;
-            console.log("[CollabBoard] websocket open", { sessionCode, roomKey, connectionVersion });
-            setIsConnected(true);
-            ws.send(JSON.stringify({ type: "ping" }));
+            const delay = Math.min(8000, 750 * 2 ** reconnectAttempts);
+            reconnectAttempts += 1;
+            setConnectionStatus("reconnecting");
+            reconnectTimerRef.current = window.setTimeout(() => {
+                reconnectTimerRef.current = null;
+                connect();
+            }, delay);
         };
 
-        ws.onclose = (event) => {
-            if (connectionVersion !== connectionVersionRef.current) return;
-            console.log("[CollabBoard] websocket close", { sessionCode, roomKey, connectionVersion, code: event.code, reason: event.reason });
-            setIsConnected(false);
-        };
+        const connect = () => {
+            if (disposed || connectionVersion !== connectionVersionRef.current) return;
 
-        ws.onerror = () => {
-            if (connectionVersion !== connectionVersionRef.current) return;
-            console.log("[CollabBoard] websocket error", { sessionCode, roomKey, connectionVersion });
-            setIsConnected(false);
-        };
+            // The server replays the room history for each new socket. Clear the
+            // prior rendered copy before a reconnect so replayed strokes are not duplicated.
+            if (reconnectAttempts > 0) {
+                clearBoardStateRef.current(false);
+            }
 
-        ws.onmessage = (event) => {
-            if (connectionVersion !== connectionVersionRef.current) return;
+            let ws: WebSocket;
             try {
-                const data = JSON.parse(event.data) as SocketPayload;
+                ws = new WebSocket(`${getWsBase()}/ws/collab/${sessionCode}/${roomKey}`);
+            } catch {
+                scheduleReconnect();
+                return;
+            }
+            wsRef.current = ws;
+
+            ws.onopen = () => {
+                if (disposed || connectionVersion !== connectionVersionRef.current || wsRef.current !== ws) return;
+                console.log("[CollabBoard] websocket open", { sessionCode, roomKey, connectionVersion, reconnectAttempts });
+                reconnectAttempts = 0;
+                setIsConnected(true);
+                setConnectionStatus("connected");
+                ws.send(JSON.stringify({ type: "ping" }));
+            };
+
+            ws.onclose = (event) => {
+                if (connectionVersion !== connectionVersionRef.current || wsRef.current !== ws) return;
+                console.log("[CollabBoard] websocket close", { sessionCode, roomKey, connectionVersion, code: event.code, reason: event.reason });
+                wsRef.current = null;
+                setIsConnected(false);
+                if (!disposed) scheduleReconnect();
+            };
+
+            ws.onerror = () => {
+                if (disposed || connectionVersion !== connectionVersionRef.current || wsRef.current !== ws) return;
+                console.log("[CollabBoard] websocket error", { sessionCode, roomKey, connectionVersion });
+                setIsConnected(false);
+                setConnectionStatus(reconnectAttempts < maxReconnectAttempts ? "reconnecting" : "lost");
+            };
+
+            ws.onmessage = (event) => {
+                if (connectionVersion !== connectionVersionRef.current || wsRef.current !== ws) return;
+                try {
+                    const data = JSON.parse(event.data) as SocketPayload;
 
                 if (data.type === "stroke" && data.stroke) {
                     const incoming = data.stroke;
@@ -1264,15 +1333,25 @@ export default function CollabBoard({
                     return;
                 }
 
-            } catch {
-                // ignore malformed packets
-            }
+                } catch {
+                    // ignore malformed packets
+                }
+            };
         };
 
+        connect();
+
         return () => {
+            disposed = true;
             console.log("[CollabBoard] websocket cleanup", { sessionCode, roomKey, connectionVersion });
+            if (reconnectTimerRef.current !== null) {
+                window.clearTimeout(reconnectTimerRef.current);
+                reconnectTimerRef.current = null;
+            }
             remotePreviewStrokesRef.current.clear();
-            ws.close();
+            setIsConnected(false);
+            wsRef.current?.close();
+            wsRef.current = null;
         };
     }, [participantId, readOnly, roomKey, sessionCode]);
 
@@ -1452,7 +1531,7 @@ export default function CollabBoard({
             return;
         }
 
-        if (!isConnected) return;
+        if (!isConnected || !hasOpenSocket()) return;
 
         if (tool === "pen" || tool === "highlighter") {
             (e.currentTarget as HTMLDivElement).setPointerCapture?.(e.pointerId);
@@ -1502,6 +1581,11 @@ export default function CollabBoard({
         if (isPannableViewport) return;
 
         if (activePointerIdRef.current !== e.pointerId) return;
+
+        if (!hasOpenSocket()) {
+            cancelActiveInteraction();
+            return;
+        }
 
         const pt = getPointFromEvent(e, container);
 
@@ -1594,6 +1678,11 @@ export default function CollabBoard({
         if (isPannableViewport) return;
         if (activePointerIdRef.current !== e.pointerId) return;
 
+        if (!hasOpenSocket()) {
+            cancelActiveInteraction();
+            return;
+        }
+
         try {
             containerRef.current?.releasePointerCapture?.(e.pointerId);
         } catch { }
@@ -1648,6 +1737,7 @@ export default function CollabBoard({
 
 
     function startMoveObject(e: React.PointerEvent, obj: BoardObject) {
+        if (!hasOpenSocket()) return;
         const directEditObject =
             obj.type === "sticky" || obj.type === "speech";
 
@@ -1675,6 +1765,7 @@ export default function CollabBoard({
     }
 
     function startResizeObject(e: React.PointerEvent, obj: BoardObject) {
+        if (!hasOpenSocket()) return;
         const directEditObject =
             obj.type === "sticky" || obj.type === "speech";
 
@@ -1705,6 +1796,7 @@ export default function CollabBoard({
     }
 
     function updateStickyText(objectId: string, text: string) {
+        if (!hasOpenSocket()) return;
         const currentObj = objects.find((obj) => obj.id === objectId);
         if (!currentObj) return;
 
@@ -1990,12 +2082,18 @@ export default function CollabBoard({
                     </button>
 
                     <div
-                        className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] ${isConnected
+                        className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] ${connectionStatus === "connected"
                             ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : "border border-amber-200 bg-amber-50 text-amber-700"
+                            : connectionStatus === "lost"
+                                ? "border border-red-200 bg-red-50 text-red-700"
+                                : "border border-amber-200 bg-amber-50 text-amber-700"
                             }`}
                     >
-                        {isConnected ? "Connected" : "Connecting"}
+                        {connectionStatus === "connected"
+                            ? "Connected"
+                            : connectionStatus === "lost"
+                                ? "Connection lost"
+                                : "Reconnecting..."}
                     </div>
                 </div>
             </div>
