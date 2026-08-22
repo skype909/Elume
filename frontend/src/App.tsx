@@ -37,6 +37,8 @@ import BillingCancelPage from "./BillingCancelPage";
 import BillingOnboardingPage from "./BillingOnboardingPage";
 import ArchivedClassesPage from "./ArchivedClassesPage";
 import Cat4DemoPage from "./Cat4DemoPage";
+import SchoolAdminPage from "./SchoolAdminPage";
+import SchoolInvitationPage from "./SchoolInvitationPage";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -1918,6 +1920,7 @@ export default function App() {
     window.location.hostname === "127.0.0.1";
 
   const [isAuthed, setIsAuthed] = useState(() => !!getToken());
+  const [currentRole, setCurrentRole] = useState<string | null>(null);
   const userEmail = useMemo(() => getEmailFromToken(), [isAuthed]);
   const userLabel = userEmail ?? "";
   const pilotUsers = new Set(["admin@elume.ie", "rob@elume.ie", "emma@elume.ie", "gillian@elume.ie"]);
@@ -1931,6 +1934,22 @@ export default function App() {
     location.pathname === "/billing/success" ||
     location.pathname === "/billing/cancel";
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!isAuthed) {
+      setCurrentRole(null);
+      return;
+    }
+    void apiFetch("/auth/me")
+      .then((data) => {
+        if (!cancelled) setCurrentRole(typeof data?.role === "string" ? data.role : null);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentRole(null);
+      });
+    return () => { cancelled = true; };
+  }, [isAuthed]);
+
   // Public routes should NOT require login
   const isPublicRoute =
     location.pathname === "/register" ||
@@ -1941,7 +1960,8 @@ export default function App() {
     location.pathname.startsWith("/student/") ||
     location.pathname.startsWith("/join/") ||
     location.pathname.startsWith("/collab/join/") ||
-    location.pathname.startsWith("/reset-password");
+    location.pathname.startsWith("/reset-password") ||
+    location.pathname.startsWith("/school-invite/");
 
   useEffect(() => {
     if (!isAuthed || isPublicRoute || isBillingRoute) return;
@@ -1992,7 +2012,7 @@ export default function App() {
       {/* GLOBAL TOP BAR */}
       {!isPublicRoute && (
 
-        <div className="flex items-center justify-between px-6 py-3 border-b bg-white">
+        <div className="flex items-center justify-between gap-3 px-6 py-3 border-b bg-white">
           {/* ✅ Logo only (no text) -> Dashboard */}
           <button
             type="button"
@@ -2003,12 +2023,10 @@ export default function App() {
             <img src={ELogo2} alt="Elume" className="h-9 w-9 object-contain" />
           </button>
 
-          <button
-            onClick={logout}
-            className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100"
-          >
-            Logout
-          </button>
+          <div className="flex items-center gap-2">
+            {currentRole === "school_admin" && <button onClick={() => navigate("/school-admin")} className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">School Admin</button>}
+            <button onClick={logout} className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100">Logout</button>
+          </div>
         </div>
       )}
       {/* APP ROUTES */}
@@ -2035,6 +2053,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/admin" element={<TeacherAdminPage />} />
         <Route path="/admin-users" element={<AdminUsersPage />} />
+        <Route path="/school-admin" element={<SchoolAdminPage />} />
         <Route path="/class/:id/report" element={<ClassReportPage />} />
         <Route path="/class/:id/student-report/:studentId" element={<StudentReportPage />} />
         <Route path="/collab/join/:code" element={<StudentCollabRoomPage />} />
@@ -2046,6 +2065,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage />} />
+        <Route path="/school-invite/:token" element={<SchoolInvitationPage />} />
         <Route path="/billing/success" element={<BillingSuccessPage />} />
         <Route path="/billing/cancel" element={<BillingCancelPage />} />
         <Route path="/onboarding/billing" element={<BillingOnboardingPage />} />
@@ -2056,7 +2076,8 @@ export default function App() {
         !location.pathname.startsWith("/student/") &&
         !location.pathname.startsWith("/s/") &&
         !location.pathname.startsWith("/collab/join/") &&
-        !location.pathname.startsWith("/reset-password") && (
+        !location.pathname.startsWith("/reset-password") &&
+        !location.pathname.startsWith("/school-invite/") && (
           <footer className="mt-10 border-t border-slate-200/80 bg-white/85 backdrop-blur">
             <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-5 text-sm text-slate-600 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
               <div className="text-xs sm:text-sm">© 2026 Elume. All rights reserved.</div>
