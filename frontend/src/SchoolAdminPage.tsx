@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
+import SchoolBrand from "./Components/SchoolBrand";
 
 type CurrentUser = { role?: string };
 type Overview = {
@@ -12,6 +13,8 @@ type Overview = {
   available_seats: number;
   pending_invitation_count: number;
   disabled_teacher_count: number;
+  slug?: string | null;
+  logo_url?: string | null;
 };
 type Teacher = { id: number; email: string; first_name?: string | null; last_name?: string | null; is_active: boolean };
 type Invitation = { id: number; email: string; status: "pending" | "accepted" | "revoked" | "expired"; created_at: string; expires_at: string };
@@ -27,6 +30,8 @@ function activityLabel(action: string) {
     invitation_resent: "Invitation resent",
     invitation_revoked: "Invitation revoked",
     invitation_accepted: "Teacher joined school",
+    school_admin_invitation_created: "School Admin invitation sent",
+    school_admin_invitation_accepted: "School Admin joined school",
     teacher_deactivated: "Teacher disabled",
     teacher_reactivated: "Teacher reactivated",
   } as Record<string, string>)[action] || "School access updated";
@@ -158,7 +163,7 @@ export default function SchoolAdminPage() {
         <header className="mb-7 flex flex-col gap-4 rounded-[28px] border border-white/80 bg-white/85 p-6 shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">School Admin</div>
-            <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-900">{overview?.name || "Your school"}</h1>
+            <div className="mt-1"><SchoolBrand name={overview?.name || "Your school"} logoUrl={overview?.logo_url} heading poweredByElume /></div>
             <p className="mt-1 text-sm text-slate-600">Manage teacher access and invitations with confidence.</p>
           </div>
           <button type="button" onClick={() => setInviteOpen(true)} disabled={loading} className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-base font-black text-white shadow-lg transition hover:shadow-xl disabled:opacity-60">Invite Teacher</button>

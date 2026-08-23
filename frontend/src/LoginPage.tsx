@@ -1,9 +1,18 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiFetch, setToken } from "./api";
+import { apiFetch, INVITATION_LOGIN_NOTICE_KEY, setToken } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
+import SchoolBrand from "./Components/SchoolBrand";
+import { normalElumeLoginUrl, resolveSchoolBrandingSlug } from "./schoolBranding";
 
 type Props = { onLoggedIn: () => void };
+type SchoolBranding = { name: string; slug: string; logo_url?: string | null; status: "active" | "suspended" | "inactive" };
+type BrandingState =
+    | { kind: "none" | "loading" }
+    | { kind: "ready"; branding: SchoolBranding }
+    | { kind: "unavailable"; branding: SchoolBranding }
+    | { kind: "unknown" }
+    | { kind: "error" };
 
 function SocialIconLink({
     href,
@@ -38,9 +47,20 @@ function SocialIconLink({
 
 export default function LoginPage({ onLoggedIn }: Props) {
     const navigate = useNavigate();
+    const [schoolSlug] = useState(() => resolveSchoolBrandingSlug());
+    const [brandingState, setBrandingState] = useState<BrandingState>(() => schoolSlug ? { kind: "loading" } : { kind: "none" });
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
+    const [invitationNotice] = useState<string | null>(() => {
+        try {
+            const message = sessionStorage.getItem(INVITATION_LOGIN_NOTICE_KEY);
+            sessionStorage.removeItem(INVITATION_LOGIN_NOTICE_KEY);
+            return message;
+        } catch {
+            return null;
+        }
+    });
     const [loading, setLoading] = useState(false);
     const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
     const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
@@ -57,7 +77,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
         let cancelled = false;
 
         async function devAutoLogin() {
-            if (!isLocalDev()) return;
+            if (!isLocalDev() || invitationNotice || schoolSlug) return;
 
             try {
                 const data = await apiFetch("/auth/dev-auto-login", {
@@ -87,7 +107,28 @@ export default function LoginPage({ onLoggedIn }: Props) {
         return () => {
             cancelled = true;
         };
-    }, [onLoggedIn, navigate]);
+    }, [onLoggedIn, navigate, invitationNotice, schoolSlug]);
+
+    useEffect(() => {
+        let cancelled = false;
+        if (!schoolSlug) {
+            setBrandingState({ kind: "none" });
+            return;
+        }
+        setBrandingState({ kind: "loading" });
+        void apiFetch(`/school-branding/${encodeURIComponent(schoolSlug)}`)
+            .then((data) => {
+                if (cancelled) return;
+                const branding = data as SchoolBranding;
+                setBrandingState(branding.status === "active" ? { kind: "ready", branding } : { kind: "unavailable", branding });
+            })
+            .catch((err: unknown) => {
+                if (cancelled) return;
+                const message = String((err as { message?: string })?.message || "").toLowerCase();
+                setBrandingState(message.includes("not found") ? { kind: "unknown" } : { kind: "error" });
+            });
+        return () => { cancelled = true; };
+    }, [schoolSlug]);
 
     useEffect(() => {
         document.title = "Elume – AI Tools for Secondary School Teachers";
@@ -132,6 +173,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
 
     async function submit(e: React.FormEvent) {
         e.preventDefault();
+        if (brandingState.kind === "unavailable" || brandingState.kind === "unknown") return;
         setError(null);
         setLoading(true);
 
@@ -174,6 +216,8 @@ export default function LoginPage({ onLoggedIn }: Props) {
             setLoading(false);
         }
     }
+
+    const brandingBlocksLogin = brandingState.kind === "unavailable" || brandingState.kind === "unknown";
 
     return (
         <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
@@ -490,10 +534,10 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                 <div className="mb-5 flex items-center justify-between">
                                     <div>
                                         <div className="text-2xl font-black tracking-tight text-slate-900">
-                                            Welcome back
+                                            {brandingState.kind === "ready" ? `Sign in to ${brandingState.branding.name}` : "Welcome back"}
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            Sign in to access your classes and tools.
+                                            {brandingState.kind === "ready" ? "Sign in to your school on Elume." : "Sign in to access your classes and tools."}
                                         </div>
                                     </div>
 
@@ -502,7 +546,19 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                     </div>
                                 </div>
 
-                                <form className="space-y-4" onSubmit={submit}>
+                                {invitationNotice && (
+                                    <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+                                        {invitationNotice}
+                                    </div>
+                                )}
+
+                                {brandingState.kind === "loading" && <div className="mb-5 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm font-medium text-cyan-800">Loading your school sign-in…</div>}
+                                {brandingState.kind === "ready" && <div className="mb-5 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4"><SchoolBrand name={brandingState.branding.name} logoUrl={brandingState.branding.logo_url} poweredByElume /><p className="mt-2 text-sm font-medium text-slate-700">Sign in to {brandingState.branding.name} on Elume.</p></div>}
+                                {brandingState.kind === "unavailable" && <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4"><SchoolBrand name={brandingState.branding.name} logoUrl={brandingState.branding.logo_url} poweredByElume /><p className="mt-2 text-sm font-medium text-amber-900">School access is currently unavailable. Please contact your school or return to Elume login.</p><a href={normalElumeLoginUrl()} className="mt-3 inline-flex rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100">Go to Elume login</a></div>}
+                                {brandingState.kind === "unknown" && <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">We couldn’t find this Elume school. <a href={normalElumeLoginUrl()} className="font-bold underline underline-offset-2">Go to Elume login</a></div>}
+                                {brandingState.kind === "error" && <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">We couldn’t load school branding right now. You can still sign in to Elume.</div>}
+
+                                {!brandingBlocksLogin && <form className="space-y-4" onSubmit={submit}>
                                     <label className="block">
                                         <span className="mb-1.5 block text-sm font-bold text-slate-800">
                                             Email
@@ -573,7 +629,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                     >
                                         Create teacher account
                                     </button>
-                                </form>
+                                </form>}
 
                                 <div className="mt-6 space-y-3">
                                     <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-3 text-center shadow-sm">

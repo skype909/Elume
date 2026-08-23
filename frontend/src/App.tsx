@@ -39,6 +39,8 @@ import ArchivedClassesPage from "./ArchivedClassesPage";
 import Cat4DemoPage from "./Cat4DemoPage";
 import SchoolAdminPage from "./SchoolAdminPage";
 import SchoolInvitationPage from "./SchoolInvitationPage";
+import PlatformAdminSchoolsPage from "./PlatformAdminSchoolsPage";
+import SchoolBrand from "./Components/SchoolBrand";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -1921,6 +1923,7 @@ export default function App() {
 
   const [isAuthed, setIsAuthed] = useState(() => !!getToken());
   const [currentRole, setCurrentRole] = useState<string | null>(null);
+  const [currentSchoolBrand, setCurrentSchoolBrand] = useState<{ id?: number | null; name?: string | null; logoUrl?: string | null } | null>(null);
   const userEmail = useMemo(() => getEmailFromToken(), [isAuthed]);
   const userLabel = userEmail ?? "";
   const pilotUsers = new Set(["admin@elume.ie", "rob@elume.ie", "emma@elume.ie", "gillian@elume.ie"]);
@@ -1938,14 +1941,21 @@ export default function App() {
     let cancelled = false;
     if (!isAuthed) {
       setCurrentRole(null);
+      setCurrentSchoolBrand(null);
       return;
     }
     void apiFetch("/auth/me")
       .then((data) => {
-        if (!cancelled) setCurrentRole(typeof data?.role === "string" ? data.role : null);
+        if (!cancelled) {
+          setCurrentRole(typeof data?.role === "string" ? data.role : null);
+          setCurrentSchoolBrand(data?.school_id ? { id: data.school_id, name: data.school_name, logoUrl: data.school_logo_url } : null);
+        }
       })
       .catch(() => {
-        if (!cancelled) setCurrentRole(null);
+        if (!cancelled) {
+          setCurrentRole(null);
+          setCurrentSchoolBrand(null);
+        }
       });
     return () => { cancelled = true; };
   }, [isAuthed]);
@@ -2022,8 +2032,8 @@ export default function App() {
           >
             <img src={ELogo2} alt="Elume" className="h-9 w-9 object-contain" />
           </button>
-
           <div className="flex items-center gap-2">
+            {currentRole === "platform_admin" && <button onClick={() => navigate("/platform-admin/schools")} className="rounded-xl border-2 border-violet-200 bg-violet-50 px-3 py-1 text-sm font-semibold text-violet-800 hover:bg-violet-100">Platform Admin</button>}
             {currentRole === "school_admin" && <button onClick={() => navigate("/school-admin")} className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">School Admin</button>}
             <button onClick={logout} className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100">Logout</button>
           </div>
@@ -2054,6 +2064,7 @@ export default function App() {
         <Route path="/admin" element={<TeacherAdminPage />} />
         <Route path="/admin-users" element={<AdminUsersPage />} />
         <Route path="/school-admin" element={<SchoolAdminPage />} />
+        <Route path="/platform-admin/schools" element={<PlatformAdminSchoolsPage />} />
         <Route path="/class/:id/report" element={<ClassReportPage />} />
         <Route path="/class/:id/student-report/:studentId" element={<StudentReportPage />} />
         <Route path="/collab/join/:code" element={<StudentCollabRoomPage />} />
@@ -2107,6 +2118,17 @@ export default function App() {
           </footer>
         )}
 
+
+      {currentRole !== "platform_admin" &&
+        currentSchoolBrand?.id &&
+        !isPublicRoute &&
+        location.pathname !== "/school-admin" && (
+          <div className="fixed bottom-3 left-3 z-50 max-w-[calc(50vw-1.25rem)] sm:max-w-[220px]">
+            <div className="rounded-xl border border-emerald-100 bg-white/90 px-2.5 py-1.5 shadow-sm backdrop-blur">
+              <SchoolBrand compact name={currentSchoolBrand.name} logoUrl={currentSchoolBrand.logoUrl} poweredByElume />
+            </div>
+          </div>
+        )}
 
       {userEmail && !isPublicRoute && (
         <div className="fixed bottom-3 right-3 z-50 flex flex-col items-end gap-2">

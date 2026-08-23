@@ -17,6 +17,7 @@ type BillingStatus = {
   trial_active: boolean;
   prompt_usage_today: number;
   prompt_limit_today: number;
+  school_funded?: boolean;
 };
 
 function daysLeft(value: string | null) {
@@ -51,7 +52,7 @@ export default function BillingOnboardingPage() {
 
         const onboardingRequired = !!data?.billing_onboarding_required;
         const nextStatus = (data?.subscription_status || "").toLowerCase();
-        const hasAccess = nextStatus === "active" || nextStatus === "trialing" || !!data?.trial_active;
+        const hasAccess = nextStatus === "active" || nextStatus === "trialing" || nextStatus === "school_funded" || !!data?.school_funded || !!data?.trial_active;
         if (!onboardingRequired && !hasAccess) {
           navigate("/", { replace: true });
           return;

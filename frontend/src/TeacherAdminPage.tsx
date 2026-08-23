@@ -102,6 +102,7 @@ type BillingStatus = {
   trial_active: boolean;
   prompt_usage_today: number;
   prompt_limit_today: number;
+  school_funded?: boolean;
 };
 
 const DAYS: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
@@ -159,6 +160,14 @@ function billingStatusMessage(billing: BillingStatus | null) {
       title: "Billing setup needed",
       body: "Choose or manage your plan from the billing step.",
       note: "If your subscription ends, your workspace may be removed after 30 days. Please export important materials before then.",
+    };
+  }
+
+  if (billing.school_funded || billing.subscription_status === "school_funded") {
+    return {
+      title: "School-funded access",
+      body: "Your Elume access is provided through your active school membership.",
+      note: "Individual billing is not required while you remain a member of this school.",
     };
   }
 

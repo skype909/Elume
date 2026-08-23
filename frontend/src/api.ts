@@ -1,5 +1,6 @@
 // src/api.ts
 const TOKEN_KEY = "elume_token";
+export const INVITATION_LOGIN_NOTICE_KEY = "elume_invitation_login_notice";
 type JsonBody = BodyInit | Record<string, unknown> | unknown[] | null;
 type ApiRequestInit = Omit<RequestInit, "body"> & { body?: JsonBody };
 const FRIENDLY_AUTH_ERROR =

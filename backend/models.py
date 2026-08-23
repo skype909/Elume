@@ -17,6 +17,9 @@ class SchoolModel(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    # Nullable for safe migration of existing schools; new provisioning assigns a slug.
+    slug = Column(String(63), nullable=True, unique=True, index=True)
+    logo_storage_key = Column(String(512), nullable=True)
     status = Column(String(32), nullable=False, default="active")
     seat_limit = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -203,6 +206,44 @@ class Cat4BaselineSetModel(Base):
     test_date = Column(DateTime, nullable=True)
     is_locked = Column(Boolean, nullable=False, default=False)
     locked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class SchoolInvitationModel(Base):
+    __tablename__ = "school_invitations"
+    __table_args__ = (
+        CheckConstraint("intended_role IN ('teacher', 'school_admin')", name="ck_school_invitations_intended_role"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="RESTRICT"), nullable=False, index=True)
+    normalized_email = Column(String(320), nullable=False, index=True)
+    intended_role = Column(String(32), nullable=False, default="teacher")
+    token_hash = Column(String(64), nullable=False, unique=True)
+    expires_at = Column(DateTime, nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    invited_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class SchoolAdminAuditLogModel(Base):
+    __tablename__ = "school_admin_audit_log"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('invitation_created', 'invitation_resent', 'invitation_revoked', "
+            "'invitation_accepted', 'teacher_deactivated', 'teacher_reactivated', "
+            "'school_admin_invitation_created', 'school_admin_invitation_accepted')",
+            name="ck_school_admin_audit_log_action",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="RESTRICT"), nullable=False)
+    actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    target_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True)
+    invitation_id = Column(Integer, ForeignKey("school_invitations.id", ondelete="RESTRICT"), nullable=True, index=True)
+    action = Column(String(64), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 

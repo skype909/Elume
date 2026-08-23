@@ -14,6 +14,148 @@ class CurrentUserOut(BaseModel):
     school_id: Optional[int] = None
     is_active: bool
     school_name: Optional[str] = None
+    school_slug: Optional[str] = None
+    school_logo_url: Optional[str] = None
+
+
+class SchoolAdminTeacherOut(BaseModel):
+    id: int
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    is_active: bool
+    school_id: int
+    created_at: datetime
+
+
+class SchoolInvitationCreate(BaseModel):
+    email: str
+
+
+class SchoolInvitationOut(BaseModel):
+    id: int
+    email: str
+    status: str
+    created_at: datetime
+    expires_at: datetime
+    intended_role: str = "teacher"
+
+
+class SchoolAdminActionResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class SchoolInvitationValidationOut(BaseModel):
+    school_name: str
+    email: str
+    expires_at: datetime
+    has_existing_account: bool
+    intended_role: str = "teacher"
+    inviter_name: Optional[str] = None
+    inviter_email: Optional[str] = None
+
+
+class SchoolInvitationAccept(BaseModel):
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    password: Optional[str] = None
+    existing_password: Optional[str] = None
+
+
+class SchoolInvitationAcceptResponse(BaseModel):
+    success: bool
+    message: str
+    next_path: str = "/"
+
+
+class SchoolAdminOverviewOut(BaseModel):
+    id: int
+    name: str
+    status: str
+    seat_limit: int
+    active_teacher_count: int
+    available_seats: int
+    pending_invitation_count: int
+    disabled_teacher_count: int
+    slug: Optional[str] = None
+    logo_url: Optional[str] = None
+
+
+class SchoolAdminAuditLogOut(BaseModel):
+    id: int
+    action: str
+    actor_user_id: int
+    target_user_id: Optional[int] = None
+    invitation_id: Optional[int] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlatformSchoolCreate(BaseModel):
+    name: str
+    seat_limit: int
+    slug: Optional[str] = None
+
+
+class PlatformSchoolSummaryOut(BaseModel):
+    id: int
+    name: str
+    status: str
+    seat_limit: int
+    active_teacher_count: int
+    school_admin_count: int
+    pending_invitation_count: int
+    created_at: datetime
+    slug: Optional[str] = None
+    logo_url: Optional[str] = None
+
+
+class PlatformSchoolAdminOut(BaseModel):
+    id: int
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    is_active: bool
+
+
+class PlatformSchoolDetailOut(PlatformSchoolSummaryOut):
+    available_seats: int
+    school_admins: List[PlatformSchoolAdminOut]
+
+
+class PlatformSchoolAdminAssignment(BaseModel):
+    email: str
+
+
+class PlatformSchoolAdminInvitationOut(BaseModel):
+    success: bool
+    message: str
+    invitation: Optional[SchoolInvitationOut] = None
+
+
+class PlatformSchoolAdminAssignmentOut(BaseModel):
+    success: bool
+    message: str
+    school_admin: PlatformSchoolAdminOut
+
+
+class PlatformSchoolBrandingUpdate(BaseModel):
+    slug: str
+
+
+class PlatformSchoolBrandingOut(BaseModel):
+    slug: Optional[str] = None
+    logo_url: Optional[str] = None
+
+
+class PublicSchoolBrandingOut(BaseModel):
+    name: str
+    slug: str
+    logo_url: Optional[str] = None
+    status: str
 
 
 class ClassCreate(BaseModel):
@@ -295,6 +437,7 @@ class BillingStatusOut(BaseModel):
     payment_recovery_deadline_at: Optional[datetime] = None
     has_stripe_customer: bool = False
     billing_onboarding_required: bool = False
+    school_funded: bool = False
     trial_started_at: Optional[datetime] = None
     trial_ends_at: Optional[datetime] = None
     trial_active: bool = False

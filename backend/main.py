@@ -10,6 +10,7 @@ import random
 import string
 import struct
 import textwrap
+import unicodedata
 import zipfile
 import zlib
 import math
@@ -43,7 +44,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, Column, Integer, String, Text, Boolean, func, inspect as sa_inspect
+from sqlalchemy import and_, Column, Integer, String, Text, Boolean, case, distinct, func, inspect as sa_inspect
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 from fastapi import Header
 from passlib.context import CryptContext
@@ -65,7 +67,14 @@ from uuid import uuid4
 from datetime import datetime, timedelta
 
 from models import CollabSessionModel, CollabParticipantModel
-from authorization import require_platform_admin
+from authorization import (
+    ROLE_PLATFORM_ADMIN,
+    ROLE_SCHOOL_ADMIN,
+    ROLE_TEACHER,
+    is_platform_admin,
+    require_platform_admin,
+    require_school_admin,
+)
 from schemas import (
     CollabCreatePayload,
     CollabCreateResponse,
@@ -545,9 +554,39 @@ def _reset_ai_prompt_counter_if_needed(user: models.UserModel) -> None:
         user.ai_prompt_count_date = _utcnow()
 
 
-def _billing_status_payload(user: models.UserModel) -> dict[str, Any]:
+def _is_school_funded_user(db: Session, user: models.UserModel) -> bool:
+    """School membership is the entitlement source only while its school is active."""
+    if getattr(user, "school_id", None) is None or getattr(user, "role", None) not in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN}:
+        return False
+    return bool(
+        db.query(models.SchoolModel.id)
+        .filter(models.SchoolModel.id == user.school_id, models.SchoolModel.status == "active")
+        .first()
+    )
+
+
+def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, Any]:
     _refresh_ai_daily_limit(user)
     _reset_ai_prompt_counter_if_needed(user)
+    if _is_school_funded_user(db, user):
+        return {
+            "subscription_status": "school_funded",
+            "billing_interval": user.billing_interval,
+            "current_period_end": user.current_period_end,
+            "subscription_expires_at": user.subscription_expires_at,
+            "subscription_expired": False,
+            "requires_billing_redirect": False,
+            "payment_failed_at": user.payment_failed_at,
+            "payment_recovery_deadline_at": user.payment_recovery_deadline_at,
+            "has_stripe_customer": bool(user.stripe_customer_id),
+            "billing_onboarding_required": False,
+            "school_funded": True,
+            "trial_started_at": user.trial_started_at,
+            "trial_ends_at": user.trial_ends_at,
+            "trial_active": False,
+            "prompt_usage_today": int(user.ai_prompt_count or 0),
+            "prompt_limit_today": int(user.ai_daily_limit or 0),
+        }
     expired = _is_subscription_expired(user)
     payment_overdue = _is_payment_recovery_overdue(user)
     _maybe_send_payment_failed_final_notice(user)
@@ -563,12 +602,18 @@ def _billing_status_payload(user: models.UserModel) -> dict[str, Any]:
         "payment_recovery_deadline_at": getattr(user, "payment_recovery_deadline_at", None),
         "has_stripe_customer": bool(user.stripe_customer_id),
         "billing_onboarding_required": bool(user.billing_onboarding_required),
+        "school_funded": False,
         "trial_started_at": user.trial_started_at,
         "trial_ends_at": user.trial_ends_at,
         "trial_active": _is_trial_active(user),
         "prompt_usage_today": int(user.ai_prompt_count or 0),
         "prompt_limit_today": int(user.ai_daily_limit or 0),
     }
+
+
+def _require_individual_billing_account(db: Session, user: models.UserModel) -> None:
+    if _is_school_funded_user(db, user):
+        raise HTTPException(status_code=403, detail="This account is funded through its active school membership")
 
 
 def _is_missing_stripe_customer_error(exc: Exception) -> bool:
@@ -2544,16 +2589,1104 @@ def get_current_user(
 @app.get("/auth/me", response_model=schemas.CurrentUserOut)
 def auth_me(user: models.UserModel = Depends(get_current_user)):
     school = getattr(user, "school", None)
+    role = ROLE_PLATFORM_ADMIN if is_platform_admin(user) else (getattr(user, "role", None) or ROLE_TEACHER)
     return {
         "id": user.id,
         "email": user.email,
         "first_name": user.first_name,
         "last_name": user.last_name,
-        "role": getattr(user, "role", None) or "teacher",
+        "role": role,
         "school_id": getattr(user, "school_id", None),
         "is_active": getattr(user, "is_active", True),
         "school_name": getattr(school, "name", None),
+        "school_slug": getattr(school, "slug", None),
+        "school_logo_url": _school_logo_url(getattr(school, "logo_storage_key", None)),
     }
+
+
+SCHOOL_INVITATION_EXPIRY_DAYS = 7
+SCHOOL_LOGO_MAX_BYTES = 2 * 1024 * 1024
+SCHOOL_LOGO_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp"}
+
+
+def _normalize_school_slug(value: str) -> str:
+    """Normalize a display name or supplied slug to a stable DNS-label-safe slug."""
+    ascii_value = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii").lower()
+    normalized = re.sub(r"[^a-z0-9]+", "-", ascii_value).strip("-")
+    normalized = re.sub(r"-+", "-", normalized)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="School slug must contain letters or numbers")
+    if len(normalized) > 63:
+        raise HTTPException(status_code=400, detail="School slug must be 63 characters or fewer")
+    return normalized
+
+
+def _school_logo_storage_key_or_none(value: Optional[str]) -> Optional[str]:
+    """Accept only opaque keys produced by the dedicated school-logo uploader."""
+    key = (value or "").replace("\\", "/").strip().lstrip("/")
+    if not key.startswith("school-logos/") or "/" in key[len("school-logos/"):]:
+        return None
+    filename = key[len("school-logos/"):]
+    if not re.fullmatch(r"school-[0-9]+-[0-9a-f]{32}\.(png|jpg|webp)", filename):
+        return None
+    return key
+
+
+def _school_logo_url(storage_key: Optional[str]) -> Optional[str]:
+    key = _school_logo_storage_key_or_none(storage_key)
+    return f"/uploads/{key}" if key else None
+
+
+def _school_logo_extension(contents: bytes) -> Optional[str]:
+    if contents.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if contents.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if len(contents) >= 12 and contents[:4] == b"RIFF" and contents[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _require_school_admin_school_id(user: models.UserModel) -> int:
+    require_school_admin(user)
+    school_id = getattr(user, "school_id", None)
+    if school_id is None:
+        raise HTTPException(status_code=403, detail="School admin account is not assigned to a school")
+    return int(school_id)
+
+
+def _school_for_management(
+    db: Session, school_id: int, *, lock: bool = False, require_active: bool = True
+) -> models.SchoolModel:
+    query = db.query(models.SchoolModel).filter(models.SchoolModel.id == school_id)
+    if lock:
+        query = query.with_for_update()
+    school = query.first()
+    if not school:
+        raise HTTPException(status_code=403, detail="School admin account is not assigned to a valid school")
+    if require_active and school.status != "active":
+        raise HTTPException(status_code=403, detail="School is not active")
+    return school
+
+
+def _school_seat_usage(db: Session, school: models.SchoolModel) -> dict:
+    active_teacher_count = (
+        db.query(func.count(models.UserModel.id))
+        .filter(
+            models.UserModel.school_id == school.id,
+            models.UserModel.role == ROLE_TEACHER,
+            models.UserModel.is_active.is_(True),
+        )
+        .scalar()
+        or 0
+    )
+    seat_limit = int(school.seat_limit or 0)
+    return {
+        "seat_limit": seat_limit,
+        "active_teacher_count": int(active_teacher_count),
+        "available_seats": max(seat_limit - int(active_teacher_count), 0),
+    }
+
+
+def _require_available_school_seat(db: Session, school: models.SchoolModel) -> dict:
+    usage = _school_seat_usage(db, school)
+    if usage["available_seats"] <= 0:
+        raise HTTPException(status_code=409, detail="School has no available teacher seats")
+    return usage
+
+
+def _platform_school_summary_query(db: Session):
+    """One aggregate query for platform provisioning lists; avoids per-school counts."""
+    now = datetime.utcnow()
+    active_teachers = case(
+        (
+            and_(
+                models.UserModel.role == ROLE_TEACHER,
+                models.UserModel.is_active.is_(True),
+            ),
+            models.UserModel.id,
+        ),
+        else_=None,
+    )
+    school_admins = case(
+        (models.UserModel.role == ROLE_SCHOOL_ADMIN, models.UserModel.id),
+        else_=None,
+    )
+    pending_invitations = case(
+        (
+            and_(
+                models.SchoolInvitationModel.accepted_at.is_(None),
+                models.SchoolInvitationModel.revoked_at.is_(None),
+                models.SchoolInvitationModel.expires_at > now,
+            ),
+            models.SchoolInvitationModel.id,
+        ),
+        else_=None,
+    )
+    return (
+        db.query(
+            models.SchoolModel,
+            func.count(distinct(active_teachers)).label("active_teacher_count"),
+            func.count(distinct(school_admins)).label("school_admin_count"),
+            func.count(distinct(pending_invitations)).label("pending_invitation_count"),
+        )
+        .outerjoin(models.UserModel, models.UserModel.school_id == models.SchoolModel.id)
+        .outerjoin(models.SchoolInvitationModel, models.SchoolInvitationModel.school_id == models.SchoolModel.id)
+        .group_by(models.SchoolModel.id)
+    )
+
+
+def _platform_school_summary_payload(row) -> dict:
+    school, active_teacher_count, school_admin_count, pending_invitation_count = row
+    return {
+        "id": school.id,
+        "name": school.name,
+        "status": school.status,
+        "seat_limit": int(school.seat_limit or 0),
+        "active_teacher_count": int(active_teacher_count or 0),
+        "school_admin_count": int(school_admin_count or 0),
+        "pending_invitation_count": int(pending_invitation_count or 0),
+        "created_at": school.created_at,
+        "slug": school.slug,
+        "logo_url": _school_logo_url(school.logo_storage_key),
+    }
+
+
+@app.get("/platform-admin/schools", response_model=List[schemas.PlatformSchoolSummaryOut])
+def platform_admin_list_schools(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_platform_admin(user)
+    rows = _platform_school_summary_query(db).order_by(models.SchoolModel.created_at.desc(), models.SchoolModel.id.desc()).all()
+    return [_platform_school_summary_payload(row) for row in rows]
+
+
+@app.post("/platform-admin/schools", response_model=schemas.PlatformSchoolSummaryOut, status_code=201)
+def platform_admin_create_school(
+    payload: schemas.PlatformSchoolCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_platform_admin(user)
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="School name is required")
+    if len(name) > 255:
+        raise HTTPException(status_code=400, detail="School name must be 255 characters or fewer")
+    if payload.seat_limit < 0:
+        raise HTTPException(status_code=400, detail="Seat limit cannot be negative")
+
+    # The current schema has no normalized-name unique constraint. Serialize
+    # same-name provisioning on PostgreSQL so two platform-admin requests cannot
+    # both pass the duplicate check before either commits.
+    if db.bind and db.bind.dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:school_name))"),
+            {"school_name": f"elume-school:{name.casefold()}"},
+        )
+    existing = (
+        db.query(models.SchoolModel.id)
+        .filter(func.lower(func.trim(models.SchoolModel.name)) == name.lower())
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="A school with this name already exists")
+
+    slug = _normalize_school_slug(payload.slug if payload.slug is not None else name)
+    existing_slug = db.query(models.SchoolModel.id).filter(models.SchoolModel.slug == slug).first()
+    if existing_slug:
+        raise HTTPException(status_code=409, detail="A school with this slug already exists")
+
+    school = models.SchoolModel(name=name, slug=slug, status="active", seat_limit=payload.seat_limit)
+    try:
+        db.add(school)
+        db.commit()
+        db.refresh(school)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A school with this name already exists")
+    return {
+        "id": school.id,
+        "name": school.name,
+        "status": school.status,
+        "seat_limit": int(school.seat_limit or 0),
+        "active_teacher_count": 0,
+        "school_admin_count": 0,
+        "pending_invitation_count": 0,
+        "created_at": school.created_at,
+        "slug": school.slug,
+        "logo_url": None,
+    }
+
+
+@app.get("/platform-admin/schools/{school_id}", response_model=schemas.PlatformSchoolDetailOut)
+def platform_admin_school_detail(
+    school_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_platform_admin(user)
+    row = _platform_school_summary_query(db).filter(models.SchoolModel.id == school_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="School not found")
+    summary = _platform_school_summary_payload(row)
+    school_admins = (
+        db.query(models.UserModel)
+        .filter(
+            models.UserModel.school_id == school_id,
+            models.UserModel.role == ROLE_SCHOOL_ADMIN,
+        )
+        .order_by(models.UserModel.created_at.asc(), models.UserModel.id.asc())
+        .all()
+    )
+    return {
+        **summary,
+        "available_seats": max(summary["seat_limit"] - summary["active_teacher_count"], 0),
+        "school_admins": [
+            {
+                "id": admin.id,
+                "email": admin.email,
+                "first_name": admin.first_name,
+                "last_name": admin.last_name,
+                "is_active": admin.is_active,
+            }
+            for admin in school_admins
+        ],
+    }
+
+
+@app.patch("/platform-admin/schools/{school_id}/branding", response_model=schemas.PlatformSchoolBrandingOut)
+def platform_admin_update_school_branding(
+    school_id: int,
+    payload: schemas.PlatformSchoolBrandingUpdate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_platform_admin(user)
+    school = db.query(models.SchoolModel).filter(models.SchoolModel.id == school_id).with_for_update().first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+    slug = _normalize_school_slug(payload.slug)
+    duplicate = db.query(models.SchoolModel.id).filter(models.SchoolModel.slug == slug, models.SchoolModel.id != school_id).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="A school with this slug already exists")
+    try:
+        school.slug = slug
+        db.commit()
+        db.refresh(school)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A school with this slug already exists")
+    return {"slug": school.slug, "logo_url": _school_logo_url(school.logo_storage_key)}
+
+
+@app.post("/platform-admin/schools/{school_id}/logo", response_model=schemas.PlatformSchoolBrandingOut)
+async def platform_admin_upload_school_logo(
+    school_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_platform_admin(user)
+    school = db.query(models.SchoolModel).filter(models.SchoolModel.id == school_id).with_for_update().first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+    content_type = (file.content_type or "").lower()
+    if content_type not in SCHOOL_LOGO_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="School logo must be a PNG, JPEG, or WebP image")
+    contents = await file.read(SCHOOL_LOGO_MAX_BYTES + 1)
+    if not contents or len(contents) > SCHOOL_LOGO_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="School logo must be 2 MB or smaller")
+    extension = _school_logo_extension(contents)
+    if not extension:
+        raise HTTPException(status_code=400, detail="School logo file content is not a supported image")
+    expected_content_type = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}[extension]
+    if content_type != expected_content_type:
+        raise HTTPException(status_code=400, detail="School logo file type does not match its image content")
+
+    logo_dir = UPLOADS_DIR / "school-logos"
+    logo_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"school-{school.id}-{uuid.uuid4().hex}.{extension}"
+    storage_key = f"school-logos/{filename}"
+    destination = logo_dir / filename
+    temporary_destination = logo_dir / f".{filename}.tmp"
+    old_key = _school_logo_storage_key_or_none(school.logo_storage_key)
+    try:
+        temporary_destination.write_bytes(contents)
+        temporary_destination.replace(destination)
+        school.logo_storage_key = storage_key
+        db.commit()
+        db.refresh(school)
+    except Exception:
+        db.rollback()
+        temporary_destination.unlink(missing_ok=True)
+        destination.unlink(missing_ok=True)
+        logger.exception("Failed to store school logo for school_id=%s", school_id)
+        raise HTTPException(status_code=500, detail="School logo could not be saved")
+
+    if old_key and old_key != storage_key:
+        old_path = UPLOADS_DIR / old_key
+        try:
+            old_path.resolve().relative_to((UPLOADS_DIR / "school-logos").resolve())
+            old_path.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            logger.warning("Could not remove replaced school logo for school_id=%s", school_id)
+    return {"slug": school.slug, "logo_url": _school_logo_url(school.logo_storage_key)}
+
+
+@app.get("/school-branding/{slug}", response_model=schemas.PublicSchoolBrandingOut)
+def public_school_branding(slug: str, db: Session = Depends(get_db)):
+    normalized_slug = _normalize_school_slug(slug)
+    school = db.query(models.SchoolModel).filter(models.SchoolModel.slug == normalized_slug).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School branding not found")
+    return {
+        "name": school.name,
+        "slug": school.slug,
+        "logo_url": _school_logo_url(school.logo_storage_key),
+        "status": school.status,
+    }
+
+
+@app.post("/platform-admin/schools/{school_id}/assign-admin", response_model=schemas.PlatformSchoolAdminAssignmentOut)
+def platform_admin_assign_school_admin(
+    school_id: int,
+    payload: schemas.PlatformSchoolAdminAssignment,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    require_platform_admin(user)
+    email = (payload.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid account email required")
+
+    school = db.query(models.SchoolModel).filter(models.SchoolModel.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+    target = db.query(models.UserModel).filter(func.lower(models.UserModel.email) == email).with_for_update().first()
+    if not target:
+        raise HTTPException(status_code=404, detail="No Elume account was found for that email")
+    if is_platform_admin(target):
+        raise HTTPException(status_code=409, detail="A platform admin cannot be assigned as a school admin")
+    if getattr(target, "is_active", True) is False:
+        raise HTTPException(status_code=409, detail="This account is inactive")
+    if not bool(getattr(target, "email_verified", False)):
+        raise HTTPException(status_code=409, detail="This account must verify its email first")
+    if target.role == ROLE_SCHOOL_ADMIN and target.school_id == school.id:
+        return {
+            "success": True,
+            "message": "This account is already a school admin for this school.",
+            "school_admin": {
+                "id": target.id,
+                "email": target.email,
+                "first_name": target.first_name,
+                "last_name": target.last_name,
+                "is_active": target.is_active,
+            },
+        }
+    if target.school_id is not None:
+        raise HTTPException(status_code=409, detail="This account already belongs to a school")
+    if target.role != ROLE_TEACHER:
+        raise HTTPException(status_code=409, detail="Only a standalone teacher account can be assigned as a school admin")
+
+    try:
+        target.role = ROLE_SCHOOL_ADMIN
+        target.school_id = school.id
+        target.billing_onboarding_required = False
+        db.commit()
+        db.refresh(target)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="This account could not be assigned as school admin")
+    return {
+        "success": True,
+        "message": f"{target.email} is now a school admin for {school.name}.",
+        "school_admin": {
+            "id": target.id,
+            "email": target.email,
+            "first_name": target.first_name,
+            "last_name": target.last_name,
+            "is_active": target.is_active,
+        },
+    }
+
+
+def _record_school_admin_audit(
+    db: Session,
+    *,
+    school_id: int,
+    actor_user_id: int,
+    action: str,
+    target_user_id: Optional[int] = None,
+    invitation_id: Optional[int] = None,
+) -> None:
+    db.add(
+        models.SchoolAdminAuditLogModel(
+            school_id=school_id,
+            actor_user_id=actor_user_id,
+            target_user_id=target_user_id,
+            invitation_id=invitation_id,
+            action=action,
+        )
+    )
+
+
+def _school_invitation_status(invitation: models.SchoolInvitationModel, now: datetime) -> str:
+    if invitation.accepted_at is not None:
+        return "accepted"
+    if invitation.revoked_at is not None:
+        return "revoked"
+    if invitation.expires_at <= now:
+        return "expired"
+    return "pending"
+
+
+def _school_invitation_payload(invitation: models.SchoolInvitationModel, now: datetime) -> dict:
+    return {
+        "id": invitation.id,
+        "email": invitation.normalized_email,
+        "status": _school_invitation_status(invitation, now),
+        "created_at": invitation.created_at,
+        "expires_at": invitation.expires_at,
+        "intended_role": invitation.intended_role,
+    }
+
+
+def _school_inviter_identity(inviter: Optional[models.UserModel]) -> tuple[Optional[str], Optional[str]]:
+    if not inviter:
+        return None, None
+    email = (getattr(inviter, "email", None) or "").strip().lower() or None
+    name = " ".join(
+        part for part in ((getattr(inviter, "first_name", None) or "").strip(), (getattr(inviter, "last_name", None) or "").strip()) if part
+    ) or email
+    return name, email
+
+
+def _school_invitation_trust_copy(
+    school: models.SchoolModel, intended_role: str, inviter: Optional[models.UserModel]
+) -> str:
+    action = "manage" if intended_role == ROLE_SCHOOL_ADMIN else "join"
+    inviter_name, inviter_email = _school_inviter_identity(inviter)
+    if inviter_name and inviter_email and inviter_name.casefold() != inviter_email.casefold():
+        sender = f"{inviter_name} ({inviter_email})"
+    else:
+        sender = inviter_name or inviter_email or "Your school administrator"
+    return f"{sender} has invited you to {action} {school.name} on Elume."
+
+
+def _send_school_invitation_email(
+    school: models.SchoolModel,
+    email: str,
+    raw_token: str,
+    *,
+    intended_role: str = ROLE_TEACHER,
+    inviter: Optional[models.UserModel] = None,
+) -> None:
+    invitation_link = f"{APP_BASE_URL.rstrip('/')}/#/school-invite/{raw_token}"
+    body = (
+        f"Hello,\n\n"
+        f"{_school_invitation_trust_copy(school, intended_role, inviter)}\n\n"
+        f"Accept your invitation here:\n{invitation_link}\n\n"
+        "This link will expire in 7 days. If you were not expecting this invitation, you can ignore this email.\n\n"
+        "Elume"
+    )
+    _send_email(email, "You have been invited to Elume", body)
+
+
+def _valid_school_invitation(
+    db: Session, raw_token: str, *, lock: bool = False
+) -> models.SchoolInvitationModel:
+    token = (raw_token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Invitation is invalid or unavailable")
+
+    query = db.query(models.SchoolInvitationModel).filter(
+        models.SchoolInvitationModel.token_hash == _hash_school_invitation_token(token)
+    )
+    if lock:
+        query = query.with_for_update()
+    invitation = query.first()
+    now = datetime.utcnow()
+    if (
+        not invitation
+        or invitation.accepted_at is not None
+        or invitation.revoked_at is not None
+        or invitation.expires_at <= now
+    ):
+        raise HTTPException(status_code=400, detail="Invitation is invalid or unavailable")
+    return invitation
+
+
+@app.get("/school-invite/{token}", response_model=schemas.SchoolInvitationValidationOut)
+def school_invitation_validate(token: str, db: Session = Depends(get_db)):
+    invitation = _valid_school_invitation(db, token)
+    school = db.query(models.SchoolModel).filter(models.SchoolModel.id == invitation.school_id).first()
+    if not school:
+        raise HTTPException(status_code=400, detail="Invitation is invalid or unavailable")
+
+    existing_user = (
+        db.query(models.UserModel)
+        .filter(func.lower(models.UserModel.email) == invitation.normalized_email)
+        .first()
+    )
+    inviter = db.query(models.UserModel).filter(models.UserModel.id == invitation.invited_by_user_id).first()
+    inviter_name, inviter_email = _school_inviter_identity(inviter)
+    return {
+        "school_name": school.name,
+        "email": invitation.normalized_email,
+        "expires_at": invitation.expires_at,
+        "has_existing_account": existing_user is not None,
+        "intended_role": invitation.intended_role,
+        "inviter_name": inviter_name,
+        "inviter_email": inviter_email,
+    }
+
+
+@app.post("/school-invite/{token}/accept", response_model=schemas.SchoolInvitationAcceptResponse)
+def school_invitation_accept(
+    token: str,
+    payload: schemas.SchoolInvitationAccept,
+    db: Session = Depends(get_db),
+):
+    email = (payload.email or "").strip().lower()
+    try:
+        invitation = _valid_school_invitation(db, token, lock=True)
+        if email != invitation.normalized_email:
+            raise HTTPException(status_code=400, detail="Email must match the invitation")
+
+        school = _school_for_management(db, invitation.school_id, lock=True)
+
+        existing_user = (
+            db.query(models.UserModel)
+            .filter(func.lower(models.UserModel.email) == invitation.normalized_email)
+            .with_for_update()
+            .first()
+        )
+
+        intended_role = invitation.intended_role
+        if intended_role not in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN}:
+            raise HTTPException(status_code=400, detail="Invitation is invalid or unavailable")
+
+        if existing_user:
+            existing_password = (payload.existing_password or "").strip()
+            if not existing_password or not PWD_CONTEXT.verify(existing_password, existing_user.password_hash):
+                raise HTTPException(status_code=400, detail="Existing account password is incorrect")
+            if is_platform_admin(existing_user):
+                raise HTTPException(status_code=409, detail="This account cannot join a school through an invitation")
+            if existing_user.role not in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN}:
+                raise HTTPException(status_code=409, detail="This account cannot join a school through an invitation")
+            if getattr(existing_user, "is_active", True) is False:
+                raise HTTPException(status_code=403, detail="This account is unavailable")
+            if not bool(existing_user.email_verified):
+                raise HTTPException(status_code=403, detail="Please verify your existing account before joining a school")
+            if existing_user.school_id not in (None, invitation.school_id):
+                raise HTTPException(status_code=409, detail="This account already belongs to another school")
+
+            if existing_user.school_id is None and intended_role == ROLE_TEACHER:
+                _require_available_school_seat(db, school)
+            if existing_user.school_id == invitation.school_id and existing_user.role != intended_role:
+                raise HTTPException(status_code=409, detail="This account already belongs to this school with a different role")
+            existing_user.role = intended_role
+            existing_user.school_id = invitation.school_id
+            existing_user.billing_onboarding_required = False
+            accepted_user = existing_user
+            message = (
+                f"You have joined {school.name} as a School Admin."
+                if intended_role == ROLE_SCHOOL_ADMIN
+                else f"You have joined {school.name}."
+            )
+        else:
+            first_name = (payload.first_name or "").strip()
+            last_name = (payload.last_name or "").strip()
+            password = (payload.password or "").strip()
+            if not first_name or not last_name:
+                raise HTTPException(status_code=400, detail="First name and last name are required")
+            password_error = _password_policy_error(password)
+            if password_error:
+                raise HTTPException(status_code=400, detail=password_error)
+
+            if intended_role == ROLE_TEACHER:
+                _require_available_school_seat(db, school)
+            accepted_user = models.UserModel(
+                first_name=first_name,
+                last_name=last_name,
+                school_name=school.name,
+                email=invitation.normalized_email,
+                password_hash=PWD_CONTEXT.hash(password),
+                role=intended_role,
+                school_id=invitation.school_id,
+                is_active=True,
+                email_verified=True,
+                billing_onboarding_required=False,
+            )
+            db.add(accepted_user)
+            db.flush()
+            message = (
+                f"Your School Admin account for {school.name} is ready."
+                if intended_role == ROLE_SCHOOL_ADMIN
+                else f"Your Elume account for {school.name} is ready."
+            )
+
+        invitation.accepted_at = datetime.utcnow()
+        _record_school_admin_audit(
+            db,
+            school_id=school.id,
+            actor_user_id=accepted_user.id,
+            target_user_id=accepted_user.id,
+            invitation_id=invitation.id,
+            action="school_admin_invitation_accepted" if intended_role == ROLE_SCHOOL_ADMIN else "invitation_accepted",
+        )
+        db.commit()
+        db.refresh(accepted_user)
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Invitation could not be accepted")
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to accept school invitation")
+        raise HTTPException(status_code=500, detail="Invitation could not be accepted")
+
+    return {
+        "success": True,
+        "message": message,
+        "next_path": "/",
+    }
+
+
+@app.post(
+    "/platform-admin/schools/{school_id}/admin-invitations",
+    response_model=schemas.PlatformSchoolAdminInvitationOut,
+    status_code=201,
+)
+def platform_admin_create_school_admin_invitation(
+    school_id: int,
+    payload: schemas.SchoolInvitationCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    """Invite a brand-new School Admin; existing accounts use assign-admin instead."""
+    require_platform_admin(user)
+    email = (payload.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+
+    school = _school_for_management(db, school_id, lock=True)
+    existing_user = (
+        db.query(models.UserModel)
+        .filter(func.lower(models.UserModel.email) == email)
+        .with_for_update()
+        .first()
+    )
+    if existing_user:
+        if is_platform_admin(existing_user):
+            raise HTTPException(status_code=409, detail="A platform admin cannot be assigned as a school admin")
+        if existing_user.school_id not in (None, school_id):
+            raise HTTPException(status_code=409, detail="This account already belongs to another school")
+        if existing_user.role == ROLE_SCHOOL_ADMIN and existing_user.school_id == school_id:
+            return {
+                "success": True,
+                "message": "This account is already a School Admin for this school.",
+                "invitation": None,
+            }
+        raise HTTPException(
+            status_code=409,
+            detail="An Elume account already exists for this email. Use Assign School Admin for an existing standalone teacher.",
+        )
+
+    now = datetime.utcnow()
+    open_invitations = (
+        db.query(models.SchoolInvitationModel)
+        .filter(
+            models.SchoolInvitationModel.school_id == school_id,
+            models.SchoolInvitationModel.normalized_email == email,
+            models.SchoolInvitationModel.accepted_at.is_(None),
+            models.SchoolInvitationModel.revoked_at.is_(None),
+        )
+        .with_for_update()
+        .all()
+    )
+    for invitation in open_invitations:
+        if invitation.expires_at > now:
+            raise HTTPException(status_code=409, detail="A pending invitation already exists for this email")
+        invitation.revoked_at = now
+
+    raw_token = secrets.token_urlsafe(32)
+    invitation = models.SchoolInvitationModel(
+        school_id=school_id,
+        normalized_email=email,
+        intended_role=ROLE_SCHOOL_ADMIN,
+        token_hash=_hash_school_invitation_token(raw_token),
+        expires_at=now + timedelta(days=SCHOOL_INVITATION_EXPIRY_DAYS),
+        invited_by_user_id=user.id,
+    )
+    try:
+        db.add(invitation)
+        db.flush()
+        _record_school_admin_audit(
+            db,
+            school_id=school_id,
+            actor_user_id=user.id,
+            invitation_id=invitation.id,
+            action="school_admin_invitation_created",
+        )
+        _send_school_invitation_email(
+            school, email, raw_token, intended_role=ROLE_SCHOOL_ADMIN, inviter=user
+        )
+        db.commit()
+        db.refresh(invitation)
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A pending invitation already exists for this email")
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to create School Admin invitation for school_id=%s", school_id)
+        raise HTTPException(status_code=500, detail="Failed to send invitation")
+
+    return {
+        "success": True,
+        "message": f"School Admin invitation sent to {email}.",
+        "invitation": _school_invitation_payload(invitation, now),
+    }
+
+
+@app.get("/school-admin/teachers", response_model=List[schemas.SchoolAdminTeacherOut])
+def school_admin_list_teachers(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    school_id = _require_school_admin_school_id(user)
+    teachers = (
+        db.query(models.UserModel)
+        .filter(
+            models.UserModel.school_id == school_id,
+            models.UserModel.role == ROLE_TEACHER,
+        )
+        .order_by(models.UserModel.created_at.asc(), models.UserModel.id.asc())
+        .all()
+    )
+    return [
+        {
+            "id": teacher.id,
+            "email": teacher.email,
+            "first_name": teacher.first_name,
+            "last_name": teacher.last_name,
+            "is_active": teacher.is_active,
+            "school_id": teacher.school_id,
+            "created_at": teacher.created_at,
+        }
+        for teacher in teachers
+    ]
+
+
+@app.get("/school-admin/overview", response_model=schemas.SchoolAdminOverviewOut)
+def school_admin_overview(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    school_id = _require_school_admin_school_id(user)
+    school = _school_for_management(db, school_id, require_active=False)
+    usage = _school_seat_usage(db, school)
+    now = datetime.utcnow()
+    pending_invitation_count = (
+        db.query(func.count(models.SchoolInvitationModel.id))
+        .filter(
+            models.SchoolInvitationModel.school_id == school_id,
+            models.SchoolInvitationModel.intended_role == ROLE_TEACHER,
+            models.SchoolInvitationModel.accepted_at.is_(None),
+            models.SchoolInvitationModel.revoked_at.is_(None),
+            models.SchoolInvitationModel.expires_at > now,
+        )
+        .scalar()
+        or 0
+    )
+    disabled_teacher_count = (
+        db.query(func.count(models.UserModel.id))
+        .filter(
+            models.UserModel.school_id == school_id,
+            models.UserModel.role == ROLE_TEACHER,
+            models.UserModel.is_active.is_(False),
+        )
+        .scalar()
+        or 0
+    )
+    return {
+        "id": school.id,
+        "name": school.name,
+        "status": school.status,
+        **usage,
+        "pending_invitation_count": int(pending_invitation_count),
+        "disabled_teacher_count": int(disabled_teacher_count),
+        "slug": school.slug,
+        "logo_url": _school_logo_url(school.logo_storage_key),
+    }
+
+
+@app.get("/school-admin/audit-log", response_model=List[schemas.SchoolAdminAuditLogOut])
+def school_admin_audit_log(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    school_id = _require_school_admin_school_id(user)
+    bounded_limit = min(max(limit, 1), 100)
+    return (
+        db.query(models.SchoolAdminAuditLogModel)
+        .filter(models.SchoolAdminAuditLogModel.school_id == school_id)
+        .order_by(models.SchoolAdminAuditLogModel.created_at.desc(), models.SchoolAdminAuditLogModel.id.desc())
+        .limit(bounded_limit)
+        .all()
+    )
+
+
+@app.get("/school-admin/invitations", response_model=List[schemas.SchoolInvitationOut])
+def school_admin_list_invitations(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    school_id = _require_school_admin_school_id(user)
+    now = datetime.utcnow()
+    invitations = (
+        db.query(models.SchoolInvitationModel)
+        .filter(
+            models.SchoolInvitationModel.school_id == school_id,
+            models.SchoolInvitationModel.intended_role == ROLE_TEACHER,
+        )
+        .order_by(models.SchoolInvitationModel.created_at.desc(), models.SchoolInvitationModel.id.desc())
+        .all()
+    )
+    return [_school_invitation_payload(invitation, now) for invitation in invitations]
+
+
+@app.post("/school-admin/invitations", response_model=schemas.SchoolInvitationOut, status_code=201)
+def school_admin_create_invitation(
+    payload: schemas.SchoolInvitationCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    school_id = _require_school_admin_school_id(user)
+    email = (payload.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+
+    school = _school_for_management(db, school_id)
+
+    existing_user = (
+        db.query(models.UserModel)
+        .filter(func.lower(models.UserModel.email) == email)
+        .first()
+    )
+    if existing_user:
+        if existing_user.school_id == school_id and existing_user.role == ROLE_TEACHER:
+            raise HTTPException(status_code=409, detail="Teacher already belongs to this school")
+        if existing_user.school_id is not None:
+            raise HTTPException(status_code=409, detail="Email is already associated with a school account")
+
+    now = datetime.utcnow()
+    open_invitations = (
+        db.query(models.SchoolInvitationModel)
+        .filter(
+            models.SchoolInvitationModel.school_id == school_id,
+            models.SchoolInvitationModel.normalized_email == email,
+            models.SchoolInvitationModel.accepted_at.is_(None),
+            models.SchoolInvitationModel.revoked_at.is_(None),
+        )
+        .with_for_update()
+        .all()
+    )
+    for invitation in open_invitations:
+        if invitation.expires_at > now:
+            raise HTTPException(status_code=409, detail="A pending invitation already exists for this email")
+        invitation.revoked_at = now
+
+    raw_token = secrets.token_urlsafe(32)
+    invitation = models.SchoolInvitationModel(
+        school_id=school_id,
+        normalized_email=email,
+        intended_role=ROLE_TEACHER,
+        token_hash=_hash_school_invitation_token(raw_token),
+        expires_at=now + timedelta(days=SCHOOL_INVITATION_EXPIRY_DAYS),
+        invited_by_user_id=user.id,
+    )
+    try:
+        db.add(invitation)
+        db.flush()
+        _record_school_admin_audit(
+            db,
+            school_id=school_id,
+            actor_user_id=user.id,
+            invitation_id=invitation.id,
+            action="invitation_created",
+        )
+        _send_school_invitation_email(school, email, raw_token, inviter=user)
+        db.commit()
+        db.refresh(invitation)
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A pending invitation already exists for this email")
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to create school invitation for school_id=%s", school_id)
+        raise HTTPException(status_code=500, detail="Failed to send invitation")
+
+    return _school_invitation_payload(invitation, now)
+
+
+@app.post("/school-admin/invitations/{invitation_id}/resend", response_model=schemas.SchoolInvitationOut)
+def school_admin_resend_invitation(
+    invitation_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    school_id = _require_school_admin_school_id(user)
+    now = datetime.utcnow()
+    invitation = (
+        db.query(models.SchoolInvitationModel)
+        .filter(
+            models.SchoolInvitationModel.id == invitation_id,
+            models.SchoolInvitationModel.school_id == school_id,
+            models.SchoolInvitationModel.intended_role == ROLE_TEACHER,
+            models.SchoolInvitationModel.accepted_at.is_(None),
+            models.SchoolInvitationModel.revoked_at.is_(None),
+            models.SchoolInvitationModel.expires_at > now,
+        )
+        .with_for_update()
+        .first()
+    )
+    if not invitation:
+        raise HTTPException(status_code=404, detail="Pending invitation not found")
+
+    school = db.query(models.SchoolModel).filter(models.SchoolModel.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=403, detail="School admin account is not assigned to a valid school")
+
+    raw_token = secrets.token_urlsafe(32)
+    invitation.token_hash = _hash_school_invitation_token(raw_token)
+    invitation.expires_at = now + timedelta(days=SCHOOL_INVITATION_EXPIRY_DAYS)
+    try:
+        _record_school_admin_audit(
+            db,
+            school_id=school_id,
+            actor_user_id=user.id,
+            invitation_id=invitation.id,
+            action="invitation_resent",
+        )
+        _send_school_invitation_email(school, invitation.normalized_email, raw_token, inviter=user)
+        db.commit()
+        db.refresh(invitation)
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to resend school invitation id=%s", invitation_id)
+        raise HTTPException(status_code=500, detail="Failed to send invitation")
+
+    return _school_invitation_payload(invitation, now)
+
+
+@app.post("/school-admin/invitations/{invitation_id}/revoke", response_model=schemas.SchoolAdminActionResponse)
+def school_admin_revoke_invitation(
+    invitation_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    school_id = _require_school_admin_school_id(user)
+    now = datetime.utcnow()
+    invitation = (
+        db.query(models.SchoolInvitationModel)
+        .filter(
+            models.SchoolInvitationModel.id == invitation_id,
+            models.SchoolInvitationModel.school_id == school_id,
+            models.SchoolInvitationModel.intended_role == ROLE_TEACHER,
+            models.SchoolInvitationModel.accepted_at.is_(None),
+            models.SchoolInvitationModel.revoked_at.is_(None),
+            models.SchoolInvitationModel.expires_at > now,
+        )
+        .with_for_update()
+        .first()
+    )
+    if not invitation:
+        raise HTTPException(status_code=404, detail="Pending invitation not found")
+
+    invitation.revoked_at = now
+    _record_school_admin_audit(
+        db,
+        school_id=school_id,
+        actor_user_id=user.id,
+        invitation_id=invitation.id,
+        action="invitation_revoked",
+    )
+    db.commit()
+    return {"success": True, "message": "Invitation revoked"}
+
+
+def _school_admin_teacher_target(
+    db: Session, school_id: int, user_id: int, *, lock: bool = False
+) -> models.UserModel:
+    query = (
+        db.query(models.UserModel)
+        .filter(
+            models.UserModel.id == user_id,
+            models.UserModel.school_id == school_id,
+            models.UserModel.role == ROLE_TEACHER,
+        )
+    )
+    if lock:
+        query = query.with_for_update()
+    teacher = query.first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+    return teacher
+
+
+@app.post("/school-admin/teachers/{user_id}/deactivate", response_model=schemas.SchoolAdminActionResponse)
+def school_admin_deactivate_teacher(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    school_id = _require_school_admin_school_id(user)
+    teacher = _school_admin_teacher_target(db, school_id, user_id, lock=True)
+    teacher.is_active = False
+    _record_school_admin_audit(
+        db,
+        school_id=school_id,
+        actor_user_id=user.id,
+        target_user_id=teacher.id,
+        action="teacher_deactivated",
+    )
+    db.commit()
+    return {"success": True, "message": "Teacher deactivated"}
+
+
+@app.post("/school-admin/teachers/{user_id}/reactivate", response_model=schemas.SchoolAdminActionResponse)
+def school_admin_reactivate_teacher(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    school_id = _require_school_admin_school_id(user)
+    school = _school_for_management(db, school_id, lock=True)
+    teacher = _school_admin_teacher_target(db, school_id, user_id, lock=True)
+    if not teacher.is_active:
+        _require_available_school_seat(db, school)
+    teacher.is_active = True
+    _record_school_admin_audit(
+        db,
+        school_id=school_id,
+        actor_user_id=user.id,
+        target_user_id=teacher.id,
+        action="teacher_reactivated",
+    )
+    db.commit()
+    return {"success": True, "message": "Teacher reactivated"}
 
 @app.post("/billing/create-checkout-session", response_model=CreateCheckoutSessionResponse)
 def create_checkout_session(
@@ -2561,6 +3694,7 @@ def create_checkout_session(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    _require_individual_billing_account(db, user)
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe is not configured")
     if not STRIPE_PRICE_MONTHLY_EUR or not STRIPE_PRICE_ANNUAL_EUR:
@@ -2636,6 +3770,7 @@ def create_portal_session(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    _require_individual_billing_account(db, user)
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe is not configured")
     if not (user.stripe_customer_id or "").strip():
@@ -2666,6 +3801,7 @@ def confirm_checkout_session(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    _require_individual_billing_account(db, user)
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe is not configured")
 
@@ -2723,7 +3859,7 @@ def confirm_checkout_session(
     db.commit()
     return {
         "success": True,
-        "billing_status": _billing_status_payload(user),
+        "billing_status": _billing_status_payload(db, user),
     }
 
 
@@ -2732,6 +3868,7 @@ def start_billing_trial(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    _require_individual_billing_account(db, user)
     if not bool(user.email_verified):
         raise HTTPException(status_code=403, detail="Please verify your email before starting your trial.")
     if _is_paid_subscription_active(user):
@@ -2903,7 +4040,7 @@ def billing_me(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    payload = _billing_status_payload(user)
+    payload = _billing_status_payload(db, user)
     db.commit()
     return payload
 
@@ -6994,6 +8131,10 @@ def _hash_email_verification_token(raw_token: str) -> str:
     return hashlib.sha256((raw_token or "").encode("utf-8")).hexdigest()
 
 
+def _hash_school_invitation_token(raw_token: str) -> str:
+    return hashlib.sha256((raw_token or "").encode("utf-8")).hexdigest()
+
+
 # =========================================================
 # ADMIN (Students + Assessments/Results)
 # =========================================================
@@ -9304,7 +10445,7 @@ Base.metadata.create_all(bind=engine)
 # =========================================================
 # FILES / UPLOADS (ABSOLUTE + STABLE)
 # =========================================================
-LEGACY_PUBLIC_UPLOAD_DIRS = {"notes", "tests", "posts", "whiteboards"}
+LEGACY_PUBLIC_UPLOAD_DIRS = {"notes", "tests", "posts", "whiteboards", "school-logos"}
 EXAM_LIBRARY_DIR = Path(os.getenv("ELUME_EXAM_LIBRARY_DIR") or "/var/lib/elume/exam-library")
 EXAM_LIBRARY_MANIFEST = EXAM_LIBRARY_DIR / "manifest.json"
 
