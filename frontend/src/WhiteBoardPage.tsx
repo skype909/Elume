@@ -57,7 +57,7 @@ const DELETE_H = 30;
 const DELETE_GAP = 8;
 const DELETE_HIT_PAD = 8;
 // Raster ink snapshots are large on classroom panels. Keep history useful while
-// bounding retained ImageData memory.
+// bounding retained canvas memory.
 const MAX_INK_HISTORY_ENTRIES = 5;
 const MAX_INK_HISTORY_BYTES = 64 * 1024 * 1024;
 
@@ -797,6 +797,8 @@ export default function WhiteBoardPage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const boardSurfaceRef = useRef<HTMLDivElement | null>(null);
   const viewportRedrawRafRef = useRef<number | null>(null);
+  const viewportVisualRedrawRef = useRef<() => void>(() => {});
+  const imageRedrawTokenRef = useRef(0);
   const canvasMetricsRef = useRef<{ width: number; height: number; ratio: number } | null>(null);
   const lockedBoardWidthRef = useRef<number | null>(null);
   const lockedBoardDprRef = useRef<number | null>(null);
@@ -877,6 +879,8 @@ export default function WhiteBoardPage() {
 
   // Drawing / hand tool refs
   const drawingRef = useRef(false);
+  const drawingPointerIdRef = useRef<number | null>(null);
+  const activeStrokeRectRef = useRef<DOMRect | null>(null);
   const handDragRef = useRef(false);
   const handStartRef = useRef<{ y: number; scrollTop: number } | null>(null);
   const lineStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -885,7 +889,6 @@ export default function WhiteBoardPage() {
   const snappedThisStrokeRef = useRef(false);
   const penPendingRef = useRef<{ x: number; y: number }[]>([]);
   const penRafRef = useRef<number | null>(null);
-  const lastPenXYRef = useRef<{ x: number; y: number } | null>(null);
 
 
 
@@ -962,16 +965,19 @@ export default function WhiteBoardPage() {
   const [pdfInsertScale, setPdfInsertScale] = useState(1.0);
   const [bgUndoStack, setBgUndoStack] = useState<ImageData[]>([]);
 
-  type InkSnap = { y: number; h: number; data: ImageData };
+  type InkSnap = { y: number; h: number; canvas: HTMLCanvasElement; bytes: number };
 
   const [inkUndoStack, setInkUndoStack] = useState<InkSnap[]>([]);
   const [inkRedoStack, setInkRedoStack] = useState<InkSnap[]>([]);
   const inkUndoStackRef = useRef<InkSnap[]>([]);
   const inkRedoStackRef = useRef<InkSnap[]>([]);
+  // Keep the expensive image snapshot out of React state until the stroke is
+  // complete, so a live stylus stroke never triggers a component render.
+  const pendingStrokeUndoRef = useRef<InkSnap | null>(null);
 
   function retainBoundedInkHistory(history: InkSnap[], newest: InkSnap): InkSnap[] {
     const next = [...history, newest];
-    let retainedBytes = next.reduce((total, entry) => total + entry.data.data.byteLength, 0);
+    let retainedBytes = next.reduce((total, entry) => total + entry.bytes, 0);
     let firstRetainedIndex = 0;
 
     // Discard oldest entries first, but always retain the just-created snapshot
@@ -980,7 +986,7 @@ export default function WhiteBoardPage() {
       next.length - firstRetainedIndex > 1 &&
       (next.length - firstRetainedIndex > MAX_INK_HISTORY_ENTRIES || retainedBytes > MAX_INK_HISTORY_BYTES)
     ) {
-      retainedBytes -= next[firstRetainedIndex].data.data.byteLength;
+      retainedBytes -= next[firstRetainedIndex].bytes;
       firstRetainedIndex += 1;
     }
 
@@ -1015,6 +1021,8 @@ export default function WhiteBoardPage() {
   const pdfSourceUrlRef = useRef<string | null>(null);
 
   const clipDragRef = useRef(false);
+  const clipPointerIdRef = useRef<number | null>(null);
+  const clipOverlayRectRef = useRef<DOMRect | null>(null);
   const clipStartRef = useRef<{ x: number; y: number } | null>(null);
   const [clipRect, setClipRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [snipMode, setSnipMode] = useState(false);
@@ -1110,37 +1118,20 @@ export default function WhiteBoardPage() {
   }, [classId]);
 
   function forceBoardRedraw() {
-    requestAnimationFrame(() => {
-      void redrawImages();
-      if (gridApplied) drawGridOverlay();
-      else if (axesApplied) drawAxesOverlay();
-    });
+    scheduleViewportRedraw();
   }
 
   function scheduleBoardVisualRedrawBurst() {
-    const redraw = () => {
-      void redrawImages();
-      if (gridApplied) drawGridOverlay();
-      else if (axesApplied) drawAxesOverlay();
-    };
-
-    requestAnimationFrame(() => {
-      redraw();
-      requestAnimationFrame(redraw);
-    });
-
-    window.setTimeout(redraw, 80);
-    window.setTimeout(redraw, 180);
-    window.setTimeout(redraw, 360);
+    // Fullscreen and resize events can arrive in a burst. One coalesced frame
+    // is sufficient and avoids repeatedly repainting every visible object.
+    scheduleViewportRedraw();
   }
 
   function scheduleViewportRedraw() {
     if (viewportRedrawRafRef.current != null) return;
     viewportRedrawRafRef.current = requestAnimationFrame(() => {
       viewportRedrawRafRef.current = null;
-      void redrawImages();
-      if (gridApplied) drawGridOverlay();
-      else if (axesApplied) drawAxesOverlay();
+      viewportVisualRedrawRef.current();
     });
   }
 
@@ -1454,11 +1445,10 @@ export default function WhiteBoardPage() {
   function endCalcDrag() {
     calcDragRef.current = null;
   }
-  function snapshotInkViewport(pad = 200) {
+  function snapshotInkViewport(pad = 200): InkSnap | null {
     const ink = inkCanvasRef.current;
-    const ctx = inkCtxRef.current;
     const container = containerRef.current;
-    if (!ink || !ctx || !container) return;
+    if (!ink || !container) return null;
 
     const dpr = getBoardDpr();
 
@@ -1473,13 +1463,35 @@ export default function WhiteBoardPage() {
     const yPx = Math.floor(yCss * dpr);
     const hPx = Math.max(1, Math.floor(hCss * dpr));
 
-    // Full width in pixels
+    return snapshotInkRegion(yPx, hPx);
+  }
+
+  function snapshotInkRegion(yPx: number, hPx: number): InkSnap | null {
+    const ink = inkCanvasRef.current;
+    if (!ink) return null;
+    const safeY = Math.max(0, Math.min(ink.height - 1, Math.floor(yPx)));
+    const safeH = Math.max(1, Math.min(ink.height - safeY, Math.floor(hPx)));
     const wPx = ink.width;
+    const snapshotCanvas = document.createElement("canvas");
+    snapshotCanvas.width = wPx;
+    snapshotCanvas.height = safeH;
+    const snapshotCtx = snapshotCanvas.getContext("2d");
+    if (!snapshotCtx) return null;
 
-    const snap = ctx.getImageData(0, yPx, wPx, hPx);
+    // Copy inside the canvas pipeline instead of synchronously reading pixels
+    // into JavaScript. On 4K panels this avoids a large getImageData readback
+    // in the first live pointer-move of every stroke.
+    snapshotCtx.drawImage(ink, 0, safeY, wPx, safeH, 0, 0, wPx, safeH);
+    return { y: safeY, h: safeH, canvas: snapshotCanvas, bytes: wPx * safeH * 4 };
+  }
 
-    const snapshot = { y: yPx, h: hPx, data: snap };
-    commitInkHistory(retainBoundedInkHistory(inkUndoStackRef.current, snapshot), []);
+  function restoreInkSnapshot(ctx: CanvasRenderingContext2D, snapshot: InkSnap) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.clearRect(0, snapshot.y, snapshot.canvas.width, snapshot.h);
+    ctx.drawImage(snapshot.canvas, 0, snapshot.y);
+    ctx.restore();
   }
 
   function snapshotObjects() {
@@ -1697,7 +1709,7 @@ export default function WhiteBoardPage() {
 
     // ✅ Resizing clears canvases → redraw snips + overlays
     if (!heightOnlyGrowth) {
-      void redrawImages();
+      scheduleViewportRedraw();
       if (gridApplied) drawGridOverlay();
       else if (axesApplied) drawAxesOverlay();
     } else {
@@ -1914,8 +1926,7 @@ export default function WhiteBoardPage() {
     );
   }
 
-  function getBoardCoordsFromClient(clientX: number, clientY: number) {
-    const rect = getBoardViewportRect();
+  function getBoardCoordsFromClient(clientX: number, clientY: number, rect = getBoardViewportRect()) {
     const width = getBoardWidthCss();
     if (!rect) return { x: 0, y: 0 };
     return {
@@ -1925,7 +1936,7 @@ export default function WhiteBoardPage() {
   }
 
   function getLocalXY(e: React.PointerEvent<HTMLCanvasElement>) {
-    return getBoardCoordsFromClient(e.clientX, e.clientY);
+    return getBoardCoordsFromClient(e.clientX, e.clientY, activeStrokeRectRef.current ?? undefined);
   }
 
   function pushBgUndo() {
@@ -1985,6 +1996,7 @@ export default function WhiteBoardPage() {
 
     const ctx = imgCanvas.getContext("2d");
     if (!ctx) return;
+    const redrawToken = ++imageRedrawTokenRef.current;
 
     const widthCss = getBoardWidthCss();
     const pad = 400;
@@ -2004,6 +2016,11 @@ export default function WhiteBoardPage() {
 
       try {
         const img = await getCachedImage(p.src);
+        // A fullscreen/resize can replace the backing canvas while an image is
+        // decoding. Do not paint a stale context after that transition.
+        if (redrawToken !== imageRedrawTokenRef.current || imgCanvasRef.current !== imgCanvas) {
+          return;
+        }
         ctx.drawImage(img, p.x, p.y, p.w, p.h);
         if (p.id === selectedImageId) {
           const handle = VISIBLE_RESIZE_HANDLE_SIZE;
@@ -2046,6 +2063,14 @@ export default function WhiteBoardPage() {
       } catch { }
     }
   }
+
+  // Event listeners registered once (fullscreen/viewport changes) must render
+  // the latest object and overlay state, not the state from their first render.
+  viewportVisualRedrawRef.current = () => {
+    void redrawImages();
+    if (gridApplied) drawGridOverlay();
+    else if (axesApplied) drawAxesOverlay();
+  };
   
   useEffect(() => {
     scheduleViewportRedraw();
@@ -2350,8 +2375,16 @@ export default function WhiteBoardPage() {
     const previewCtx = previewCtxRef.current;
     const container = containerRef.current;
     if (!inkCanvas || !container) return;
+    if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return;
+    if (drawingPointerIdRef.current != null) return;
 
-    inkCanvas.setPointerCapture(e.pointerId);
+    drawingPointerIdRef.current = e.pointerId;
+    // Reading layout on every stylus move is noticeably expensive on large
+    // panels. A board does not move during a captured stroke, so cache it.
+    activeStrokeRectRef.current = getBoardViewportRect();
+    try {
+      inkCanvas.setPointerCapture(e.pointerId);
+    } catch { }
 
     if (tool === "hand") {
       handDragRef.current = true;
@@ -2359,10 +2392,15 @@ export default function WhiteBoardPage() {
       return;
     }
 
-    if (!inkCtx) return;
+    if (!inkCtx) {
+      drawingPointerIdRef.current = null;
+      activeStrokeRectRef.current = null;
+      return;
+    }
 
     // Snapshot for undo (pen/eraser/line)
     snappedThisStrokeRef.current = false;
+    pendingStrokeUndoRef.current = null;
     drawingRef.current = true;
     const { x, y } = getLocalXY(e);
 
@@ -2413,21 +2451,32 @@ export default function WhiteBoardPage() {
     if (!container) return;
 
     if (tool === "hand") {
+      if (drawingPointerIdRef.current !== e.pointerId) return;
       if (!handDragRef.current || !handStartRef.current) return;
       const dy = e.clientY - handStartRef.current.y;
       container.scrollTop = handStartRef.current.scrollTop - dy;
       return;
     }
 
-    if (!drawingRef.current) return;
+    if (!drawingRef.current || drawingPointerIdRef.current !== e.pointerId) return;
 
     if (!snappedThisStrokeRef.current) {
       snappedThisStrokeRef.current = true;
-      snapshotInkViewport();
+      pendingStrokeUndoRef.current = snapshotInkViewport();
       markDirty();
     }
 
-    const { x, y } = getLocalXY(e);
+    const nativeEvent = e.nativeEvent as PointerEvent & {
+      getCoalescedEvents?: () => PointerEvent[];
+    };
+    const coalesced = nativeEvent.getCoalescedEvents?.() ?? [nativeEvent];
+    const points = coalesced.length ? coalesced : [nativeEvent];
+    const lastPoint = points[points.length - 1];
+    const { x, y } = getBoardCoordsFromClient(
+      lastPoint.clientX,
+      lastPoint.clientY,
+      activeStrokeRectRef.current ?? undefined
+    );
 
     // LINE TOOL: draw ONLY on preview canvas while moving
     if (tool === "line") {
@@ -2447,15 +2496,31 @@ export default function WhiteBoardPage() {
 
     // Eraser stays as-is (straight segments are fine)
     if (tool === "eraser") {
-      inkCtx.lineTo(x, y);
+      for (const point of points) {
+        const next = getBoardCoordsFromClient(
+          point.clientX,
+          point.clientY,
+          activeStrokeRectRef.current ?? undefined
+        );
+        inkCtx.lineTo(next.x, next.y);
+      }
       inkCtx.stroke();
       return;
     }
 
     // Pen smoothing: quadratic midpoint curve
     if (tool === "pen") {
-      // Buffer points; actual drawing happens in flushPen() at most once per frame
-      penPendingRef.current.push({ x, y });
+      // Preserve high-rate pen samples while still painting at most once per
+      // animation frame. Browsers without coalesced events keep the old path.
+      for (const point of points) {
+        penPendingRef.current.push(
+          getBoardCoordsFromClient(
+            point.clientX,
+            point.clientY,
+            activeStrokeRectRef.current ?? undefined
+          )
+        );
+      }
 
       if (penRafRef.current == null) {
         penRafRef.current = requestAnimationFrame(flushPen);
@@ -2474,6 +2539,7 @@ export default function WhiteBoardPage() {
     const previewCtx = previewCtxRef.current;
     const container = containerRef.current;
     if (!inkCanvas || !container) return;
+    if (drawingPointerIdRef.current !== e.pointerId) return;
 
     // Commit line to ink on release
     if (tool === "line") {
@@ -2509,11 +2575,20 @@ export default function WhiteBoardPage() {
     // can read or restore the ink canvas.
     if (tool === "pen") flushPen();
 
+    const undoSnapshot = pendingStrokeUndoRef.current;
+    if (snappedThisStrokeRef.current && undoSnapshot) {
+      commitInkHistory(retainBoundedInkHistory(inkUndoStackRef.current, undoSnapshot), []);
+    }
+    pendingStrokeUndoRef.current = null;
+    snappedThisStrokeRef.current = false;
+
     try {
       inkCanvas.releasePointerCapture(e.pointerId);
     } catch { }
 
     penPrevRef.current = null;
+    drawingPointerIdRef.current = null;
+    activeStrokeRectRef.current = null;
 
   };
 
@@ -2556,11 +2631,12 @@ export default function WhiteBoardPage() {
     const prev = undoHistory[undoHistory.length - 1];
 
     // Save the current region into redo, then restore the pre-action pixels.
-    const curImg = ctx.getImageData(0, prev.y, ink.width, prev.h);
-    ctx.putImageData(prev.data, 0, prev.y);
+    const current = snapshotInkRegion(prev.y, prev.h);
+    if (!current) return;
+    restoreInkSnapshot(ctx, prev);
     commitInkHistory(undoHistory.slice(0, -1), [
       ...inkRedoStackRef.current,
-      { y: prev.y, h: prev.h, data: curImg },
+      current,
     ]);
   }
 
@@ -2575,10 +2651,11 @@ export default function WhiteBoardPage() {
     const next = redoHistory[redoHistory.length - 1];
 
     // Save the current region into undo, then restore the redone pixels.
-    const curImg = ctx.getImageData(0, next.y, ink.width, next.h);
-    ctx.putImageData(next.data, 0, next.y);
+    const current = snapshotInkRegion(next.y, next.h);
+    if (!current) return;
+    restoreInkSnapshot(ctx, next);
     commitInkHistory(
-      retainBoundedInkHistory(inkUndoStackRef.current, { y: next.y, h: next.h, data: curImg }),
+      retainBoundedInkHistory(inkUndoStackRef.current, current),
       redoHistory.slice(0, -1)
     );
   }
@@ -2987,30 +3064,18 @@ export default function WhiteBoardPage() {
     if (!importedPdf || !showPdfPanel) return;
 
     let rafId: number | null = null;
-    let tId: number | null = null;
     let ro: ResizeObserver | null = null;
 
     const schedule = () => {
       if (rafId != null) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        if (tId != null) window.clearTimeout(tId);
-        tId = window.setTimeout(() => {
-          renderPdfToViewer(pdfPageNum);
-        }, 60);
+        rafId = null;
+        void renderPdfToViewer(pdfPageNum);
       });
     };
 
     const onResize = () => schedule();
-    const onFs = () => {
-      schedule();
-      // ✅ keepalive burst (panels can miss resize events)
-      let n = 0;
-      const burst = window.setInterval(() => {
-        n += 1;
-        renderPdfToViewer(pdfPageNum);
-        if (n >= 10) window.clearInterval(burst);
-      }, 120);
-    };
+    const onFs = () => schedule();
 
     window.addEventListener("resize", onResize);
     window.addEventListener("orientationchange", onResize);
@@ -3032,7 +3097,6 @@ export default function WhiteBoardPage() {
       document.removeEventListener("fullscreenchange", onFs);
       window.visualViewport?.removeEventListener("resize", onResize);
       if (rafId != null) cancelAnimationFrame(rafId);
-      if (tId != null) window.clearTimeout(tId);
       ro?.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3058,11 +3122,12 @@ export default function WhiteBoardPage() {
       const page = await pdf.getPage(1);
 
       const width = getBoardWidthCss();
-      const viewport0 = page.getViewport({ scale: 1.0 });
+      const rotation = Number.isFinite(page.rotate) ? page.rotate : 0;
+      const viewport0 = page.getViewport({ scale: 1.0, rotation });
       const fitScale = (width / viewport0.width) * pdfInsertScale;
       const dpr = getPdfRenderDpr();
-      const viewportCss = page.getViewport({ scale: fitScale });          // size you want on the board
-      const viewportHiDpi = page.getViewport({ scale: fitScale * dpr });  // extra pixels for sharpness
+      const viewportCss = page.getViewport({ scale: fitScale, rotation });          // size you want on the board
+      const viewportHiDpi = page.getViewport({ scale: fitScale * dpr, rotation });  // extra pixels for sharpness
 
       const tmp = document.createElement("canvas");
       tmp.width = Math.floor(viewportHiDpi.width);
@@ -3072,6 +3137,7 @@ export default function WhiteBoardPage() {
       if (!tmpCtx) throw new Error("Could not render PDF");
 
       // render at higher resolution
+      resetPdfRenderContext(tmpCtx, tmp);
       await page.render({ canvasContext: tmpCtx, viewport: viewportHiDpi }).promise;
 
       // IMPORTANT: keep your placed image size in CSS pixels (so it doesn't appear huge)
@@ -3152,6 +3218,16 @@ export default function WhiteBoardPage() {
     return blobUrl;
   }
 
+  function resetPdfRenderContext(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
+    // PDF canvases can be reused across page, zoom and fullscreen renders.
+    // Always start from a known bitmap and transform; PDF.js supplies the page
+    // rotation through the viewport rather than inheriting canvas state.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
   async function renderPdfToViewer(pageNum: number) {
     if (!importedPdf) return;
 
@@ -3166,28 +3242,8 @@ export default function WhiteBoardPage() {
     const parentW = viewer.clientWidth;
     const parentH = viewer.clientHeight;
     if (parentW < 20 || parentH < 20) {
-      // Fullscreen/tablet/orientation transitions often make the panel 0px temporarily.
-      // Retry a few times so the PDF reappears once layout stabilises.
-      const tries = 10;
-      let n = 0;
-
-      const retry = () => {
-        n += 1;
-
-        const c = pdfCanvasRef.current;
-        const v = pdfViewerRef.current;
-        if (!c || !v) return;
-
-        if (v.clientWidth >= 20 && v.clientHeight >= 20) {
-          renderPdfToViewer(pageNum);
-          return;
-        }
-        if (n < tries) {
-          setTimeout(retry, 80);
-        }
-      };
-
-      setTimeout(retry, 80);
+      // ResizeObserver schedules the next render once the panel has a usable
+      // layout. Avoid clearing or repeatedly retrying a zero-sized canvas.
       return;
     }
 
@@ -3210,14 +3266,17 @@ export default function WhiteBoardPage() {
 
     const p = Math.max(1, Math.min(pageNum, pdf.numPages));
     const page = await pdf.getPage(p);
+    if (token !== pdfRenderTokenRef.current) return;
 
     // Fit to panel width but keep your zoom control (pdfViewScale)
-    const viewport1 = page.getViewport({ scale: 1 });
+    const rotation = Number.isFinite(page.rotate) ? page.rotate : 0;
+    const viewport1 = page.getViewport({ scale: 1, rotation });
     const fitScale = (parentW / viewport1.width) * pdfViewScale;
 
     const dpr = getPdfRenderDpr();
-    const viewportCss = page.getViewport({ scale: fitScale });
-    const viewportHiDpi = page.getViewport({ scale: fitScale * dpr });
+    const viewportCss = page.getViewport({ scale: fitScale, rotation });
+    const viewportHiDpi = page.getViewport({ scale: fitScale * dpr, rotation });
+    if (token !== pdfRenderTokenRef.current) return;
 
     canvas.style.width = `${Math.floor(viewportCss.width)}px`;
     canvas.style.height = `${Math.floor(viewportCss.height)}px`;
@@ -3229,9 +3288,9 @@ export default function WhiteBoardPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    resetPdfRenderContext(ctx, canvas);
 
+    if (token !== pdfRenderTokenRef.current) return;
     await page.render({ canvasContext: ctx, viewport: viewportHiDpi }).promise;
 
     if (token !== pdfRenderTokenRef.current) return;
@@ -3264,23 +3323,30 @@ export default function WhiteBoardPage() {
     };
   }, []);
 
-  function overlayXY(e: React.PointerEvent) {
+  function overlayXY(e: React.PointerEvent, rect = clipOverlayRectRef.current) {
     const el = pdfOverlayRef.current;
-    if (!el) return { x: 0, y: 0 };
-    const r = el.getBoundingClientRect();
+    const r = rect ?? el?.getBoundingClientRect();
+    if (!r) return { x: 0, y: 0 };
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
   const onClipDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    // only left click / primary touch
-    if (e.pointerType === "mouse" && e.button !== 0) return;
+    // One captured primary pointer prevents pen hover/compatibility events from
+    // starting or completing a second snip selection.
+    if (!e.isPrimary || clipPointerIdRef.current != null) return;
+    if (e.pointerType === "mouse" && (e.button !== 0 || (e.buttons & 1) === 0)) return;
+    if (e.pointerType === "pen" && e.button !== 0) return;
 
     e.preventDefault();
 
     // capture pointer so move events keep firing even if pointer leaves overlay
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch { }
 
     clipDragRef.current = true;
+    clipPointerIdRef.current = e.pointerId;
+    clipOverlayRectRef.current = e.currentTarget.getBoundingClientRect();
     const p = overlayXY(e);
     clipStartRef.current = p;
 
@@ -3288,7 +3354,13 @@ export default function WhiteBoardPage() {
   };
 
   const onClipMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!clipDragRef.current || !clipStartRef.current) return;
+    if (
+      !clipDragRef.current ||
+      !clipStartRef.current ||
+      clipPointerIdRef.current !== e.pointerId
+    ) return;
+    // A pen hover move has no active button and must not be treated as a drag.
+    if ((e.pointerType === "mouse" || e.pointerType === "pen") && (e.buttons & 1) === 0) return;
     e.preventDefault();
 
     const p = overlayXY(e);
@@ -3303,14 +3375,28 @@ export default function WhiteBoardPage() {
   };
 
   const onClipUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (clipPointerIdRef.current !== e.pointerId) return;
     e.preventDefault();
 
     clipDragRef.current = false;
     clipStartRef.current = null;
+    clipPointerIdRef.current = null;
+    clipOverlayRectRef.current = null;
 
     try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
     } catch { }
+  };
+
+  const onClipCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (clipPointerIdRef.current !== e.pointerId) return;
+    clipDragRef.current = false;
+    clipStartRef.current = null;
+    clipPointerIdRef.current = null;
+    clipOverlayRectRef.current = null;
+    setClipRect(null);
   };
 
 
@@ -3889,7 +3975,6 @@ export default function WhiteBoardPage() {
                     onPointerMove={drawStroke}
                     onPointerUp={endStroke}
                     onPointerCancel={endStroke}
-                    onPointerLeave={endStroke}
                     style={{ cursor: tool === "hand" ? "grab" : "crosshair" }}
                   />
 
@@ -4037,7 +4122,8 @@ export default function WhiteBoardPage() {
                         onPointerDown={snipMode ? onClipDown : undefined}
                         onPointerMove={snipMode ? onClipMove : undefined}
                         onPointerUp={snipMode ? onClipUp : undefined}
-                        onPointerCancel={snipMode ? onClipUp : undefined}
+                        onPointerCancel={snipMode ? onClipCancel : undefined}
+                        onLostPointerCapture={snipMode ? onClipCancel : undefined}
                       >
                         {clipRect && (
                           <div
