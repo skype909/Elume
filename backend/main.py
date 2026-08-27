@@ -11545,6 +11545,21 @@ def student_download_post_attachment(
 # =========================================================
 EXAM_PREFIX = "EXAM: "
 NOTES_PREFIX = "NOTES: "
+AUDIO_NOTES_TOPIC_NAME = "audio"
+ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
+ALLOWED_AUDIO_MIME_TYPES = {
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/x-pn-wav",
+    "audio/mp4",
+    "audio/x-m4a",
+    "audio/aac",
+    "audio/ogg",
+    "application/ogg",
+}
 
 
 def strip_prefix(name: str) -> str:
@@ -11553,6 +11568,18 @@ def strip_prefix(name: str) -> str:
     if name.startswith(NOTES_PREFIX):
         return name[len(NOTES_PREFIX) :]
     return name
+
+
+def _validate_audio_upload(file: UploadFile) -> None:
+    """Keep the shared Notes Audio category limited to browser-playable audio."""
+    filename = (file.filename or "").strip()
+    extension = Path(filename).suffix.lower()
+    content_type = (file.content_type or "").lower().split(";", 1)[0].strip()
+    if extension not in ALLOWED_AUDIO_EXTENSIONS or content_type not in ALLOWED_AUDIO_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Audio files must be MP3, WAV, M4A, AAC, or OGG with a matching audio MIME type.",
+        )
 
 
 @app.get("/topics/{class_id}", response_model=List[schemas.TopicOut])
@@ -11662,6 +11689,7 @@ def upload_note(
     class_id: int = Form(...),
     topic_id: int = Form(...),
     file: UploadFile = File(...),
+    media_type: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
@@ -11671,6 +11699,13 @@ def upload_note(
         raise HTTPException(status_code=404, detail="Topic not found")
     if topic.class_id != class_id:
         raise HTTPException(status_code=400, detail="Topic does not belong to this class")
+
+    normalized_media_type = (media_type or "").strip().lower()
+    if normalized_media_type and normalized_media_type != "audio":
+        raise HTTPException(status_code=400, detail="Unsupported media type")
+    is_audio_topic = strip_prefix(topic.name).strip().casefold() == AUDIO_NOTES_TOPIC_NAME
+    if normalized_media_type == "audio" or is_audio_topic:
+        _validate_audio_upload(file)
 
     incoming_size_bytes = _measure_upload_size(file)
     _ensure_storage_available(user, incoming_size_bytes)

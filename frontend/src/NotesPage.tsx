@@ -5,6 +5,21 @@ import { BackToClassButton, ClassPageActionBar } from "./ClassPageActions";
 
 const API_BASE = "/api";
 const META_KEY = "elume_class_layout_v1";
+const AUDIO_TOPIC_NAME = "Audio";
+const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg"]);
+const AUDIO_MIME_TYPES = new Set([
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/x-pn-wav",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/aac",
+  "audio/ogg",
+  "application/ogg",
+]);
 
 type ClassItem = {
   id: number;
@@ -36,6 +51,14 @@ function getFileExtension(name: string) {
   const dot = trimmed.lastIndexOf(".");
   if (dot < 0) return "";
   return trimmed.slice(dot).toLowerCase();
+}
+
+function isAudioTopicName(name: string) {
+  return name.trim().toLocaleLowerCase() === AUDIO_TOPIC_NAME.toLocaleLowerCase();
+}
+
+function isSupportedAudioFile(file: File) {
+  return AUDIO_EXTENSIONS.has(getFileExtension(file.name)) && AUDIO_MIME_TYPES.has((file.type || "").toLowerCase());
 }
 
 function buildNotesUploadWarning(files: File[]) {
@@ -254,6 +277,13 @@ export default function NotesPage() {
 
   const cols = getTileCols(topicCards.length || 1);
   const uploadWarning = useMemo(() => buildNotesUploadWarning(pickedFiles), [pickedFiles]);
+  const uploadTopic = useMemo(
+    () => (uploadMode === "existing" ? topics.find((topic) => topic.id === uploadTopicId) || null : null),
+    [topics, uploadMode, uploadTopicId]
+  );
+  const isAudioUpload = uploadMode === "existing"
+    ? Boolean(uploadTopic && isAudioTopicName(uploadTopic.name))
+    : isAudioTopicName(newTopicName.trim());
 
   async function createTopicIfNeeded(): Promise<number> {
     if (uploadMode === "existing") {
@@ -285,6 +315,10 @@ export default function NotesPage() {
       setError(`You can upload up to ${MAX_NOTES_UPLOAD_FILES} files at a time.`);
       return;
     }
+    if (isAudioUpload && pickedFiles.some((file) => !isSupportedAudioFile(file))) {
+      setError("Audio accepts MP3, WAV, M4A, AAC, and OGG files with a matching audio type.");
+      return;
+    }
 
     try {
       setBusy(true);
@@ -297,6 +331,7 @@ export default function NotesPage() {
         fd.append("class_id", String(classId));
         fd.append("topic_id", String(topicId));
         fd.append("file", file);
+        if (isAudioUpload) fd.append("media_type", "audio");
 
         await apiFetch(`${API_BASE}/notes/upload`, {
           method: "POST",
@@ -404,10 +439,39 @@ export default function NotesPage() {
     setUploadFileLimitWarning(null);
   }
 
+  async function openAudioLibrary() {
+    if (!validClassId) return;
+    const existing = topics.find((topic) => isAudioTopicName(topic.name));
+    if (existing) {
+      setSelectedTopicId(existing.id);
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setError(null);
+      const created = (await apiFetch(`${API_BASE}/topics?kind=notes`, {
+        method: "POST",
+        body: { class_id: classId, name: AUDIO_TOPIC_NAME },
+      })) as TopicItem;
+      setTopics((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setSelectedTopicId(created.id);
+    } catch (e: any) {
+      setError(e?.message || "Could not open the Audio library");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function handlePickedFilesChange(nextFiles: File[]) {
     if (nextFiles.length > MAX_NOTES_UPLOAD_FILES) {
       setPickedFiles(nextFiles.slice(0, MAX_NOTES_UPLOAD_FILES));
       setUploadFileLimitWarning(`You can upload up to ${MAX_NOTES_UPLOAD_FILES} files at a time. Only the first ${MAX_NOTES_UPLOAD_FILES} files have been selected.`);
+      return;
+    }
+    if (isAudioUpload && nextFiles.some((file) => !isSupportedAudioFile(file))) {
+      setPickedFiles([]);
+      setUploadFileLimitWarning("Audio accepts MP3, WAV, M4A, AAC, and OGG files with a matching audio type.");
       return;
     }
     setPickedFiles(nextFiles);
@@ -463,6 +527,15 @@ export default function NotesPage() {
               ) : (
                 <span />
               )}
+
+              <button
+                type="button"
+                onClick={() => void openAudioLibrary()}
+                className="rounded-xl border-2 border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+                disabled={busy}
+              >
+                Audio Library
+              </button>
 
               <button
                 type="button"
@@ -619,14 +692,16 @@ export default function NotesPage() {
               <div className="rounded-3xl border-2 border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
                 <div className="text-lg font-bold text-slate-800">No files in this category yet</div>
                 <div className="mt-2 text-sm text-slate-600">
-                  Upload files into {selectedTopic.name} to start building the set.
+                  {isAudioTopicName(selectedTopic.name)
+                    ? "Upload MP3, WAV, M4A, AAC, or OGG files for Whiteboard playback."
+                    : `Upload files into ${selectedTopic.name} to start building the set.`}
                 </div>
                 <button
                   type="button"
                   onClick={() => openUploadForTopic(selectedTopic.id)}
                   className="mt-5 rounded-2xl border-2 border-slate-900 bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
                 >
-                  Upload files
+                  {isAudioTopicName(selectedTopic.name) ? "Upload audio" : "Upload files"}
                 </button>
               </div>
             ) : (
@@ -768,14 +843,21 @@ export default function NotesPage() {
 
               <div>
                 <label className="mb-2 block text-sm font-bold text-slate-700">
-                  Files
+                  {isAudioUpload ? "Audio files" : "Files"}
                 </label>
+
+                {isAudioUpload && (
+                  <div className="mb-2 text-sm text-slate-600">
+                    MP3, WAV, M4A, AAC, and OGG only. Files are stored in this class&apos;s protected Audio category.
+                  </div>
+                )}
 
                   <input
                     ref={fileInputRef}
                     type="file"
                     multiple
                     className="hidden"
+                    accept={isAudioUpload ? "audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,audio/aac,audio/ogg,.mp3,.wav,.m4a,.aac,.ogg" : undefined}
                     onChange={(e) => handlePickedFilesChange(Array.from(e.target.files || []))}
                   />
 
@@ -784,7 +866,7 @@ export default function NotesPage() {
                   onClick={() => fileInputRef.current?.click()}
                   className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-100"
                 >
-                  Choose files
+                  {isAudioUpload ? "Choose audio files" : "Choose files"}
                 </button>
 
                 {pickedFiles.length > 0 && (

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { apiFetch } from "./api";
+import { apiFetch, apiFetchBlob } from "./api";
 import {
   EXAM_LIBRARY_CYCLES,
   EXAM_LIBRARY_SUBJECTS,
@@ -12,6 +12,21 @@ import {
 } from "./examLibrary";
 
 const API_BASE = "/api";
+const AUDIO_TOPIC_NAME = "audio";
+const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg"]);
+const AUDIO_MIME_TYPES = new Set([
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/x-pn-wav",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/aac",
+  "audio/ogg",
+  "application/ogg",
+]);
 
 function resolveFileUrl(u: string) {
   if (!u) return "";
@@ -20,6 +35,53 @@ function resolveFileUrl(u: string) {
   if (u.startsWith("/api/")) return u;
   if (u.startsWith("/")) return `${API_BASE}${u}`;
   return `${API_BASE}/${u}`;
+}
+
+function isAudioTopicName(name: string) {
+  return name.trim().toLocaleLowerCase() === AUDIO_TOPIC_NAME;
+}
+
+function getFileExtension(name: string) {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+function isSupportedAudioFile(file: File) {
+  return AUDIO_EXTENSIONS.has(getFileExtension(file.name)) && AUDIO_MIME_TYPES.has((file.type || "").toLowerCase());
+}
+
+function getYouTubeEmbedUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl.trim());
+    const hostname = url.hostname.toLowerCase().replace(/^(www\.|m\.)/, "");
+    let videoId = "";
+
+    if (hostname === "youtu.be") {
+      videoId = url.pathname.split("/").filter(Boolean)[0] ?? "";
+    } else if (hostname === "youtube.com") {
+      if (url.pathname === "/watch") {
+        videoId = url.searchParams.get("v") ?? "";
+      } else {
+        const match = url.pathname.match(/^\/(?:embed|shorts)\/([^/?#]+)/);
+        videoId = match?.[1] ?? "";
+      }
+    }
+
+    // YouTube video IDs are 11 URL-safe characters. Rejecting anything else
+    // keeps the iframe limited to a known YouTube embed, never arbitrary HTML.
+    if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
+    return `https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1`;
+  } catch {
+    return null;
+  }
+}
+
+function formatMediaTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const wholeSeconds = Math.floor(seconds);
+  const minutes = Math.floor(wholeSeconds / 60);
+  const remainingSeconds = wholeSeconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
 type Tool = "pen" | "eraser" | "line" | "hand";
@@ -33,6 +95,12 @@ type NoteItem = {
   whiteboard_state_id?: number | null;
   uploaded_at: string;
   topic_name: string;
+};
+
+type TopicItem = {
+  id: number;
+  class_id: number;
+  name: string;
 };
 
 type SharedExamImportItem = {
@@ -960,6 +1028,34 @@ export default function WhiteBoardPage() {
   const [examLibraryLevel, setExamLibraryLevel] = useState<string>("");
   const [importedPdf, setImportedPdf] = useState<{ kind: "notes" | "exam" | "exam-library" | "formula-booklet"; item: NoteItem | SharedExamImportItem } | null>(null);
   const [showPdfPanel, setShowPdfPanel] = useState(true);
+
+  // Classroom media is intentionally UI-only. It never enters the whiteboard
+  // canvas, persistence, undo history, or PDF/snipping state.
+  const audioUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const audioObjectUrlRef = useRef<string | null>(null);
+  const [audioSource, setAudioSource] = useState<string | null>(null);
+  const [audioName, setAudioName] = useState("");
+  const [audioCollapsed, setAudioCollapsed] = useState(false);
+  const [audioPlaying, setAudioPlaying] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioVolume, setAudioVolume] = useState(1);
+  const [audioPlaybackRate, setAudioPlaybackRate] = useState(1);
+  const [showAudioLibrary, setShowAudioLibrary] = useState(false);
+  const [audioLibraryLoading, setAudioLibraryLoading] = useState(false);
+  const [audioLibraryError, setAudioLibraryError] = useState<string | null>(null);
+  const [audioLibraryFiles, setAudioLibraryFiles] = useState<NoteItem[]>([]);
+  const [audioLibrarySearch, setAudioLibrarySearch] = useState("");
+  const [audioUploadFile, setAudioUploadFile] = useState<File | null>(null);
+  const [audioUploadBusy, setAudioUploadBusy] = useState(false);
+  const [audioSelectingId, setAudioSelectingId] = useState<number | null>(null);
+
+  const [showVideoModal, setShowVideoModal] = useState(false);
+  const [youtubeUrlDraft, setYoutubeUrlDraft] = useState("");
+  const [youtubeUrlError, setYoutubeUrlError] = useState<string | null>(null);
+  const [youtubeEmbedUrl, setYoutubeEmbedUrl] = useState<string | null>(null);
+  const [showVideoPanel, setShowVideoPanel] = useState(false);
 
   // Insert PDF as image controls
   const [pdfInsertScale, setPdfInsertScale] = useState(1.0);
@@ -2977,6 +3073,172 @@ export default function WhiteBoardPage() {
       setSaving(false);
     }
   }
+
+  function revokeAudioObjectUrl() {
+    if (audioObjectUrlRef.current) {
+      URL.revokeObjectURL(audioObjectUrlRef.current);
+      audioObjectUrlRef.current = null;
+    }
+  }
+
+  function closeAudioPlayer() {
+    const audio = audioElementRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    revokeAudioObjectUrl();
+    setAudioSource(null);
+    setAudioName("");
+    setAudioPlaying(false);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+    setAudioCollapsed(false);
+  }
+
+  function setAudioPlayerSource(source: string, filename: string) {
+    const audio = audioElementRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    revokeAudioObjectUrl();
+    audioObjectUrlRef.current = source;
+    setAudioSource(source);
+    setAudioName(filename);
+    setAudioPlaying(false);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+    setAudioCollapsed(false);
+  }
+
+  async function loadAudioLibrary() {
+    if (!Number.isFinite(classId) || classId <= 0) return;
+    setAudioLibraryLoading(true);
+    setAudioLibraryError(null);
+    try {
+      const [topics, notes] = (await Promise.all([
+        apiFetch(`${API_BASE}/topics/${classId}?kind=notes`),
+        apiFetch(`${API_BASE}/notes/${classId}?kind=notes`),
+      ])) as [TopicItem[], NoteItem[]];
+      const audioTopicIds = new Set(
+        (Array.isArray(topics) ? topics : []).filter((topic) => isAudioTopicName(topic.name)).map((topic) => topic.id)
+      );
+      setAudioLibraryFiles(
+        (Array.isArray(notes) ? notes : []).filter((note) => audioTopicIds.has(note.topic_id))
+      );
+    } catch (e: any) {
+      setAudioLibraryFiles([]);
+      setAudioLibraryError(e?.message || "Could not load the Audio library.");
+    } finally {
+      setAudioLibraryLoading(false);
+    }
+  }
+
+  function openAudioLibrary() {
+    setAudioLibrarySearch("");
+    setAudioUploadFile(null);
+    setAudioLibraryError(null);
+    setShowAudioLibrary(true);
+    void loadAudioLibrary();
+  }
+
+  async function selectAudioLibraryFile(note: NoteItem) {
+    try {
+      setAudioSelectingId(note.id);
+      setAudioLibraryError(null);
+      // The existing protected Notes endpoint needs the current bearer token,
+      // so create a temporary object URL from its authenticated response.
+      const blob = await apiFetchBlob(resolveFileUrl(note.file_url), { method: "GET" });
+      setAudioPlayerSource(URL.createObjectURL(blob), note.filename);
+      setShowAudioLibrary(false);
+    } catch (e: any) {
+      setAudioLibraryError(e?.message || "Could not load that audio file.");
+    } finally {
+      setAudioSelectingId(null);
+    }
+  }
+
+  async function uploadAudioToLibrary() {
+    const file = audioUploadFile;
+    if (!file) {
+      setAudioLibraryError("Choose an audio file first.");
+      return;
+    }
+    if (!isSupportedAudioFile(file)) {
+      setAudioLibraryError("Audio accepts MP3, WAV, M4A, AAC, and OGG files with a matching audio type.");
+      return;
+    }
+    try {
+      setAudioUploadBusy(true);
+      setAudioLibraryError(null);
+      const topics = (await apiFetch(`${API_BASE}/topics/${classId}?kind=notes`)) as TopicItem[];
+      let audioTopic = (Array.isArray(topics) ? topics : []).find((topic) => isAudioTopicName(topic.name));
+      if (!audioTopic) {
+        audioTopic = (await apiFetch(`${API_BASE}/topics?kind=notes`, {
+          method: "POST",
+          body: { class_id: classId, name: "Audio" },
+        })) as TopicItem;
+      }
+      const form = new FormData();
+      form.append("class_id", String(classId));
+      form.append("topic_id", String(audioTopic.id));
+      form.append("media_type", "audio");
+      form.append("file", file);
+      await apiFetch(`${API_BASE}/notes/upload`, { method: "POST", body: form });
+      setAudioUploadFile(null);
+      await loadAudioLibrary();
+    } catch (e: any) {
+      setAudioLibraryError(e?.message || "Could not upload that audio file.");
+    } finally {
+      setAudioUploadBusy(false);
+    }
+  }
+
+  function toggleAudioPlayback() {
+    const audio = audioElementRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      void audio.play().catch(() => setAudioPlaying(false));
+    } else {
+      audio.pause();
+    }
+  }
+
+  function restartAudio() {
+    const audio = audioElementRef.current;
+    if (!audio) return;
+    audio.currentTime = 0;
+    void audio.play().catch(() => setAudioPlaying(false));
+  }
+
+  function updateAudioPlaybackRate(rate: number) {
+    const audio = audioElementRef.current;
+    if (audio) audio.playbackRate = rate;
+    setAudioPlaybackRate(rate);
+  }
+
+  function openYoutubePanel() {
+    const embedUrl = getYouTubeEmbedUrl(youtubeUrlDraft);
+    if (!embedUrl) {
+      setYoutubeUrlError("Paste a valid YouTube link from youtube.com or youtu.be.");
+      return;
+    }
+    setYoutubeEmbedUrl(embedUrl);
+    setYoutubeUrlError(null);
+    setShowVideoModal(false);
+    setShowVideoPanel(true);
+    setShowPdfPanel(false);
+    stabilizeBoardGeometryIfNeeded();
+  }
+
+  useEffect(() => {
+    return () => revokeAudioObjectUrl();
+    // Object URLs are owned only by this media control and are revoked on unmount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ---------- Import list ---------- */
   async function loadImportList() {
     setImportLoading(true);
@@ -3061,6 +3323,7 @@ export default function WhiteBoardPage() {
       },
     });
     stabilizeBoardGeometryIfNeeded();
+    setShowVideoPanel(false);
     setShowPdfPanel(true);
   }
 
@@ -3891,6 +4154,23 @@ export default function WhiteBoardPage() {
               Formula Booklet
             </button>
             <button
+              type="button"
+              className={pill}
+              onClick={openAudioLibrary}
+            >
+              Audio
+            </button>
+            <button
+              type="button"
+              className={pill}
+              onClick={() => {
+                setYoutubeUrlError(null);
+                setShowVideoModal(true);
+              }}
+            >
+              Video
+            </button>
+            <button
               className={pill}
               type="button"
               onClick={() => requestLeave(`/class/${classId}`)}
@@ -3981,6 +4261,7 @@ export default function WhiteBoardPage() {
                 className={pill}
                 onClick={() => {
                   stabilizeBoardGeometryIfNeeded();
+                  setShowVideoPanel(false);
                   setShowPdfPanel((v) => !v);
                 }}
               >
@@ -4064,7 +4345,7 @@ export default function WhiteBoardPage() {
             </div>
 
             {/* RIGHT: PDF snipping viewer */}
-            {importedPdf && showPdfPanel && (
+            {importedPdf && showPdfPanel && !showVideoPanel && (
               <div className="w-[44%] max-w-[720px] min-w-[360px]">
                 <div className="h-[70vh] overflow-hidden rounded-2xl border-2 border-slate-200 bg-white flex flex-col">
                   {/* Header */}
@@ -4211,6 +4492,51 @@ export default function WhiteBoardPage() {
                 </div>
               </div>
             )}
+
+            {youtubeEmbedUrl && showVideoPanel && (
+              <div className="w-[44%] max-w-[720px] min-w-[360px]">
+                <div className="h-[70vh] overflow-hidden rounded-2xl border-2 border-slate-200 bg-white flex flex-col">
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-800">YouTube video</div>
+                      <div className="text-xs text-slate-600">Keep writing while the video plays.</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-xs hover:bg-slate-50"
+                        onClick={() => {
+                          setYoutubeUrlError(null);
+                          setShowVideoModal(true);
+                        }}
+                      >
+                        Change
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-xs hover:bg-slate-50"
+                        onClick={() => setShowVideoPanel(false)}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex-1 min-h-0 bg-slate-950 p-3">
+                    <iframe
+                      className="h-full w-full rounded-xl bg-black"
+                      src={youtubeEmbedUrl}
+                      title="YouTube video for class"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      allowFullScreen
+                      referrerPolicy="strict-origin-when-cross-origin"
+                    />
+                  </div>
+                  <div className="border-t border-slate-200 px-3 py-2 text-xs text-slate-600">
+                    If the owner has disabled embedding, open the video directly on YouTube.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Calculator Widget */}
@@ -4334,6 +4660,240 @@ export default function WhiteBoardPage() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {audioSource && (
+            <div className="fixed bottom-4 left-4 z-[70] w-[min(460px,calc(100vw-2rem))] rounded-2xl border-2 border-emerald-200 bg-white/95 p-3 shadow-xl backdrop-blur">
+              <audio
+                ref={audioElementRef}
+                src={audioSource}
+                preload="metadata"
+                onLoadedMetadata={(e) => setAudioDuration(e.currentTarget.duration)}
+                onDurationChange={(e) => setAudioDuration(e.currentTarget.duration)}
+                onTimeUpdate={(e) => setAudioCurrentTime(e.currentTarget.currentTime)}
+                onPlay={() => setAudioPlaying(true)}
+                onPause={() => setAudioPlaying(false)}
+                onEnded={() => setAudioPlaying(false)}
+              />
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-emerald-700">Audio</div>
+                  <div className="truncate text-sm font-semibold text-slate-800">{audioName}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+                    onClick={() => setAudioCollapsed((collapsed) => !collapsed)}
+                  >
+                    {audioCollapsed ? "Expand" : "Minimise"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+                    onClick={closeAudioPlayer}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              {!audioCollapsed && (
+                <div className="mt-3 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-xl border-2 border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+                      onClick={toggleAudioPlayback}
+                    >
+                      {audioPlaying ? "Pause" : "Play"}
+                    </button>
+                    <button type="button" className={pill} onClick={restartAudio}>
+                      Restart
+                    </button>
+                    <span className="text-xs tabular-nums text-slate-600">
+                      {formatMediaTime(audioCurrentTime)} / {formatMediaTime(audioDuration)}
+                    </span>
+                  </div>
+                  <input
+                    className="w-full accent-emerald-600"
+                    type="range"
+                    min={0}
+                    max={Math.max(audioDuration, 0)}
+                    step={0.1}
+                    value={Math.min(audioCurrentTime, Math.max(audioDuration, 0))}
+                    aria-label="Audio progress"
+                    onChange={(e) => {
+                      const nextTime = Number(e.target.value);
+                      if (audioElementRef.current) audioElementRef.current.currentTime = nextTime;
+                      setAudioCurrentTime(nextTime);
+                    }}
+                  />
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
+                    <label className="flex items-center gap-2 font-semibold">
+                      Volume
+                      <input
+                        className="w-24 accent-emerald-600"
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={audioVolume}
+                        onChange={(e) => {
+                          const nextVolume = Number(e.target.value);
+                          if (audioElementRef.current) audioElementRef.current.volume = nextVolume;
+                          setAudioVolume(nextVolume);
+                        }}
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 font-semibold">
+                      Speed
+                      <select
+                        className="rounded-lg border border-slate-300 bg-white px-2 py-1"
+                        value={audioPlaybackRate}
+                        onChange={(e) => updateAudioPlaybackRate(Number(e.target.value))}
+                      >
+                        {[0.75, 1, 1.25, 1.5].map((rate) => (
+                          <option key={rate} value={rate}>{rate}x</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {showAudioLibrary && (
+            <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 px-4">
+              <div className="w-full max-w-2xl rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-xl">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xl font-semibold text-slate-900">Audio Library</div>
+                    <div className="mt-1 text-sm text-slate-600">Choose class audio to play alongside your Whiteboard.</div>
+                  </div>
+                  <button type="button" className={pill} onClick={() => setShowAudioLibrary(false)} disabled={audioUploadBusy || audioSelectingId !== null}>
+                    Close
+                  </button>
+                </div>
+
+                <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-cyan-100 bg-cyan-50/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-800">Upload Audio</div>
+                    <div className="text-xs text-slate-600">MP3, WAV, M4A, AAC, or OGG. It stays in this class&apos;s Notes Audio category.</div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      ref={audioUploadInputRef}
+                      className="hidden"
+                      type="file"
+                      accept="audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,audio/aac,audio/ogg,.mp3,.wav,.m4a,.aac,.ogg"
+                      onChange={(e) => setAudioUploadFile(e.target.files?.[0] || null)}
+                    />
+                    <button type="button" className={pill} onClick={() => audioUploadInputRef.current?.click()} disabled={audioUploadBusy}>
+                      {audioUploadFile ? "Change file" : "Choose audio"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-xl border-2 border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+                      onClick={() => void uploadAudioToLibrary()}
+                      disabled={!audioUploadFile || audioUploadBusy}
+                    >
+                      {audioUploadBusy ? "Uploading…" : "Upload"}
+                    </button>
+                  </div>
+                </div>
+                {audioUploadFile && <div className="mt-2 truncate text-xs font-semibold text-slate-600">Selected: {audioUploadFile.name}</div>}
+
+                <div className="mt-4 flex items-center gap-2">
+                  <input
+                    className="min-w-0 flex-1 rounded-xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-500"
+                    value={audioLibrarySearch}
+                    onChange={(e) => setAudioLibrarySearch(e.target.value)}
+                    placeholder="Search audio files…"
+                    aria-label="Search audio files"
+                  />
+                  <button type="button" className={pill} onClick={() => void loadAudioLibrary()} disabled={audioLibraryLoading || audioUploadBusy}>
+                    Refresh
+                  </button>
+                </div>
+
+                {audioLibraryError && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{audioLibraryError}</div>}
+
+                <div className="mt-4 max-h-[46vh] overflow-y-auto rounded-2xl border-2 border-slate-200 bg-slate-50">
+                  {audioLibraryLoading ? (
+                    <div className="px-4 py-10 text-center text-sm text-slate-600">Loading Audio Library…</div>
+                  ) : audioLibraryFiles.filter((note) => note.filename.toLocaleLowerCase().includes(audioLibrarySearch.trim().toLocaleLowerCase())).length === 0 ? (
+                    <div className="px-4 py-10 text-center">
+                      <div className="text-lg font-semibold text-slate-800">No audio files yet</div>
+                      <div className="mt-1 text-sm text-slate-600">Upload class audio here, then select it without leaving the Whiteboard.</div>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-200">
+                      {audioLibraryFiles
+                        .filter((note) => note.filename.toLocaleLowerCase().includes(audioLibrarySearch.trim().toLocaleLowerCase()))
+                        .map((note) => (
+                          <div key={note.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="truncate text-base font-semibold text-slate-800">{note.filename}</div>
+                              <div className="mt-1 text-xs text-slate-500">Uploaded {new Date(note.uploaded_at).toLocaleDateString("en-IE")}</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="rounded-xl border-2 border-emerald-700 bg-white px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-60"
+                              onClick={() => void selectAudioLibraryFile(note)}
+                              disabled={audioSelectingId !== null || audioUploadBusy}
+                            >
+                              {audioSelectingId === note.id ? "Loading…" : "Select"}
+                            </button>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showVideoModal && (
+            <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 px-4">
+              <form
+                className="w-full max-w-lg rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-xl"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  openYoutubePanel();
+                }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xl font-semibold text-slate-900">Play a YouTube video</div>
+                    <div className="mt-1 text-sm text-slate-600">Paste a YouTube link and keep writing alongside it.</div>
+                  </div>
+                  <button type="button" className={pill} onClick={() => setShowVideoModal(false)}>Close</button>
+                </div>
+                <label className="mt-5 block text-sm font-semibold text-slate-700" htmlFor="whiteboard-youtube-url">
+                  YouTube link
+                </label>
+                <input
+                  id="whiteboard-youtube-url"
+                  className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-3 text-base outline-none focus:border-emerald-500"
+                  value={youtubeUrlDraft}
+                  onChange={(e) => {
+                    setYoutubeUrlDraft(e.target.value);
+                    if (youtubeUrlError) setYoutubeUrlError(null);
+                  }}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  autoFocus
+                />
+                {youtubeUrlError && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{youtubeUrlError}</div>}
+                <div className="mt-5 flex justify-end gap-2">
+                  <button type="button" className={pill} onClick={() => setShowVideoModal(false)}>Cancel</button>
+                  <button type="submit" className="rounded-xl border-2 border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800">
+                    Open video
+                  </button>
+                </div>
+              </form>
             </div>
           )}
 
@@ -4587,6 +5147,7 @@ export default function WhiteBoardPage() {
                                 setImportedPdf({ kind, item });
                                 setShowImportModal(false);
                                 stabilizeBoardGeometryIfNeeded();
+                                setShowVideoPanel(false);
                                 setShowPdfPanel(true);
                               }}
                             >
@@ -4689,6 +5250,7 @@ export default function WhiteBoardPage() {
                                 });
                                 setShowImportModal(false);
                                 stabilizeBoardGeometryIfNeeded();
+                                setShowVideoPanel(false);
                                 setShowPdfPanel(true);
                               }}
                             >

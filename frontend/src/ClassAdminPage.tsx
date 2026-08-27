@@ -759,49 +759,81 @@ export default function ClassAdminPage() {
         return "text-slate-400";
     }
 
-    function Sparkline({ points }: { points: StudentHistoryPoint[] }) {
-        const width = 220;
-        const height = 60;
-        const pad = 6;
+    function PerformanceChart({ points }: { points: StudentHistoryPoint[] }) {
+        const width = 760;
+        const height = 270;
+        const margin = { top: 22, right: 24, bottom: 38, left: 48 };
+        const plotWidth = width - margin.left - margin.right;
+        const plotHeight = height - margin.top - margin.bottom;
+        const gridValues = [0, 25, 50, 75, 100];
+        const visibleLabelIndexes = points.length <= 5
+            ? points.map((_, index) => index)
+            : Array.from(new Set([0, Math.round((points.length - 1) / 2), points.length - 1]));
 
-        const vals = points
-            .flatMap((p) => [p.student, p.class_avg])
-            .filter((v): v is number => typeof v === "number");
-
-        const maxY = Math.max(100, ...vals);
-        const minY = 0;
-
-        const w = width - pad * 2;
-        const h = height - pad * 2;
-
-        const xTo = (i: number) => pad + (points.length <= 1 ? 0 : (i / (points.length - 1)) * w);
-        const yTo = (v: number) => pad + (1 - (v - minY) / (maxY - minY || 1)) * h;
-
-        const poly = (getter: (p: StudentHistoryPoint) => number | null) =>
-            points
-                .map((p, i) => {
-                    const v = getter(p);
-                    return typeof v === "number" ? `${xTo(i)},${yTo(v)}` : null;
-                })
-                .filter(Boolean)
-                .join(" ");
+        const xTo = (index: number) => margin.left + (points.length <= 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
+        const yTo = (value: number) => margin.top + (1 - Math.max(0, Math.min(100, value)) / 100) * plotHeight;
+        const makePath = (getter: (point: StudentHistoryPoint) => number | null) => {
+            let hasOpenSegment = false;
+            return points.reduce((path, point, index) => {
+                const value = getter(point);
+                if (typeof value !== "number") {
+                    hasOpenSegment = false;
+                    return path;
+                }
+                const command = hasOpenSegment ? "L" : "M";
+                hasOpenSegment = true;
+                return `${path}${command}${xTo(index).toFixed(1)} ${yTo(value).toFixed(1)} `;
+            }, "");
+        };
+        const shortLabel = (point: StudentHistoryPoint, index: number) => {
+            if (point.date) {
+                const date = new Date(`${point.date}T00:00:00`);
+                if (!Number.isNaN(date.getTime())) {
+                    return date.toLocaleDateString("en-IE", { day: "numeric", month: "short" });
+                }
+            }
+            return `Assessment ${index + 1}`;
+        };
 
         return (
-            <svg width={width} height={height}>
-                <polyline
-                    points={poly((p) => p.class_avg)}
-                    fill="none"
-                    strokeWidth="2"
-                    strokeDasharray="4 4"
-                    className="stroke-red-500"
-                />
-                <polyline
-                    points={poly((p) => p.student)}
-                    fill="none"
-                    strokeWidth="2.5"
-                    className="stroke-slate-900"
-                />
-            </svg>
+            <section className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/80 via-white to-cyan-50/70 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 className="text-base font-extrabold text-slate-900">Performance over time</h3>
+                        <p className="mt-0.5 text-xs text-slate-600">Scores are shown in chronological assessment order.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-700" aria-label="Chart legend">
+                        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />Student</span>
+                        <span className="inline-flex items-center gap-1.5"><span className="w-5 border-t-2 border-dashed border-slate-500" />Class average</span>
+                    </div>
+                </div>
+                <div className="mt-3 h-[250px] w-full">
+                    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="img" aria-label="Student and class average performance over time">
+                        {gridValues.map((value) => (
+                            <g key={value}>
+                                <line x1={margin.left} x2={width - margin.right} y1={yTo(value)} y2={yTo(value)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray={value === 0 ? "0" : "3 5"} />
+                                <text x={margin.left - 10} y={yTo(value) + 4} textAnchor="end" fill="#64748b" fontSize="12" fontWeight="600">{value}%</text>
+                            </g>
+                        ))}
+                        <path d={makePath((point) => point.class_avg)} fill="none" stroke="#64748b" strokeWidth="2.5" strokeDasharray="8 7" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d={makePath((point) => point.student)} fill="none" stroke="#059669" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+                        {points.map((point, index) => typeof point.class_avg === "number" && (
+                            <circle key={`class-${point.assessment_id}`} cx={xTo(index)} cy={yTo(point.class_avg)} r="3" fill="#ffffff" stroke="#64748b" strokeWidth="2" />
+                        ))}
+                        {points.map((point, index) => typeof point.student === "number" && (
+                            <g key={point.assessment_id} tabIndex={0} aria-label={`${point.title}: student ${point.student} percent${typeof point.class_avg === "number" ? `, class average ${point.class_avg} percent` : ""}`}>
+                                <title>{`${point.title}${point.date ? ` (${point.date})` : ""}: Student ${point.student}%${typeof point.class_avg === "number" ? `, class average ${point.class_avg}%` : ""}`}</title>
+                                <circle cx={xTo(index)} cy={yTo(point.student)} r="5" fill="#ffffff" stroke="#059669" strokeWidth="3" />
+                            </g>
+                        ))}
+                        {visibleLabelIndexes.map((index) => (
+                            <text key={index} x={xTo(index)} y={height - 12} textAnchor="middle" fill="#64748b" fontSize="11" fontWeight="600">
+                                {shortLabel(points[index], index)}
+                            </text>
+                        ))}
+                    </svg>
+                </div>
+            </section>
         );
     }
 
@@ -1498,8 +1530,8 @@ export default function ClassAdminPage() {
                                 {!historyLoading[selectedHistoryStudent.student_id] &&
                                     historyCache[selectedHistoryStudent.student_id]?.points?.length ? (
                                     <>
-                                        <Sparkline
-                                            points={historyCache[selectedHistoryStudent.student_id]!.points.slice(-8)}
+                                        <PerformanceChart
+                                            points={historyCache[selectedHistoryStudent.student_id]!.points}
                                         />
 
                                         <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
@@ -1558,10 +1590,6 @@ export default function ClassAdminPage() {
                                                         </div>
                                                     );
                                                 })}
-                                        </div>
-
-                                        <div className="mt-3 text-xs text-slate-500">
-                                            Solid = student · Dotted red = class average
                                         </div>
                                     </>
                                 ) : null}
