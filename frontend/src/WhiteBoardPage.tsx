@@ -1020,11 +1020,15 @@ export default function WhiteBoardPage() {
   const pdfBlobUrlRef = useRef<string | null>(null);
   const pdfSourceUrlRef = useRef<string | null>(null);
 
+  type ClipRect = { x: number; y: number; w: number; h: number };
+
   const clipDragRef = useRef(false);
   const clipPointerIdRef = useRef<number | null>(null);
   const clipOverlayRectRef = useRef<DOMRect | null>(null);
   const clipStartRef = useRef<{ x: number; y: number } | null>(null);
-  const [clipRect, setClipRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const clipPendingRectRef = useRef<ClipRect | null>(null);
+  const clipRafRef = useRef<number | null>(null);
+  const [clipRect, setClipRect] = useState<ClipRect | null>(null);
   const [snipMode, setSnipMode] = useState(false);
 
   const [classLabel, setClassLabel] = useState<string>("");
@@ -3122,12 +3126,11 @@ export default function WhiteBoardPage() {
       const page = await pdf.getPage(1);
 
       const width = getBoardWidthCss();
-      const rotation = Number.isFinite(page.rotate) ? page.rotate : 0;
-      const viewport0 = page.getViewport({ scale: 1.0, rotation });
+      const viewport0 = getPdfViewport(page, 1.0);
       const fitScale = (width / viewport0.width) * pdfInsertScale;
       const dpr = getPdfRenderDpr();
-      const viewportCss = page.getViewport({ scale: fitScale, rotation });          // size you want on the board
-      const viewportHiDpi = page.getViewport({ scale: fitScale * dpr, rotation });  // extra pixels for sharpness
+      const viewportCss = getPdfViewport(page, fitScale);          // size you want on the board
+      const viewportHiDpi = getPdfViewport(page, fitScale * dpr);  // extra pixels for sharpness
 
       const tmp = document.createElement("canvas");
       tmp.width = Math.floor(viewportHiDpi.width);
@@ -3177,6 +3180,23 @@ export default function WhiteBoardPage() {
   const pdfDocRef = useRef<any>(null);
   const pdfUrlRef = useRef<string | null>(null);
   const pdfRenderTokenRef = useRef(0); // cancels stale async renders
+  const pdfRenderTaskRef = useRef<any>(null);
+
+  function cancelPdfRenderTask() {
+    const task = pdfRenderTaskRef.current;
+    pdfRenderTaskRef.current = null;
+    try {
+      task?.cancel?.();
+    } catch {
+      // PDF.js cancellation is best-effort during a viewport/page transition.
+    }
+  }
+
+  function getPdfViewport(page: any, scale: number) {
+    // Keep initial load and page navigation on one explicit rotation source.
+    const rotation = Number.isFinite(page?.rotate) ? page.rotate : 0;
+    return page.getViewport({ scale, rotation });
+  }
 
   async function getAuthenticatedPdfUrl(fileUrl: string): Promise<string> {
     const resolvedUrl = resolveFileUrl(fileUrl);
@@ -3248,6 +3268,7 @@ export default function WhiteBoardPage() {
     }
 
     const token = ++pdfRenderTokenRef.current;
+    cancelPdfRenderTask();
 
     const pdfjsLib = await loadPdfJs();
     const pdfUrl = await getAuthenticatedPdfUrl(importedPdf.item.file_url);
@@ -3269,13 +3290,12 @@ export default function WhiteBoardPage() {
     if (token !== pdfRenderTokenRef.current) return;
 
     // Fit to panel width but keep your zoom control (pdfViewScale)
-    const rotation = Number.isFinite(page.rotate) ? page.rotate : 0;
-    const viewport1 = page.getViewport({ scale: 1, rotation });
+    const viewport1 = getPdfViewport(page, 1);
     const fitScale = (parentW / viewport1.width) * pdfViewScale;
 
     const dpr = getPdfRenderDpr();
-    const viewportCss = page.getViewport({ scale: fitScale, rotation });
-    const viewportHiDpi = page.getViewport({ scale: fitScale * dpr, rotation });
+    const viewportCss = getPdfViewport(page, fitScale);
+    const viewportHiDpi = getPdfViewport(page, fitScale * dpr);
     if (token !== pdfRenderTokenRef.current) return;
 
     canvas.style.width = `${Math.floor(viewportCss.width)}px`;
@@ -3291,7 +3311,20 @@ export default function WhiteBoardPage() {
     resetPdfRenderContext(ctx, canvas);
 
     if (token !== pdfRenderTokenRef.current) return;
-    await page.render({ canvasContext: ctx, viewport: viewportHiDpi }).promise;
+    const renderTask = page.render({ canvasContext: ctx, viewport: viewportHiDpi });
+    pdfRenderTaskRef.current = renderTask;
+    try {
+      await renderTask.promise;
+    } catch (error: any) {
+      if (token !== pdfRenderTokenRef.current || error?.name === "RenderingCancelledException") {
+        return;
+      }
+      throw error;
+    } finally {
+      if (pdfRenderTaskRef.current === renderTask) {
+        pdfRenderTaskRef.current = null;
+      }
+    }
 
     if (token !== pdfRenderTokenRef.current) return;
 
@@ -3301,6 +3334,7 @@ export default function WhiteBoardPage() {
 
   useEffect(() => {
     pdfRenderTokenRef.current += 1;
+    cancelPdfRenderTask();
     pdfDocRef.current = null;
     pdfUrlRef.current = null;
     setPdfPageNum(1);
@@ -3315,6 +3349,10 @@ export default function WhiteBoardPage() {
 
   useEffect(() => {
     return () => {
+      cancelPdfRenderTask();
+      if (clipRafRef.current != null) {
+        cancelAnimationFrame(clipRafRef.current);
+      }
       if (pdfBlobUrlRef.current) {
         window.URL.revokeObjectURL(pdfBlobUrlRef.current);
         pdfBlobUrlRef.current = null;
@@ -3330,10 +3368,41 @@ export default function WhiteBoardPage() {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
+  function flushClipRect() {
+    if (clipRafRef.current != null) {
+      cancelAnimationFrame(clipRafRef.current);
+      clipRafRef.current = null;
+    }
+    setClipRect(clipPendingRectRef.current);
+  }
+
+  function queueClipRect(next: ClipRect) {
+    clipPendingRectRef.current = next;
+    if (clipRafRef.current != null) return;
+    clipRafRef.current = requestAnimationFrame(() => {
+      clipRafRef.current = null;
+      setClipRect(clipPendingRectRef.current);
+    });
+  }
+
+  function resetClipGesture(clearSelection: boolean) {
+    if (clipRafRef.current != null) {
+      cancelAnimationFrame(clipRafRef.current);
+      clipRafRef.current = null;
+    }
+    clipDragRef.current = false;
+    clipPointerIdRef.current = null;
+    clipOverlayRectRef.current = null;
+    clipStartRef.current = null;
+    clipPendingRectRef.current = null;
+    if (clearSelection) setClipRect(null);
+  }
+
   const onClipDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // One captured primary pointer prevents pen hover/compatibility events from
     // starting or completing a second snip selection.
     if (!e.isPrimary || clipPointerIdRef.current != null) return;
+    if (e.pointerType !== "mouse" && e.pointerType !== "pen") return;
     if (e.pointerType === "mouse" && (e.button !== 0 || (e.buttons & 1) === 0)) return;
     if (e.pointerType === "pen" && e.button !== 0) return;
 
@@ -3349,8 +3418,8 @@ export default function WhiteBoardPage() {
     clipOverlayRectRef.current = e.currentTarget.getBoundingClientRect();
     const p = overlayXY(e);
     clipStartRef.current = p;
-
-    setClipRect({ x: p.x, y: p.y, w: 0, h: 0 });
+    clipPendingRectRef.current = { x: p.x, y: p.y, w: 0, h: 0 };
+    setClipRect(clipPendingRectRef.current);
   };
 
   const onClipMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -3359,8 +3428,9 @@ export default function WhiteBoardPage() {
       !clipStartRef.current ||
       clipPointerIdRef.current !== e.pointerId
     ) return;
-    // A pen hover move has no active button and must not be treated as a drag.
-    if ((e.pointerType === "mouse" || e.pointerType === "pen") && (e.buttons & 1) === 0) return;
+    // Pointer capture and pointerId are the reliable pen-contact signal. Some
+    // smart panels report buttons=0 intermittently for an in-contact stylus.
+    if (e.pointerType === "mouse" && (e.buttons & 1) === 0) return;
     e.preventDefault();
 
     const p = overlayXY(e);
@@ -3371,32 +3441,27 @@ export default function WhiteBoardPage() {
     const w = Math.abs(p.x - s.x);
     const h = Math.abs(p.y - s.y);
 
-    setClipRect({ x, y, w, h });
+    queueClipRect({ x, y, w, h });
   };
 
   const onClipUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (clipPointerIdRef.current !== e.pointerId) return;
     e.preventDefault();
 
-    clipDragRef.current = false;
-    clipStartRef.current = null;
-    clipPointerIdRef.current = null;
-    clipOverlayRectRef.current = null;
+    // Flush the most recent sampled endpoint before ending the gesture.
+    flushClipRect();
 
     try {
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
     } catch { }
+    resetClipGesture(false);
   };
 
   const onClipCancel = (e: React.PointerEvent<HTMLDivElement>) => {
     if (clipPointerIdRef.current !== e.pointerId) return;
-    clipDragRef.current = false;
-    clipStartRef.current = null;
-    clipPointerIdRef.current = null;
-    clipOverlayRectRef.current = null;
-    setClipRect(null);
+    resetClipGesture(true);
   };
 
 
@@ -4127,7 +4192,7 @@ export default function WhiteBoardPage() {
                       >
                         {clipRect && (
                           <div
-                            className="absolute border-2 border-blue-500 bg-blue-200/20"
+                            className="pointer-events-none absolute border-2 border-blue-500 bg-blue-200/20"
                             style={{
                               left: clipRect.x,
                               top: clipRect.y,
