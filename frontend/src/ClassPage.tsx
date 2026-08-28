@@ -2375,8 +2375,9 @@ export default function ClassPage() {
                 <div className="mt-2 text-2xl font-black tracking-tight text-slate-900">
                   Enter Class Admin PIN
                 </div>
-                <div className="mt-2 text-sm leading-6 text-slate-600">
-                  You can find your pin in the Dashboard Admin Section.
+                <div className="mt-3 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm leading-6 text-slate-700">
+                  <p><span className="font-bold text-slate-900">Teacher verification required.</span> Class Admin contains student performance and assessment information.</p>
+                  <p className="mt-1">You can change your Teacher PIN from Dashboard -&gt; Admin.</p>
                 </div>
 
                 <input

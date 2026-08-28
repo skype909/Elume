@@ -1351,6 +1351,34 @@ export default function TeacherAdminPage() {
             </div>
           </div>
 
+          <section className="mt-4 rounded-[24px] border border-emerald-100 bg-gradient-to-r from-emerald-50 via-teal-50 to-cyan-50 p-4 print-hide" aria-labelledby="teacher-admin-getting-started">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 id="teacher-admin-getting-started" className="text-base font-extrabold text-slate-900">
+                  Getting started
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Set up the essentials once, then come back whenever you need to make a change.
+                </p>
+              </div>
+              <ol className="flex flex-wrap gap-2 text-sm font-semibold text-slate-700">
+                {[
+                  "Complete your details",
+                  "Set up your timetable",
+                  "Change your Teacher PIN",
+                ].map((step, index) => (
+                  <li key={step} className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/85 px-3 py-2 shadow-sm">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-xs font-black text-white">{index + 1}</span>
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <p className="mt-3 text-sm font-medium text-slate-700">
+              Your default Teacher PIN is <span className="font-black text-slate-900">2026</span>. Change it before using Class Admin on a shared classroom screen.
+            </p>
+          </section>
+
           {adminSectionOpen ? (
             <div className="mt-4 grid gap-3 md:grid-cols-12 print:mt-2">
             <div className="md:col-span-2">
