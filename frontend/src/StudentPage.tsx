@@ -1,5 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ELogo2 from "./assets/ELogo2.png";
+import {
+    readRememberedStudentClasses,
+    rememberStudentClass,
+    removeRememberedStudentClass,
+    type RememberedStudentClass,
+} from "./studentClasses";
 
 type JoinMode = "quiz" | "collab" | "class";
 const API_BASE = "/api";
@@ -288,6 +294,7 @@ export default function StudentPage() {
     const [classLoading, setClassLoading] = useState(false);
 
     const [recentJoins, setRecentJoins] = useState<RecentJoin[]>([]);
+    const [rememberedClasses, setRememberedClasses] = useState<RememberedStudentClass[]>([]);
 
     useEffect(() => {
         const savedName = localStorage.getItem(STORAGE_NAME_KEY) || "";
@@ -298,6 +305,7 @@ export default function StudentPage() {
         }
 
         setRecentJoins(readRecentJoins());
+        setRememberedClasses(readRememberedStudentClasses());
 
         const params = new URLSearchParams(window.location.search);
         const modeParam = params.get("mode");
@@ -450,6 +458,8 @@ export default function StudentPage() {
 
             saveRecentJoin(recentJoin);
             setRecentJoins(readRecentJoins());
+            rememberStudentClass({ classCode: code.trim() });
+            setRememberedClasses(readRememberedStudentClasses());
 
             redirectFromJoinResponse(data);
         } catch (err: any) {
@@ -480,6 +490,19 @@ export default function StudentPage() {
 
         setClassCode(item.code);
         setClassError("Please enter your class PIN to continue.");
+    }
+
+    function openRememberedClass(item: RememberedStudentClass) {
+        clearErrors();
+        setClassCode(item.classCode);
+        setClassPin("");
+        setOpenMode("class");
+        setClassError("Enter your class PIN to continue.");
+    }
+
+    function removeRememberedClass(item: RememberedStudentClass) {
+        removeRememberedStudentClass(item.classCode);
+        setRememberedClasses(readRememberedStudentClasses());
     }
 
     return (
@@ -564,6 +587,54 @@ export default function StudentPage() {
                         </div>
 
                         <div className="space-y-5">
+                            {rememberedClasses.length > 0 ? (
+                                <section className="rounded-[28px] border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-6 shadow-xl shadow-emerald-100/40 backdrop-blur-xl">
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div>
+                                            <h2 className="text-xl font-bold tracking-tight text-slate-900">My Classes</h2>
+                                            <p className="mt-2 text-sm leading-6 text-slate-600">Classes are remembered on this device. No student account required.</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                clearErrors();
+                                                setOpenMode("class");
+                                            }}
+                                            className="shrink-0 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:shadow-md"
+                                        >
+                                            Join another class
+                                        </button>
+                                    </div>
+
+                                    <div className="mt-4 space-y-3">
+                                        {rememberedClasses.map((item) => (
+                                            <div key={item.classCode} className="rounded-2xl border border-white/80 bg-white/90 p-3 shadow-sm">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openRememberedClass(item)}
+                                                    className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1 text-left transition hover:bg-emerald-50"
+                                                >
+                                                    <div className="min-w-0">
+                                                        <div className="truncate text-base font-black text-slate-900">{item.className || "Class"}</div>
+                                                        <div className="mt-1 text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">
+                                                            {item.subject ? `${item.subject} · ` : ""}Code {item.classCode}
+                                                        </div>
+                                                    </div>
+                                                    <span className="shrink-0 rounded-xl bg-emerald-100 px-3 py-2 text-xs font-black text-emerald-800">Open</span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeRememberedClass(item)}
+                                                    className="mt-2 px-2 text-xs font-semibold text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+                                                >
+                                                    Remove from this device
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </section>
+                            ) : null}
+
                             <div className="rounded-[28px] border border-white/70 bg-white/90 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-xl">
                                 <div className="flex items-start justify-between gap-4">
                                     <div>

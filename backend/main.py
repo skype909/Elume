@@ -12392,6 +12392,7 @@ def student_view(token: str, db: Session = Depends(get_db)):
     return {
         "class_name": cls.name,
         "subject": cls.subject,
+        "class_code": cls.class_code,
         "posts": [
     {
         "id": p.id,

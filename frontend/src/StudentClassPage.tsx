@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import ELogo2 from "./assets/ELogo2.png";
+import { rememberStudentClass } from "./studentClasses";
 
 const API_BASE = "/api";
 
@@ -32,6 +33,7 @@ type StudentTest = {
 type StudentPayload = {
   class_name?: string;
   subject?: string;
+  class_code?: string;
   posts?: StudentPost[];
   notes?: StudentNote[];
   tests?: StudentTest[];
@@ -154,6 +156,15 @@ export default function StudentClassPage() {
   }, [token]);
 
   useEffect(() => {
+    if (!data?.class_code) return;
+    rememberStudentClass({
+      classCode: data.class_code,
+      className: data.class_name,
+      subject: data.subject,
+    });
+  }, [data?.class_code, data?.class_name, data?.subject]);
+
+  useEffect(() => {
     const dismissed = localStorage.getItem(dismissKey) === "1";
     setSaveBannerDismissed(dismissed);
 
@@ -272,6 +283,16 @@ export default function StudentClassPage() {
             </div>
 
             <div className="flex-1" />
+
+            <button
+              type="button"
+              className={backBtn}
+              onClick={() => {
+                window.location.href = `${window.location.origin}/#/student`;
+              }}
+            >
+              My Classes
+            </button>
 
             {view !== "home" && (
               <button type="button" className={backBtn} onClick={() => setView("home")}>
