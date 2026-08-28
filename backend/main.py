@@ -3150,6 +3150,7 @@ def school_invitation_accept(
     db: Session = Depends(get_db),
 ):
     email = (payload.email or "").strip().lower()
+    created_school_teacher = False
     try:
         invitation = _valid_school_invitation(db, token, lock=True)
         if email != invitation.normalized_email:
@@ -3222,6 +3223,7 @@ def school_invitation_accept(
             )
             db.add(accepted_user)
             db.flush()
+            created_school_teacher = intended_role == ROLE_TEACHER
             message = (
                 f"Your School Admin account for {school.name} is ready."
                 if intended_role == ROLE_SCHOOL_ADMIN
@@ -3249,6 +3251,16 @@ def school_invitation_accept(
         db.rollback()
         logger.exception("Failed to accept school invitation")
         raise HTTPException(status_code=500, detail="Invitation could not be accepted")
+
+    if created_school_teacher:
+        accepted_user_id = accepted_user.id
+        try:
+            _seed_demo_class(db, accepted_user)
+        except Exception:
+            # The school account and accepted invitation were committed above. Demo content is
+            # helpful onboarding, but must not make a successful school invitation unusable.
+            db.rollback()
+            logger.exception("Demo seeding failed for newly invited school teacher user_id=%s", accepted_user_id)
 
     return {
         "success": True,
