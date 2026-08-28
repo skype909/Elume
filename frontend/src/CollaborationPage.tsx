@@ -48,7 +48,7 @@ type ToolKey =
 type PenColor = "black" | "red" | "blue" | "yellow" | "green" | "purple";
 type PenSize = 1 | 2 | 3;
 type EraserSize = 1 | 2 | 3;
-type HighlightColor = "yellow" | "green" | "blue";
+type HighlightColor = "yellow" | "green" | "blue" | "violet";
 
 type CollabParticipant = {
     id: string;
@@ -965,17 +965,18 @@ export default function CollaborationPage() {
                                             </div>
 
                                             <div className="grid grid-cols-3 gap-2">
-                                                {[1, 2, 3].map((s) => (
+                                                {[{ value: 1, label: "Fine" }, { value: 2, label: "Medium" }, { value: 3, label: "Bold" }].map(({ value, label }) => (
                                                     <button
-                                                        key={s}
+                                                        key={value}
                                                         type="button"
-                                                        onClick={() => setPenSize(s as PenSize)}
-                                                        className={`rounded-xl border px-2 py-2 text-[11px] font-black ${penSize === s
+                                                        onClick={() => setPenSize(value as PenSize)}
+                                                        aria-pressed={penSize === value}
+                                                        className={`rounded-xl border px-2 py-2 text-[11px] font-black ${penSize === value
                                                             ? "border-emerald-500 bg-emerald-500 text-white"
                                                             : "border-slate-200 bg-white text-slate-700"
                                                             }`}
                                                     >
-                                                        Size {s}
+                                                        {label}
                                                     </button>
                                                 ))}
                                             </div>
@@ -1002,7 +1003,7 @@ export default function CollaborationPage() {
 
                                     {tool === "highlighter" && (
                                         <div className="grid grid-cols-3 gap-2">
-                                            {(["yellow", "green", "blue"] as HighlightColor[]).map((c) => (
+                                            {(["yellow", "green", "blue", "violet"] as HighlightColor[]).map((c) => (
                                                 <button
                                                     key={c}
                                                     type="button"

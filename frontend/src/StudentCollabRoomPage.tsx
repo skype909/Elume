@@ -38,6 +38,23 @@ type ParticipantListItem = {
   room_number: number | null;
 };
 
+const STUDENT_PEN_COLOURS = [
+  { value: "black", label: "Slate", dot: "bg-slate-900" },
+  { value: "blue", label: "Blue", dot: "bg-blue-600" },
+  { value: "green", label: "Emerald", dot: "bg-emerald-600" },
+  { value: "cyan", label: "Cyan", dot: "bg-cyan-500" },
+  { value: "purple", label: "Violet", dot: "bg-violet-600" },
+  { value: "orange", label: "Orange", dot: "bg-orange-500" },
+  { value: "red", label: "Red", dot: "bg-red-500" },
+] as const;
+
+const STUDENT_HIGHLIGHTER_COLOURS = [
+  { value: "yellow", label: "Yellow", dot: "bg-yellow-300" },
+  { value: "#86efac", label: "Mint", dot: "bg-emerald-300" },
+  { value: "#7dd3fc", label: "Cyan", dot: "bg-cyan-300" },
+  { value: "#f0abfc", label: "Pink", dot: "bg-fuchsia-300" },
+] as const;
+
 function cleanCode(s: string) {
   return s.replace(/[^A-Za-z0-9-_]/g, "").trim();
 }
@@ -58,10 +75,11 @@ export default function StudentCollabRoomPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [tool, setTool] = useState<"pen" | "highlighter" | "eraser">("pen");
+  const [tool, setTool] = useState<"pen" | "highlighter" | "eraser" | "sticky">("pen");
   const [viewportMode, setViewportMode] = useState<"fixed" | "pan">("fixed");
-  const [penColor, setPenColor] = useState<"black" | "red">("black");
+  const [penColor, setPenColor] = useState<(typeof STUDENT_PEN_COLOURS)[number]["value"]>("black");
   const [penSize, setPenSize] = useState<1 | 2 | 3>(1);
+  const [highlighterColor, setHighlighterColor] = useState<(typeof STUDENT_HIGHLIGHTER_COLOURS)[number]["value"]>("yellow");
   const [roomMembers, setRoomMembers] = useState<ParticipantListItem[]>([]);
   const [membersExpanded, setMembersExpanded] = useState(true);
 
@@ -343,16 +361,20 @@ export default function StudentCollabRoomPage() {
                 <div className="text-2xl font-black tracking-tight text-slate-900">
                   Room {roomNumber}
                 </div>
+                <div className="mt-1 inline-flex rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-violet-700">
+                  Breakout Room {roomNumber}
+                </div>
                 <div className="text-sm text-slate-600">{participantName}</div>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 rounded-[24px] border border-slate-100 bg-slate-50/80 p-2">
               <button
                 type="button"
                 onClick={() => setTool("pen")}
-                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm ${
-                  tool === "pen" ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-800"
+                aria-pressed={tool === "pen"}
+                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
+                  tool === "pen" ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white ring-2 ring-emerald-200" : "border border-slate-200 bg-white text-slate-800 hover:bg-emerald-50"
                 }`}
               >
                 Pen
@@ -360,10 +382,11 @@ export default function StudentCollabRoomPage() {
               <button
                 type="button"
                 onClick={() => setTool("highlighter")}
-                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm ${
+                aria-pressed={tool === "highlighter"}
+                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
                   tool === "highlighter"
-                    ? "bg-slate-900 text-white"
-                    : "border border-slate-200 bg-white text-slate-800"
+                    ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white ring-2 ring-emerald-200"
+                    : "border border-slate-200 bg-white text-slate-800 hover:bg-emerald-50"
                 }`}
               >
                 Highlight
@@ -371,18 +394,32 @@ export default function StudentCollabRoomPage() {
               <button
                 type="button"
                 onClick={() => setTool("eraser")}
-                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm ${
+                aria-pressed={tool === "eraser"}
+                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
                   tool === "eraser"
-                    ? "bg-slate-900 text-white"
-                    : "border border-slate-200 bg-white text-slate-800"
+                    ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white ring-2 ring-emerald-200"
+                    : "border border-slate-200 bg-white text-slate-800 hover:bg-emerald-50"
                 }`}
               >
                 Eraser
               </button>
               <button
                 type="button"
+                onClick={() => setTool("sticky")}
+                aria-pressed={tool === "sticky"}
+                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
+                  tool === "sticky"
+                    ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white ring-2 ring-violet-200"
+                    : "border border-slate-200 bg-white text-slate-800 hover:bg-violet-50"
+                }`}
+              >
+                Sticky note
+              </button>
+              <button
+                type="button"
                 onClick={() => setViewportMode((prev) => (prev === "pan" ? "fixed" : "pan"))}
-                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm ${
+                aria-pressed={viewportMode === "pan"}
+                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
                   viewportMode === "pan"
                     ? "bg-cyan-600 text-white"
                     : "border border-slate-200 bg-white text-slate-800"
@@ -391,42 +428,64 @@ export default function StudentCollabRoomPage() {
                 Pan
               </button>
               {tool === "pen" && (
-                <div className="ml-1 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
+                <div className="ml-1 flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
                   <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Colour</span>
-                  {([
-                    { value: "black" as const, label: "Black", dot: "bg-slate-900" },
-                    { value: "red" as const, label: "Red", dot: "bg-red-500" },
-                  ]).map((option) => (
+                  {STUDENT_PEN_COLOURS.map((option) => (
                     <button
                       key={option.value}
                       type="button"
                       onClick={() => setPenColor(option.value)}
-                      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-black ${
+                      aria-label={`${option.label} pen`}
+                      aria-pressed={penColor === option.value}
+                      title={`${option.label} pen`}
+                      className={`grid h-10 w-10 place-items-center rounded-xl border transition ${
                         penColor === option.value
-                          ? "bg-slate-900 text-white"
-                          : "border border-slate-200 bg-slate-50 text-slate-700"
+                          ? "border-slate-900 bg-slate-900 ring-2 ring-slate-300"
+                          : "border-slate-200 bg-slate-50 hover:bg-white"
                       }`}
                     >
-                      <span className={`h-2.5 w-2.5 rounded-full ${option.dot}`} />
-                      {option.label}
+                      <span className={`h-5 w-5 rounded-full border border-white/80 shadow-sm ${option.dot}`} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {tool === "highlighter" && (
+                <div className="ml-1 flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
+                  <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Highlight</span>
+                  {STUDENT_HIGHLIGHTER_COLOURS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setHighlighterColor(option.value)}
+                      aria-label={`${option.label} highlighter`}
+                      aria-pressed={highlighterColor === option.value}
+                      title={`${option.label} highlighter`}
+                      className={`grid h-10 w-10 place-items-center rounded-xl border transition ${
+                        highlighterColor === option.value
+                          ? "border-slate-900 bg-slate-900 ring-2 ring-slate-300"
+                          : "border-slate-200 bg-slate-50 hover:bg-white"
+                      }`}
+                    >
+                      <span className={`h-5 w-5 rounded-full border border-white/80 shadow-sm ${option.dot}`} />
                     </button>
                   ))}
                 </div>
               )}
               <div className="ml-1 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
-                <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Size</span>
-                {([1, 2, 3] as const).map((size) => (
+                <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Stroke</span>
+                {([{ value: 1, label: "Fine" }, { value: 2, label: "Medium" }, { value: 3, label: "Bold" }] as const).map(({ value, label }) => (
                   <button
-                    key={size}
+                    key={value}
                     type="button"
-                    onClick={() => setPenSize(size)}
+                    onClick={() => setPenSize(value)}
+                    aria-pressed={penSize === value}
                     className={`rounded-xl px-3 py-2 text-xs font-black ${
-                      penSize === size
+                      penSize === value
                         ? "bg-slate-900 text-white"
                         : "border border-slate-200 bg-slate-50 text-slate-700"
                     }`}
                   >
-                    {size}
+                    {label}
                   </button>
                 ))}
               </div>
@@ -474,7 +533,7 @@ export default function StudentCollabRoomPage() {
             tool={viewportMode === "pan" ? "select" : tool}
             penColor={penColor}
             penSize={penSize}
-            highlighterColor="yellow"
+            highlighterColor={highlighterColor}
             eraserSize={2}
             height={760}
             viewportMode={viewportMode}

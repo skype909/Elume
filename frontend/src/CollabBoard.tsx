@@ -864,7 +864,7 @@ export default function CollabBoard({
             y: pt.y,
             w: baseW,
             h: baseH,
-            text: type === "sticky" ? "Type here..." : type === "speech" ? "Speech..." : "",
+            text: type === "speech" ? "Speech..." : "",
             fill: getObjectDefaultFill(type),
             createdBy: participantId,
             updatedAt: Date.now(),
