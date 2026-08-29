@@ -9,7 +9,10 @@ import shutil
 import random
 import string
 import struct
+import subprocess
+import tempfile
 import textwrap
+import threading
 import unicodedata
 import zipfile
 import zlib
@@ -144,6 +147,12 @@ JWT_EXPIRE_DAYS = 30
 STORAGE_LIMIT_BYTES = 150 * 1024 * 1024
 STORAGE_WARNING_PERCENT = 80
 STORAGE_WARNING_RESET_PERCENT = 70
+
+OFFICE_CONVERSION_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx"}
+POWERPOINT_CONVERSION_EXTENSIONS = {".ppt", ".pptx"}
+OFFICE_CONVERSION_TIMEOUT_SECONDS = 60
+POWERPOINT_CONVERSION_MAX_SLIDES = 30
+_office_conversion_lock = threading.Lock()
 
 STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
 STRIPE_PRICE_MONTHLY_EUR = (os.getenv("STRIPE_PRICE_MONTHLY_EUR") or "").strip()
@@ -11696,12 +11705,152 @@ def list_notes(
     return out
 
 
+def _safe_uploaded_basename(filename: Optional[str], fallback: str = "file") -> str:
+    candidate = (filename or fallback).replace("\\", "/").split("/")[-1].strip()
+    return candidate or fallback
+
+
+def _office_file_extension(filename: Optional[str]) -> str:
+    return Path(_safe_uploaded_basename(filename)).suffix.lower()
+
+
+def _converted_pdf_filename(filename: Optional[str]) -> str:
+    source_stem = Path(_safe_uploaded_basename(filename, "resource")).stem
+    safe_stem = re.sub(r"[^A-Za-z0-9._ -]+", "_", source_stem).strip(" ._")
+    return f"{safe_stem or 'resource'}.pdf"
+
+
+def _libreoffice_command() -> Optional[str]:
+    configured = (os.getenv("LIBREOFFICE_BIN") or "").strip()
+    if configured:
+        return configured
+    return shutil.which("libreoffice") or shutil.which("soffice")
+
+
+def _pptx_slide_count(source_path: Path) -> int:
+    try:
+        with zipfile.ZipFile(source_path) as archive:
+            return sum(
+                1
+                for name in archive.namelist()
+                if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)
+            )
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="This presentation could not be read safely. Upload the original file or choose another presentation.",
+        ) from exc
+
+
+def _office_conversion_error(message: str, status_code: int = 422) -> HTTPException:
+    return HTTPException(status_code=status_code, detail=message)
+
+
+def _convert_office_upload_to_pdf(file: UploadFile, output_path: Path) -> None:
+    """Convert one temporary Office upload to a validated PDF without retaining its source."""
+    extension = _office_file_extension(file.filename)
+    if extension not in OFFICE_CONVERSION_EXTENSIONS:
+        raise _office_conversion_error("Only DOC, DOCX, PPT, and PPTX files can be converted to PDF.", 400)
+
+    command = _libreoffice_command()
+    if not command:
+        raise _office_conversion_error(
+            "Office conversion is not available on this server yet. You can still upload the original file.",
+            503,
+        )
+
+    if not _office_conversion_lock.acquire(blocking=False):
+        raise _office_conversion_error(
+            "Another resource is being prepared right now. Please wait a moment and try again.",
+            429,
+        )
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="elume-office-") as temporary_directory:
+            temp_dir = Path(temporary_directory)
+            source_path = temp_dir / f"source{extension}"
+            converted_dir = temp_dir / "converted"
+            converted_dir.mkdir()
+
+            file.file.seek(0)
+            with source_path.open("wb") as source_file:
+                shutil.copyfileobj(file.file, source_file)
+
+            if extension == ".pptx":
+                slide_count = _pptx_slide_count(source_path)
+                if slide_count > POWERPOINT_CONVERSION_MAX_SLIDES:
+                    raise _office_conversion_error(
+                        "This presentation has more than 30 slides. To keep conversion fast and reliable, Elume can automatically prepare presentations of up to 30 slides."
+                    )
+
+            try:
+                result = subprocess.run(
+                    [
+                        command,
+                        "--headless",
+                        "--convert-to",
+                        "pdf",
+                        "--outdir",
+                        str(converted_dir),
+                        str(source_path),
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=OFFICE_CONVERSION_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise _office_conversion_error(
+                    "Elume could not prepare this file in time. Please try again or upload the original file."
+                ) from exc
+            except OSError as exc:
+                logger.warning("Office conversion command could not start: %s", exc)
+                raise _office_conversion_error(
+                    "Office conversion is not available on this server yet. You can still upload the original file.",
+                    503,
+                ) from exc
+
+            converted_files = list(converted_dir.glob("*.pdf"))
+            if result.returncode != 0 or len(converted_files) != 1:
+                logger.warning("Office conversion failed for extension %s with return code %s", extension, result.returncode)
+                raise _office_conversion_error(
+                    "Elume could not convert this file to PDF. Please try again or upload the original file."
+                )
+
+            converted_pdf = converted_files[0]
+            if not converted_pdf.is_file() or converted_pdf.stat().st_size <= 0:
+                raise _office_conversion_error(
+                    "Elume could not convert this file to PDF. Please try again or upload the original file."
+                )
+
+            if extension in POWERPOINT_CONVERSION_EXTENSIONS:
+                try:
+                    from pypdf import PdfReader
+
+                    page_count = len(PdfReader(str(converted_pdf)).pages)
+                except Exception as exc:
+                    logger.warning("Converted presentation PDF could not be validated: %s", exc)
+                    raise _office_conversion_error(
+                        "Elume could not validate this presentation after conversion. Please upload the original file."
+                    ) from exc
+                if page_count > POWERPOINT_CONVERSION_MAX_SLIDES:
+                    raise _office_conversion_error(
+                        "This presentation has more than 30 slides. To keep conversion fast and reliable, Elume can automatically prepare presentations of up to 30 slides."
+                    )
+
+            shutil.copyfile(converted_pdf, output_path)
+    finally:
+        _office_conversion_lock.release()
+
+
 @app.post("/notes/upload", response_model=schemas.NoteOut)
 def upload_note(
     class_id: int = Form(...),
     topic_id: int = Form(...),
     file: UploadFile = File(...),
     media_type: Optional[str] = Form(None),
+    convert_to_pdf: bool = Form(False),
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
@@ -11719,30 +11868,46 @@ def upload_note(
     if normalized_media_type == "audio" or is_audio_topic:
         _validate_audio_upload(file)
 
-    incoming_size_bytes = _measure_upload_size(file)
-    _ensure_storage_available(user, incoming_size_bytes)
-
     dest_dir = UPLOADS_DIR / "notes" / str(class_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_name = (file.filename or "file.pdf").replace("\\", "/").split("/")[-1]
-    dest_path = dest_dir / f"{int(datetime.utcnow().timestamp())}_{safe_name}"
+    source_name = _safe_uploaded_basename(file.filename, "file")
+    source_extension = _office_file_extension(source_name)
+    if convert_to_pdf and source_extension not in OFFICE_CONVERSION_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Only DOC, DOCX, PPT, and PPTX files can be converted to PDF.")
 
-    file.file.seek(0)
-    with dest_path.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
+    safe_name = _converted_pdf_filename(source_name) if convert_to_pdf else source_name
+    dest_path = dest_dir / f"{int(datetime.utcnow().timestamp())}_{uuid.uuid4().hex}_{safe_name}"
 
-    n = models.Note(
-        class_id=class_id,
-        topic_id=topic_id,
-        filename=safe_name,
-        stored_path=str(dest_path),
-    )
-    db.add(n)
-    _increase_storage_used(user, incoming_size_bytes)
-    _maybe_send_storage_warning(db, user)
-    db.commit()
-    db.refresh(n)
+    try:
+        if convert_to_pdf:
+            _convert_office_upload_to_pdf(file, dest_path)
+            stored_size_bytes = dest_path.stat().st_size
+        else:
+            stored_size_bytes = _measure_upload_size(file)
+            file.file.seek(0)
+            with dest_path.open("wb") as stored_file:
+                shutil.copyfileobj(file.file, stored_file)
+
+        _ensure_storage_available(user, stored_size_bytes)
+        n = models.Note(
+            class_id=class_id,
+            topic_id=topic_id,
+            filename=safe_name,
+            stored_path=str(dest_path),
+        )
+        db.add(n)
+        _increase_storage_used(user, stored_size_bytes)
+        _maybe_send_storage_warning(db, user)
+        db.commit()
+        db.refresh(n)
+    except Exception:
+        db.rollback()
+        try:
+            dest_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
     return schemas.NoteOut(
         id=n.id,

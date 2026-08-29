@@ -20,6 +20,8 @@ const AUDIO_MIME_TYPES = new Set([
   "audio/ogg",
   "application/ogg",
 ]);
+const OFFICE_CONVERSION_EXTENSIONS = new Set([".doc", ".docx", ".ppt", ".pptx"]);
+const POWERPOINT_CONVERSION_EXTENSIONS = new Set([".ppt", ".pptx"]);
 
 type ClassItem = {
   id: number;
@@ -61,21 +63,24 @@ function isSupportedAudioFile(file: File) {
   return AUDIO_EXTENSIONS.has(getFileExtension(file.name)) && AUDIO_MIME_TYPES.has((file.type || "").toLowerCase());
 }
 
+function isConvertibleOfficeFile(file: File) {
+  return OFFICE_CONVERSION_EXTENSIONS.has(getFileExtension(file.name));
+}
+
 function buildNotesUploadWarning(files: File[]) {
   if (!files.length) return null;
 
   const exts = new Set(files.map((file) => getFileExtension(file.name)));
-  const hasPdf = exts.has(".pdf");
   const hasDocx = exts.has(".docx") || exts.has(".doc");
   const hasPptx = exts.has(".pptx") || exts.has(".ppt");
-  const hasOtherNonPdf = Array.from(exts).some((ext) => ext && ext !== ".pdf" && ext !== ".docx" && ext !== ".doc" && ext !== ".pptx" && ext !== ".ppt");
+  const hasOtherNonPdf = Array.from(exts).some((ext) => ext && ext !== ".pdf" && !OFFICE_CONVERSION_EXTENSIONS.has(ext));
 
   if (!hasDocx && !hasPptx && !hasOtherNonPdf) return null;
   if (hasPptx) {
-    return "You can store these files in Notes, but quiz generation currently works with PDF files only. PPTX files are not supported for quiz generation yet. Please export the presentation as a PDF.";
+    return "Choose Convert & Upload to make presentations available to Elume's PDF-based teaching tools.";
   }
-  if (hasDocx && !hasPdf && !hasOtherNonPdf) {
-    return "DOCX files can be stored in Notes, but they cannot be used to generate a quiz yet. Please export the document as a PDF if you want to use it for quiz generation.";
+  if (hasDocx && !hasOtherNonPdf) {
+    return "Choose Convert & Upload to make documents available to Elume's PDF-based teaching tools.";
   }
   return "You can store these files in Notes, but quiz generation currently works with PDF files only. Please export documents or presentations as PDF if you want to use them for quiz generation.";
 }
@@ -151,6 +156,8 @@ export default function NotesPage() {
   const [uploadTopicId, setUploadTopicId] = useState<number | "">("");
   const [newTopicName, setNewTopicName] = useState("");
   const [pickedFiles, setPickedFiles] = useState<File[]>([]);
+  const [convertOfficeFiles, setConvertOfficeFiles] = useState(false);
+  const [pendingOfficeFiles, setPendingOfficeFiles] = useState<File[] | null>(null);
   const [uploadFileLimitWarning, setUploadFileLimitWarning] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -305,17 +312,17 @@ export default function NotesPage() {
     return created.id;
   }
 
-  async function handleUpload() {
+  async function uploadFiles(filesToUpload: File[], shouldConvertOfficeFiles: boolean) {
     if (!validClassId) return;
-    if (pickedFiles.length === 0) {
+    if (filesToUpload.length === 0) {
       setError("Pick at least one file");
       return;
     }
-    if (pickedFiles.length > MAX_NOTES_UPLOAD_FILES) {
+    if (filesToUpload.length > MAX_NOTES_UPLOAD_FILES) {
       setError(`You can upload up to ${MAX_NOTES_UPLOAD_FILES} files at a time.`);
       return;
     }
-    if (isAudioUpload && pickedFiles.some((file) => !isSupportedAudioFile(file))) {
+    if (isAudioUpload && filesToUpload.some((file) => !isSupportedAudioFile(file))) {
       setError("Audio accepts MP3, WAV, M4A, AAC, and OGG files with a matching audio type.");
       return;
     }
@@ -326,12 +333,13 @@ export default function NotesPage() {
 
       const topicId = await createTopicIfNeeded();
 
-      for (const file of pickedFiles) {
+      for (const file of filesToUpload) {
         const fd = new FormData();
         fd.append("class_id", String(classId));
         fd.append("topic_id", String(topicId));
         fd.append("file", file);
         if (isAudioUpload) fd.append("media_type", "audio");
+        if (shouldConvertOfficeFiles && isConvertibleOfficeFile(file)) fd.append("convert_to_pdf", "true");
 
         await apiFetch(`${API_BASE}/notes/upload`, {
           method: "POST",
@@ -347,11 +355,19 @@ export default function NotesPage() {
       setUploadTopicId("");
       setNewTopicName("");
       setPickedFiles([]);
+      setConvertOfficeFiles(false);
     } catch (e: any) {
       setError(e?.message || "Upload failed");
+      if (shouldConvertOfficeFiles && filesToUpload.some(isConvertibleOfficeFile)) {
+        setPendingOfficeFiles(filesToUpload);
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleUpload() {
+    await uploadFiles(pickedFiles, convertOfficeFiles);
   }
 
   async function handleDeleteNote(noteId: number) {
@@ -436,6 +452,8 @@ export default function NotesPage() {
     setUploadTopicId(topicId ?? (topics[0]?.id ?? ""));
     setNewTopicName("");
     setPickedFiles([]);
+    setConvertOfficeFiles(false);
+    setPendingOfficeFiles(null);
     setUploadFileLimitWarning(null);
   }
 
@@ -464,18 +482,33 @@ export default function NotesPage() {
   }
 
   function handlePickedFilesChange(nextFiles: File[]) {
+    const limitedFiles = nextFiles.slice(0, MAX_NOTES_UPLOAD_FILES);
     if (nextFiles.length > MAX_NOTES_UPLOAD_FILES) {
-      setPickedFiles(nextFiles.slice(0, MAX_NOTES_UPLOAD_FILES));
       setUploadFileLimitWarning(`You can upload up to ${MAX_NOTES_UPLOAD_FILES} files at a time. Only the first ${MAX_NOTES_UPLOAD_FILES} files have been selected.`);
-      return;
     }
-    if (isAudioUpload && nextFiles.some((file) => !isSupportedAudioFile(file))) {
+    if (isAudioUpload && limitedFiles.some((file) => !isSupportedAudioFile(file))) {
       setPickedFiles([]);
+      setConvertOfficeFiles(false);
       setUploadFileLimitWarning("Audio accepts MP3, WAV, M4A, AAC, and OGG files with a matching audio type.");
       return;
     }
-    setPickedFiles(nextFiles);
-    setUploadFileLimitWarning(null);
+    if (limitedFiles.some(isConvertibleOfficeFile)) {
+      setPendingOfficeFiles(limitedFiles);
+      if (nextFiles.length <= MAX_NOTES_UPLOAD_FILES) setUploadFileLimitWarning(null);
+      return;
+    }
+    setPickedFiles(limitedFiles);
+    setConvertOfficeFiles(false);
+    if (nextFiles.length <= MAX_NOTES_UPLOAD_FILES) setUploadFileLimitWarning(null);
+  }
+
+  async function chooseOfficeUploadMode(shouldConvert: boolean) {
+    const filesToUpload = pendingOfficeFiles;
+    if (!filesToUpload?.length) return;
+    setPendingOfficeFiles(null);
+    setPickedFiles(filesToUpload);
+    setConvertOfficeFiles(shouldConvert);
+    await uploadFiles(filesToUpload, shouldConvert);
   }
 
   const pageTitle = loadingClass
@@ -918,6 +951,53 @@ export default function NotesPage() {
           </div>
         </div>
       )}
+
+      {pendingOfficeFiles?.length ? (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="office-conversion-title">
+          <div className="w-full max-w-xl rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-2xl md:p-7">
+            <div className="inline-flex rounded-2xl bg-emerald-50 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-emerald-700">
+              Resource preparation
+            </div>
+            <h2 id="office-conversion-title" className="mt-4 text-2xl font-black tracking-tight text-slate-900">
+              Make this resource ready for Elume?
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Elume can convert this file to PDF so it can be used with Whiteboard, quizzes and other teaching tools.
+            </p>
+            {pendingOfficeFiles.some((file) => POWERPOINT_CONVERSION_EXTENSIONS.has(getFileExtension(file.name))) ? (
+              <div className="mt-4 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-900">
+                Slides will be converted as static pages. Animations and transitions will not be included.
+              </div>
+            ) : null}
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+              {pendingOfficeFiles.map((file) => file.name).join(", ")}
+            </div>
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setPendingOfficeFiles(null)}
+                className="min-h-11 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void chooseOfficeUploadMode(false)}
+                className="min-h-11 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 transition hover:bg-slate-50"
+              >
+                Upload Original
+              </button>
+              <button
+                type="button"
+                onClick={() => void chooseOfficeUploadMode(true)}
+                className="min-h-11 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700"
+              >
+                Convert &amp; Upload
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

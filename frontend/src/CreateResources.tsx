@@ -312,10 +312,7 @@ const OUTPUT_TILE_STYLES: Record<OutputKind, OutputTileStyle> = {
 
 function destinationOptionsForOutput(kind: OutputKind): DestinationOption[] {
   if (kind === "worksheet") {
-    return [
-      { bucket: "tests", label: "Worksheets", recommended: true, folders: ["Worksheets"] },
-      { bucket: "notes", label: "Notes", folders: [] },
-    ];
+    return [{ bucket: "links", label: "Resources", recommended: true, folders: ["Worksheets"] }];
   }
   if (kind === "lesson_plan") {
     return [{ bucket: "links", label: "Resources", recommended: true, folders: ["Lesson Plans"] }];
@@ -680,6 +677,7 @@ export default function CreateResources() {
   const [aiErr, setAiErr] = useState<string | null>(null);
   const [preview, setPreview] = useState<GeneratedDoc | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [savedResourceLocation, setSavedResourceLocation] = useState<{ classId: number; folder: "Lesson Plans" | "Worksheets" } | null>(null);
   const [postingIdeaId, setPostingIdeaId] = useState<string | null>(null);
   const [ideaPostStatus, setIdeaPostStatus] = useState<string | null>(null);
 
@@ -1422,9 +1420,6 @@ export default function CreateResources() {
   function savePreview() {
     if (!preview) return;
     setHistory((prev) => [preview, ...prev]);
-    setSaveStatus(
-      `Saved to ${displayLabelForBucket(preview.saveBucket)}${preview.saveFolder ? ` / ${preview.saveFolder}` : ""}`
-    );
 
     if (
       scope.mode !== "single" ||
@@ -1435,6 +1430,8 @@ export default function CreateResources() {
       !preview.title.trim() ||
       !preview.content.trim()
     ) {
+      setSavedResourceLocation(null);
+      setSaveStatus("Saved to your Create Resources history. Choose a single class and the suggested resource destination to save it to Class Resources.");
       return;
     }
 
@@ -1450,8 +1447,11 @@ export default function CreateResources() {
     };
 
     const existing = readGeneratedResourcesForClass(scope.classId);
-    if (existing.some((item) => item.id === nextItem.id)) return;
-    saveGeneratedResourcesForClass(scope.classId, [nextItem, ...existing]);
+    if (!existing.some((item) => item.id === nextItem.id)) {
+      saveGeneratedResourcesForClass(scope.classId, [nextItem, ...existing]);
+    }
+    setSavedResourceLocation({ classId: scope.classId, folder: preview.saveFolder });
+    setSaveStatus(`${labelForOutput(preview.kind)} saved to Class Resources > ${preview.saveFolder}`);
   }
 
   async function postIdeaToClassTimeline(idea: IdeaPreviewBlock) {
@@ -2054,7 +2054,7 @@ export default function CreateResources() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                <button type="button" className={btn} onClick={() => { setPrompt(""); setAiErr(null); setPreview(null); setSaveStatus(null); }}>
+                <button type="button" className={btn} onClick={() => { setPrompt(""); setAiErr(null); setPreview(null); setSaveStatus(null); setSavedResourceLocation(null); }}>
                   Clear
                 </button>
                   <button type="button" className={btnPrimary} onClick={runGenerate} disabled={aiBusy || !prompt.trim()}>
@@ -2106,8 +2106,17 @@ export default function CreateResources() {
                   </div>
 
                   {saveStatus && (
-                    <div className="rounded-[20px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
-                      {saveStatus}
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+                      <span>{saveStatus}</span>
+                      {savedResourceLocation ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/class/${savedResourceLocation.classId}/links`)}
+                          className="rounded-xl border border-emerald-300 bg-white px-4 py-2 text-sm font-black text-emerald-800 shadow-sm transition hover:bg-emerald-100"
+                        >
+                          View in Resources
+                        </button>
+                      ) : null}
                     </div>
                   )}
 

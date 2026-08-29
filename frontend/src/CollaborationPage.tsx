@@ -776,59 +776,89 @@ export default function CollaborationPage() {
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-2">
-                                    <button
-                                        onClick={createSession}
-                                        disabled={isCreating || hasSession}
-                                        className={cls(
-                                            "rounded-2xl px-6 py-3 text-base font-black text-white shadow-lg transition",
-                                            isCreating || hasSession
-                                                ? "cursor-not-allowed bg-emerald-300"
-                                                : "bg-emerald-600 hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-xl"
-                                        )}
-                                    >
-                                        {hasSession ? "Session created" : isCreating ? "Creating session..." : "Start by creating session"}
-                                    </button>
+                                    {hasSession ? (
+                                        <div
+                                            className="inline-flex min-h-11 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 shadow-sm"
+                                            role="status"
+                                            aria-live="polite"
+                                        >
+                                            <span className="relative flex h-2.5 w-2.5" aria-hidden="true">
+                                                <span className="absolute inline-flex h-full w-full rounded-full bg-red-400/70 motion-reduce:animate-none animate-[ping_2.8s_ease-out_infinite]" />
+                                                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+                                            </span>
+                                            Session is Live
+                                        </div>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={createSession}
+                                            disabled={isCreating}
+                                            className={cls(
+                                                "min-h-11 rounded-2xl px-6 py-3 text-base font-black text-white shadow-lg transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-200",
+                                                isCreating
+                                                    ? "cursor-not-allowed bg-emerald-300"
+                                                    : "bg-emerald-600 hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-xl"
+                                            )}
+                                        >
+                                            {isCreating ? "Creating session..." : "Start by creating session"}
+                                        </button>
+                                    )}
 
 
                                     <button
+                                        type="button"
                                         onClick={() => hasSession && setShowJoinModal(true)}
                                         disabled={!hasSession}
                                         className={cls(
-                                            "rounded-lg border px-4 py-2 text-sm font-black",
+                                            "min-h-11 rounded-2xl border px-4 py-2 text-sm font-black shadow-sm transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-200",
                                             hasSession
-                                                ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                                                ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50 hover:shadow"
                                                 : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
                                         )}
                                     >
-                                        Student join
+                                        Show QR Code
                                     </button>
                                     <button
+                                        type="button"
                                         onClick={() => setShowBreakoutModal(true)}
                                         disabled={!hasSession}
                                         className={cls(
-                                            "rounded-lg border px-4 py-2 text-sm font-black",
+                                            "relative min-h-11 rounded-2xl px-5 py-2 text-sm font-black text-white shadow-md transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-200",
                                             hasSession
-                                                ? "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-                                                : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                                ? "bg-emerald-600 hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-lg"
+                                                : "cursor-not-allowed bg-emerald-300 text-emerald-50"
                                         )}
                                     >
+                                        {hasSession && (
+                                            <span className="pointer-events-none absolute -inset-1 rounded-[1.1rem] border border-emerald-400/70 motion-reduce:animate-none animate-[pulse_2.8s_ease-in-out_infinite]" aria-hidden="true" />
+                                        )}
                                         Start Breakout
                                     </button>
 
                                     <button
+                                        type="button"
                                         onClick={endBreakout}
                                         disabled={!hasSession}
-                                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-800 hover:bg-slate-50"
+                                        className={cls(
+                                            "relative min-h-11 rounded-2xl px-5 py-2 text-sm font-black text-white shadow-md transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-200",
+                                            hasSession
+                                                ? "bg-red-600 hover:-translate-y-0.5 hover:bg-red-700 hover:shadow-lg"
+                                                : "cursor-not-allowed bg-red-200 text-red-50"
+                                        )}
                                     >
-                                        End breakout
+                                        {hasSession && (
+                                            <span className="pointer-events-none absolute -inset-1 rounded-[1.1rem] border border-red-400/70 motion-reduce:animate-none animate-[pulse_3.2s_ease-in-out_infinite]" aria-hidden="true" />
+                                        )}
+                                        End Session
                                     </button>
 
                                     <button
+                                        type="button"
                                         onClick={handleStartNewSession}
                                         disabled={!hasSession}
-                                        className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                        className="min-h-11 rounded-2xl bg-gradient-to-r from-violet-600 to-purple-600 px-5 py-2 text-sm font-black text-white shadow-md transition hover:-translate-y-0.5 hover:from-violet-700 hover:to-purple-700 hover:shadow-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
-                                        Start new session
+                                        Start New Session
                                     </button>
 
                                     <button
@@ -1050,7 +1080,7 @@ export default function CollaborationPage() {
                                                 : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
                                         )}
                                     >
-                                        Student join
+                                        Show QR Code
                                     </button>
                                 </div>
                             </div>

@@ -1402,12 +1402,19 @@ export default function ClassPage() {
             { name: "Quizzes", colour: "bg-yellow-400 border-yellow-500 text-black" },
             { name: "Exam Papers", colour: "bg-green-500 border-green-600 text-white" },
             { name: "Videos", colour: "bg-orange-500 border-orange-600 text-white" },
-            { name: "Resources", colour: "bg-white border-slate-300 text-slate-800" },
+            {
+              name: "Resources",
+              colour:
+                "border-emerald-600 bg-[linear-gradient(135deg,#059669,#0d9488,#0891b2)] text-white shadow-[0_8px_18px_rgba(13,148,136,0.28)] hover:brightness-105 hover:shadow-[0_12px_22px_rgba(6,182,212,0.34)]",
+              ariaLabel: "Resources: Worksheets, files and teaching materials",
+            },
           ].map((x) => (
             <button
               key={x.name}
               className={`rounded-2xl border-2 px-4 py-3 text-sm font-semibold shadow-sm hover:brightness-110 active:translate-y-[1px] ${x.colour}`}
               type="button"
+              aria-label={"ariaLabel" in x ? x.ariaLabel : x.name}
+              title={"ariaLabel" in x ? x.ariaLabel : x.name}
               onClick={() => {
                 if (x.name === "Notes") navigate(`/class/${classId}/notes`);
                 else if (x.name === "Tests") navigate(`/class/${classId}/tests`);
