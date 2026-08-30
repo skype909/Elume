@@ -1517,6 +1517,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
   const [interpretationCache, setInterpretationCache] = useState<Record<string, Cat4StudentInterpretationResp | null>>({});
   const [interpretationLoading, setInterpretationLoading] = useState<Record<string, boolean>>({});
   const [interpretationError, setInterpretationError] = useState<Record<string, string | null>>({});
+  const [interpretationQuotaNotice, setInterpretationQuotaNotice] = useState<string | null>(null);
   const [selectedBaselineId, setSelectedBaselineId] = useState<number | "">("");
   const [selectedTermSetId, setSelectedTermSetId] = useState<number | "">("");
   const [selectedCohortKey, setSelectedCohortKey] = useState("default");
@@ -1994,11 +1995,16 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
         }),
       })) as Cat4StudentInterpretationResp;
       setInterpretationCache((prev) => ({ ...prev, [key]: data }));
-    } catch {
+      if (!publicDemo) {
+        void apiFetch("/ai/usage/cat4_interpretation")
+          .then((usage: { message?: string | null }) => setInterpretationQuotaNotice(usage.message || null))
+          .catch(() => undefined);
+      }
+    } catch (e: any) {
       setInterpretationCache((prev) => ({ ...prev, [key]: null }));
       setInterpretationError((prev) => ({
         ...prev,
-        [key]: "The explanation could not be generated just now. You can try again, and the structured CAT4 facts below remain available for review.",
+        [key]: e?.message || "The explanation could not be generated just now. You can try again, and the structured CAT4 facts below remain available for review.",
       }));
     } finally {
       setInterpretationLoading((prev) => ({ ...prev, [key]: false }));
@@ -3547,6 +3553,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
                       </span>
                     </div>
                     <div className="text-sm leading-6 text-slate-700">{selectedInterpretation.explanation}</div>
+                    {interpretationQuotaNotice ? <div className="mt-3 text-sm font-semibold text-slate-500">{interpretationQuotaNotice}</div> : null}
                     <div className="mt-4 border-t border-slate-100 pt-3">
                       <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Based on facts</div>
                       <div className="mt-2 flex flex-wrap gap-2">

@@ -24,6 +24,8 @@ export const SENIOR_CYCLE_SUBJECTS = [
   "Geography",
   "History",
   "French",
+  "Spanish",
+  "Physical Education",
   "Applied Maths",
 ] as const;
 
@@ -72,6 +74,7 @@ export function normalizeExamLibrarySubject(
   if (raw === "business") return "Business";
   if (raw === "graphics") return "Graphics";
   if (raw === "spanish") return "Spanish";
+  if (raw === "physical education" || raw === "physical ed" || raw === "pe") return "Physical Education";
   if (raw === "german") return "German";
   if (raw === "home economics" || raw === "home ec") return "Home Economics";
   if (raw === "wood technology" || raw === "wood tech") return "Wood Technology";

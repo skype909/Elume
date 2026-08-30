@@ -675,6 +675,7 @@ export default function CreateResources() {
   const [uploadedManualFiles, setUploadedManualFiles] = useState<UploadedManualFile[]>([]);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState<string | null>(null);
+  const [aiQuotaNotice, setAiQuotaNotice] = useState<string | null>(null);
   const [preview, setPreview] = useState<GeneratedDoc | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [savedResourceLocation, setSavedResourceLocation] = useState<{ classId: number; folder: "Lesson Plans" | "Worksheets" } | null>(null);
@@ -1305,6 +1306,7 @@ export default function CreateResources() {
 
     setAiBusy(true);
     setAiErr(null);
+    setAiQuotaNotice(null);
     setPreview(null);
     setSaveStatus(null);
     setIdeaPostStatus(null);
@@ -1407,8 +1409,21 @@ export default function CreateResources() {
           worksheetIncludeAnswers: outputKind === "worksheet" ? worksheetIncludeAnswers : undefined,
           content,
         });
+        const feature = outputKind === "ideas" ? "three_ideas" : outputKind === "scheme" ? "scheme_of_work" : outputKind === "dept_plan" ? "department_plan" : outputKind;
+        try {
+          const usage = await apiFetch(`/ai/usage/${feature}`) as { message?: string | null };
+          setAiQuotaNotice(usage.message || null);
+        } catch {
+          // The generated resource is already ready; a quiet usage hint is optional.
+        }
       }
-    } catch {
+    } catch (e: any) {
+      const message = e?.message || "";
+      if (message.startsWith("You've used") || message.includes("AI allowance") || message.includes("temporarily unavailable")) {
+        setPreview(null);
+        setAiErr(message);
+        return;
+      }
       const fallback = localGenerate(outputKind, teacherPrompt);
       setPreview(fallback);
       setAiErr("Preview generated locally while AI connection is being finalised.");
@@ -2054,7 +2069,7 @@ export default function CreateResources() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                <button type="button" className={btn} onClick={() => { setPrompt(""); setAiErr(null); setPreview(null); setSaveStatus(null); setSavedResourceLocation(null); }}>
+                <button type="button" className={btn} onClick={() => { setPrompt(""); setAiErr(null); setAiQuotaNotice(null); setPreview(null); setSaveStatus(null); setSavedResourceLocation(null); }}>
                   Clear
                 </button>
                   <button type="button" className={btnPrimary} onClick={runGenerate} disabled={aiBusy || !prompt.trim()}>
@@ -2067,6 +2082,10 @@ export default function CreateResources() {
                 <div className="mt-4 rounded-[24px] border-2 border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                   {aiErr}
                 </div>
+              )}
+
+              {aiQuotaNotice && (
+                <div className="mt-3 text-sm font-semibold text-slate-500">{aiQuotaNotice}</div>
               )}
 
               {!preview && (

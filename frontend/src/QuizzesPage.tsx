@@ -290,6 +290,7 @@ export default function QuizzesPage() {
   const [genQuizTitle, setGenQuizTitle] = useState("");
   const [genNum, setGenNum] = useState<number>(10);
   const [genBusy, setGenBusy] = useState(false);
+  const [aiQuotaNotice, setAiQuotaNotice] = useState<string | null>(null);
 
   /** --------- Play Mode --------- */
   type PlayState = {
@@ -725,6 +726,9 @@ export default function QuizzesPage() {
       setQuizzes((prev) => [newQuiz, ...prev]);
       setEditingQuizId(newQuiz.id);
       setShowGenerate(false);
+      void apiFetch("/ai/usage/quiz")
+        .then((usage: { message?: string | null }) => setAiQuotaNotice(usage.message || null))
+        .catch(() => undefined);
     } catch (e: any) {
       setError(e?.message || "Generate failed.");
     } finally {
@@ -813,6 +817,10 @@ export default function QuizzesPage() {
           <div className="mb-5 rounded-[24px] border-2 border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
             {error}
           </div>
+        )}
+
+        {aiQuotaNotice && (
+          <div className="mb-5 text-sm font-semibold text-slate-500">{aiQuotaNotice}</div>
         )}
 
         {!playing && (

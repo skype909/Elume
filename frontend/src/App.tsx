@@ -60,6 +60,27 @@ type ClassItem = {
 
 const API_BASE = "/api";
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
+const TEACHER_INSTALL_DISMISS_KEY = "elume:teacher:install-prompt:dismissed";
+
+function isStandaloneApp() {
+  const navigatorWithStandalone = window.navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia?.("(display-mode: standalone)")?.matches || navigatorWithStandalone.standalone === true;
+}
+
+function isIosDevice() {
+  return /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+}
+
+function isMacSafari() {
+  const userAgent = window.navigator.userAgent;
+  return /macintosh/i.test(userAgent) && /safari/i.test(userAgent) && !/chrome|chromium|edg/i.test(userAgent);
+}
+
 // local-only metadata (order only; older payloads may still include color during migration)
 type ClassMeta = {
   order: number;
@@ -388,7 +409,15 @@ function levelOptionsForStream(s: Stream, y: YearOption): LevelOption[] {
   return ["Common Level"];
 }
 
-function Dashboard() {
+function Dashboard({
+  installPromptEvent,
+  installedApp,
+  onInstallPromptConsumed,
+}: {
+  installPromptEvent: BeforeInstallPromptEvent | null;
+  installedApp: boolean;
+  onInstallPromptConsumed: () => void;
+}) {
   const loadedMetaRef = useRef<{ meta: MetaStore; legacyColors: LegacyColorStore } | null>(null);
   if (!loadedMetaRef.current) {
     loadedMetaRef.current = loadMeta();
@@ -398,8 +427,38 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [welcome, setWelcome] = useState<string>(() => loadTeacherWelcome());
+  const [installDismissed, setInstallDismissed] = useState(() => localStorage.getItem(TEACHER_INSTALL_DISMISS_KEY) === "1");
+  const [showInstallInstructions, setShowInstallInstructions] = useState(false);
 
   const navigate = useNavigate();
+  const runningStandalone = installedApp || isStandaloneApp();
+  const manualInstallAvailable = isIosDevice() || isMacSafari();
+  const installAvailable = !runningStandalone && (Boolean(installPromptEvent) || manualInstallAvailable);
+
+  function dismissInstallPrompt() {
+    try {
+      localStorage.setItem(TEACHER_INSTALL_DISMISS_KEY, "1");
+    } catch { }
+    setInstallDismissed(true);
+    setShowInstallInstructions(false);
+  }
+
+  function showInstallPromptAgain() {
+    try {
+      localStorage.removeItem(TEACHER_INSTALL_DISMISS_KEY);
+    } catch { }
+    setInstallDismissed(false);
+  }
+
+  async function requestNativeInstall() {
+    if (!installPromptEvent) return;
+    try {
+      await installPromptEvent.prompt();
+      const choice = await installPromptEvent.userChoice;
+      if (choice.outcome === "accepted") dismissInstallPrompt();
+    } catch { }
+    onInstallPromptConsumed();
+  }
 
   // layout metadata (order only; legacy local colours migrate to backend when needed)
   const [meta, setMeta] = useState<MetaStore>(() => loadedMetaRef.current?.meta ?? {});
@@ -1360,6 +1419,48 @@ function Dashboard() {
           </div>
         </div>
 
+        {installAvailable && !installDismissed ? (
+          <div className="mb-5 rounded-3xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(255,255,255,0.98),rgba(236,254,255,0.92))] p-4 shadow-[0_10px_28px_rgba(16,185,129,0.12)]">
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/80 bg-white shadow-sm">
+                <img src={ELogo2} alt="Elume" className="h-8 w-8 object-contain" />
+              </div>
+              <div className="min-w-[220px] flex-1">
+                <div className="text-base font-black tracking-tight text-slate-900">Install Elume</div>
+                <div className="mt-1 text-sm leading-5 text-slate-600">Keep Elume one tap away during lessons. Install it on this device and open it just like an app.</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={installPromptEvent ? () => void requestNativeInstall() : () => setShowInstallInstructions(true)}
+                  className="min-h-11 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 px-4 py-2.5 text-sm font-black text-white shadow-md transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-200"
+                >
+                  Install Elume
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissInstallPrompt}
+                  className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-200"
+                >
+                  Maybe later
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {installAvailable && installDismissed ? (
+          <div className="mb-4 flex justify-end">
+            <button
+              type="button"
+              onClick={showInstallPromptAgain}
+              className="rounded-xl px-3 py-2 text-sm font-bold text-emerald-800 underline decoration-emerald-300 underline-offset-4 transition hover:text-emerald-950 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-200"
+            >
+              Install Elume
+            </button>
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           {loading && (
             <div className={`${card} p-4 text-sm text-slate-600 md:col-span-4`}>
@@ -1448,7 +1549,7 @@ function Dashboard() {
             })}
         </div>
 
-        <div className="mt-5 flex items-center justify-start">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
             onClick={() => navigate("/archived-classes")}
@@ -1458,6 +1559,39 @@ function Dashboard() {
           </button>
         </div>
       </main>
+
+      {showInstallInstructions && !runningStandalone ? (
+        <div className="fixed inset-0 z-[70] grid place-items-end bg-slate-950/40 p-3 sm:place-items-center" role="dialog" aria-modal="true" aria-labelledby="install-elume-title">
+          <div className="w-full max-w-md rounded-[28px] border border-white/80 bg-white p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm font-black uppercase tracking-[0.14em] text-emerald-700">Install Elume</div>
+                <h2 id="install-elume-title" className="mt-1 text-2xl font-black tracking-tight text-slate-900">
+                  {isIosDevice() ? "Install Elume on iPhone" : "Install Elume on your Mac"}
+                </h2>
+              </div>
+              <button type="button" onClick={() => setShowInstallInstructions(false)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50" aria-label="Close installation instructions">
+                Close
+              </button>
+            </div>
+            {isIosDevice() ? (
+              <ol className="mt-5 list-decimal space-y-3 pl-5 text-sm leading-6 text-slate-700">
+                <li>Open Elume in Safari and tap the Share button.</li>
+                <li>Choose <span className="font-black text-slate-900">Add to Home Screen</span>.</li>
+                <li>Enable or choose <span className="font-black text-slate-900">Open as Web App</span> if that option is shown.</li>
+                <li>Tap <span className="font-black text-slate-900">Add</span>.</li>
+              </ol>
+            ) : (
+              <ol className="mt-5 list-decimal space-y-3 pl-5 text-sm leading-6 text-slate-700">
+                <li>Open Elume in Safari.</li>
+                <li>Choose <span className="font-black text-slate-900">File &gt; Add to Dock</span> or <span className="font-black text-slate-900">Share &gt; Add to Dock</span> if shown.</li>
+                <li>Confirm to add Elume to your Dock.</li>
+              </ol>
+            )}
+            <p className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">Elume will appear on your device and open like an app.</p>
+          </div>
+        </div>
+      ) : null}
 
       {/* Mobile Timetable Quick View */}
       {ttOpen && (
@@ -1922,6 +2056,8 @@ export default function App() {
     window.location.hostname === "127.0.0.1";
 
   const [isAuthed, setIsAuthed] = useState(() => !!getToken());
+  const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installedApp, setInstalledApp] = useState(() => isStandaloneApp());
   const [currentRole, setCurrentRole] = useState<string | null>(null);
   const [currentSchoolBrand, setCurrentSchoolBrand] = useState<{ id?: number | null; name?: string | null; logoUrl?: string | null } | null>(null);
   const userEmail = useMemo(() => getEmailFromToken(), [isAuthed]);
@@ -1936,6 +2072,24 @@ export default function App() {
     location.pathname === "/onboarding/billing" ||
     location.pathname === "/billing/success" ||
     location.pathname === "/billing/cancel";
+
+  useEffect(() => {
+    const onBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPromptEvent(event as BeforeInstallPromptEvent);
+    };
+    const onAppInstalled = () => {
+      setInstalledApp(true);
+      setInstallPromptEvent(null);
+    };
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt as EventListener);
+    window.addEventListener("appinstalled", onAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt as EventListener);
+      window.removeEventListener("appinstalled", onAppInstalled);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2060,7 +2214,10 @@ export default function App() {
         <Route path="/student" element={<StudentPage />} />
         <Route path="/student/:token" element={<StudentClassPage />} />
         <Route path="/s/:token" element={<StudentClassPage />} />
-        <Route path="/" element={<Dashboard />} />
+        <Route
+          path="/"
+          element={<Dashboard installPromptEvent={installPromptEvent} installedApp={installedApp} onInstallPromptConsumed={() => setInstallPromptEvent(null)} />}
+        />
         <Route path="/admin" element={<TeacherAdminPage />} />
         <Route path="/admin-users" element={<AdminUsersPage />} />
         <Route path="/school-admin" element={<SchoolAdminPage />} />

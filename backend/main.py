@@ -90,6 +90,7 @@ from schemas import (
 
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
 import schemas
+from ai_usage import AI_FEATURES, allowance_available, allowance_message, allowance_warning, current_allowance_period, feature_policy, resource_feature
 from db import Base, SessionLocal, engine
 
 from models import (
@@ -548,17 +549,14 @@ def _is_trial_active(user: models.UserModel) -> bool:
 
 
 def _refresh_ai_daily_limit(user: models.UserModel) -> int:
-    # TEMP: AI limits disabled for launch week
-    target = 9999
-    if user.ai_daily_limit != target:
-        user.ai_daily_limit = target
-    return target
+    # Legacy status fields remain for existing billing UI compatibility. Per-feature
+    # event records are now the authoritative allowance source.
+    return int(user.ai_daily_limit or 0)
 
 
 def _reset_ai_prompt_counter_if_needed(user: models.UserModel) -> None:
-    today = _utcnow().date()
-    existing = user.ai_prompt_count_date.date() if user.ai_prompt_count_date else None
-    if existing != today:
+    period_start, _ = current_allowance_period("daily")
+    if not user.ai_prompt_count_date or user.ai_prompt_count_date < period_start:
         user.ai_prompt_count = 0
         user.ai_prompt_count_date = _utcnow()
 
@@ -653,24 +651,133 @@ def _validate_stored_stripe_customer(
         raise
 
 
-def _enforce_ai_prompt_limit(db: Session, user: models.UserModel) -> None:
-    _refresh_ai_daily_limit(user)
-    _reset_ai_prompt_counter_if_needed(user)
-    limit = int(user.ai_daily_limit or 0)
-    used = int(user.ai_prompt_count or 0)
-    if limit <= 0:
-        raise HTTPException(status_code=403, detail="AI access requires an active plan or trial.")
-    if used >= limit:
-        raise HTTPException(status_code=403, detail=f"Today's AI prompt limit reached ({limit}/{limit}).")
+def _env_enabled(name: str, default: bool = True) -> bool:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ai_feature_is_enabled(feature: str) -> bool:
+    if not _env_enabled("ELUME_AI_ENABLED", True):
+        return False
+    disabled = {item.strip().lower() for item in os.getenv("ELUME_AI_DISABLED_FEATURES", "").split(",") if item.strip()}
+    return feature not in disabled and _env_enabled(f"ELUME_AI_{feature.upper()}_ENABLED", True)
+
+
+def _ai_feature_policy(feature: str) -> dict[str, Any]:
+    try:
+        return feature_policy(feature)
+    except KeyError:
+        raise RuntimeError(f"Unknown AI feature: {feature}")
+
+
+def _raise_ai_feature_limit(feature: str, used: int) -> None:
+    policy = _ai_feature_policy(feature)
+    _, reset_at = current_allowance_period(str(policy["period"]))
+    raise HTTPException(
+        status_code=429,
+        detail=allowance_message(feature, used),
+        headers={
+            "X-Elume-AI-Feature": feature,
+            "X-Elume-AI-Limit": str(policy["limit"]),
+            "X-Elume-AI-Used": str(used),
+            "X-Elume-AI-Remaining": "0",
+            "X-Elume-AI-Reset-At": reset_at.isoformat() + "Z",
+        },
+    )
+
+
+def _enforce_ai_feature_limit(db: Session, user: models.UserModel, feature: str) -> None:
+    policy = _ai_feature_policy(feature)
+    if not _ai_feature_is_enabled(feature):
+        raise HTTPException(status_code=503, detail="AI generation is temporarily unavailable. Please try again later.")
+    period_start, _ = current_allowance_period(str(policy["period"]))
+    used = (
+        db.query(models.AIUsageEventModel)
+        .filter(
+            models.AIUsageEventModel.user_id == user.id,
+            models.AIUsageEventModel.feature == feature,
+            models.AIUsageEventModel.created_at >= period_start,
+        )
+        .count()
+    )
+    if not allowance_available(feature, used):
+        _raise_ai_feature_limit(feature, used)
+
+
+def _openai_usage_value(response: Any, name: str) -> Optional[int]:
+    usage = getattr(response, "usage", None)
+    value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_ai_feature_usage(db: Session, user: models.UserModel, feature: str, response: Any, requested_model: str) -> None:
+    """Persist only successful generations; final locked check closes double-click races."""
+    policy = _ai_feature_policy(feature)
+    period_start, _ = current_allowance_period(str(policy["period"]))
+    locked_user = (
+        db.query(models.UserModel)
+        .filter(models.UserModel.id == user.id)
+        .with_for_update()
+        .one()
+    )
+    used = (
+        db.query(models.AIUsageEventModel)
+        .filter(
+            models.AIUsageEventModel.user_id == locked_user.id,
+            models.AIUsageEventModel.feature == feature,
+            models.AIUsageEventModel.created_at >= period_start,
+        )
+        .count()
+    )
+    if not allowance_available(feature, used):
+        db.rollback()
+        _raise_ai_feature_limit(feature, used)
+
+    input_tokens = _openai_usage_value(response, "prompt_tokens")
+    output_tokens = _openai_usage_value(response, "completion_tokens")
+    total_tokens = _openai_usage_value(response, "total_tokens")
+    db.add(
+        models.AIUsageEventModel(
+            user_id=locked_user.id,
+            feature=feature,
+            model=str(getattr(response, "model", None) or requested_model),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
+    )
+    _reset_ai_prompt_counter_if_needed(locked_user)
+    locked_user.ai_prompt_count = int(locked_user.ai_prompt_count or 0) + 1
+    locked_user.ai_prompt_count_date = _utcnow()
     db.commit()
 
 
-def _record_ai_prompt_usage(db: Session, user: models.UserModel) -> None:
-    _refresh_ai_daily_limit(user)
-    _reset_ai_prompt_counter_if_needed(user)
-    user.ai_prompt_count = int(user.ai_prompt_count or 0) + 1
-    user.ai_prompt_count_date = _utcnow()
-    db.commit()
+def _ai_feature_usage_summary(db: Session, user: models.UserModel, feature: str) -> dict[str, Any]:
+    policy = _ai_feature_policy(feature)
+    period_start, reset_at = current_allowance_period(str(policy["period"]))
+    used = (
+        db.query(models.AIUsageEventModel)
+        .filter(
+            models.AIUsageEventModel.user_id == user.id,
+            models.AIUsageEventModel.feature == feature,
+            models.AIUsageEventModel.created_at >= period_start,
+        )
+        .count()
+    )
+    return {
+        "feature": feature,
+        "period": policy["period"],
+        "limit": int(policy["limit"]),
+        "used": used,
+        "remaining": max(0, int(policy["limit"]) - used),
+        "reset_at": reset_at.isoformat() + "Z",
+        "message": allowance_warning(feature, used),
+    }
 
 
 def _find_billing_user(db: Session, stripe_obj: Any) -> Optional[models.UserModel]:
@@ -13850,7 +13957,7 @@ def cat4_student_interpretation(
     if not raw_name:
         raise HTTPException(status_code=400, detail="raw_name is required")
 
-    _enforce_ai_prompt_limit(db, user)
+    _enforce_ai_feature_limit(db, user, "cat4_interpretation")
     facts = _cat4_student_interpretation_facts(
         class_id,
         db,
@@ -13909,13 +14016,15 @@ def cat4_student_interpretation(
 
     try:
         client = OpenAI(api_key=api_key)
+        model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         resp = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            model=model_name,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_message},
             ],
             temperature=0.2,
+            max_tokens=AI_FEATURES["cat4_interpretation"]["max_tokens"],
         )
         explanation = " ".join((resp.choices[0].message.content or "").strip().split())
     except Exception:
@@ -13932,7 +14041,7 @@ def cat4_student_interpretation(
             "source": "fallback",
         }
 
-    _record_ai_prompt_usage(db, user)
+    _record_ai_feature_usage(db, user, "cat4_interpretation", resp, model_name)
     return {
         "explanation": explanation,
         "facts": facts,
@@ -14331,7 +14440,7 @@ def ai_parse_event(
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")
-    _enforce_ai_prompt_limit(db, user)
+    _enforce_ai_feature_limit(db, user, "calendar")
 
     # Lazy import so your backend still runs even if openai isn't installed in this env
     try:
@@ -14370,13 +14479,15 @@ def ai_parse_event(
         f"today: {datetime.now().date().isoformat()}\n"
     )
 
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     resp = client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model=model_name,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user_message},
         ],
         temperature=0.2,
+        max_tokens=AI_FEATURES["calendar"]["max_tokens"],
     )
 
     content = (resp.choices[0].message.content or "").strip()
@@ -14415,7 +14526,7 @@ def ai_parse_event(
             detail=f"AI draft failed validation against CalendarEventCreate. Error: {e}. Draft keys: {list(data.keys())}",
         )
 
-    _record_ai_prompt_usage(db, user)
+    _record_ai_feature_usage(db, user, "calendar", resp, model_name)
     return schemas.AIParseEventResponse(draft=draft, warnings=warnings)
 
 # -------------------------
@@ -14577,7 +14688,8 @@ def ai_create_resources(
     p = (payload.prompt or "").strip()
     if not p:
         raise HTTPException(status_code=400, detail="prompt is required")
-    _enforce_ai_prompt_limit(db, user)
+    feature = resource_feature(payload.kind)
+    _enforce_ai_feature_limit(db, user, feature)
 
     # Lazy import so backend still runs without openai installed
     try:
@@ -14752,13 +14864,15 @@ def ai_create_resources(
         "Write the best possible resource for the teacher."
     )
 
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     resp = client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model=model_name,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
         temperature=0.3,
+        max_tokens=AI_FEATURES[feature]["max_tokens"],
     )
 
     content = (resp.choices[0].message.content or "").strip()
@@ -14781,7 +14895,7 @@ def ai_create_resources(
     if not body:
         raise HTTPException(status_code=500, detail="AI returned empty content")
 
-    _record_ai_prompt_usage(db, user)
+    _record_ai_feature_usage(db, user, feature, resp, model_name)
     return {"title": title, "content": body}
 class AIReportCommentRequest(BaseModel):
     length: str = "Medium"            # Short | Medium | Long
@@ -14804,7 +14918,7 @@ def generate_report_comment(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    _enforce_ai_prompt_limit(db, user)
+    _enforce_ai_feature_limit(db, user, "report_comment")
     get_owned_class_or_404(class_id, db, user)
     student = (
         db.query(StudentModel)
@@ -14907,20 +15021,22 @@ def generate_report_comment(
         "Write the final student report comment now."
     )
 
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     resp = client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model=model_name,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
         temperature=0.4,
+        max_tokens=AI_FEATURES["report_comment"]["max_tokens"],
     )
 
     comment = (resp.choices[0].message.content or "").strip()
     if not comment:
         raise HTTPException(status_code=500, detail="AI returned empty comment")
 
-    _record_ai_prompt_usage(db, user)
+    _record_ai_feature_usage(db, user, "report_comment", resp, model_name)
     return {"comment": comment}
 
 
@@ -14948,6 +15064,17 @@ def ai_status():
     }
 
 
+@app.get("/ai/usage/{feature}")
+def ai_feature_usage(
+    feature: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    if feature not in AI_FEATURES:
+        raise HTTPException(status_code=404, detail="AI feature not found")
+    return _ai_feature_usage_summary(db, user, feature)
+
+
 def extract_pdf_text(path: str):
     reader = PdfReader(path)
     text = ""
@@ -14966,7 +15093,7 @@ def generate_quiz(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    _enforce_ai_prompt_limit(db, user)
+    _enforce_ai_feature_limit(db, user, "quiz")
 
     note = db.query(models.Note).filter(models.Note.id == payload.note_id).first()
 
@@ -15034,6 +15161,7 @@ CONTENT:
                 {"role": "user", "content": prompt}
             ],
             temperature=0.4,
+            max_tokens=AI_FEATURES["quiz"]["max_tokens"],
         )
         content = (resp.choices[0].message.content or "").strip()
     except HTTPException:
@@ -15056,7 +15184,7 @@ CONTENT:
             "error": "OpenAI did not return valid JSON",
             "raw_response": cleaned
         }
-    _record_ai_prompt_usage(db, user)
+    _record_ai_feature_usage(db, user, "quiz", resp, "gpt-4o-mini")
     return quiz
 
 

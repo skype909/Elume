@@ -146,6 +146,7 @@ export default function ClassAdminPage() {
 
     const [generatingReportFor, setGeneratingReportFor] = useState<number | null>(null);
     const [reportError, setReportError] = useState<string | null>(null);
+    const [reportQuotaNotice, setReportQuotaNotice] = useState<string | null>(null);
 
     const activeCount = students.filter((s) => s.active).length;
     const inactiveCount = students.length - activeCount;
@@ -678,6 +679,9 @@ export default function ClassAdminPage() {
             updateReportDraft(studentId, {
                 comment: data.comment || "",
             });
+            void apiFetch("/ai/usage/report_comment")
+                .then((usage: { message?: string | null }) => setReportQuotaNotice(usage.message || null))
+                .catch(() => undefined);
         } catch (e: any) {
             setReportError(e?.message || "Failed to generate report comment");
         } finally {
@@ -1351,6 +1355,10 @@ export default function ClassAdminPage() {
                             <div className="mt-4 rounded-2xl border-2 border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
                                 {reportError}
                             </div>
+                        )}
+
+                        {reportQuotaNotice && (
+                            <div className="mt-3 text-sm font-semibold text-slate-500">{reportQuotaNotice}</div>
                         )}
 
                         <div className="mt-5 space-y-4">

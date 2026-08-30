@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 
@@ -71,6 +71,30 @@ class UserModel(Base):
 
     classes = relationship("ClassModel", back_populates="owner")
     school = relationship("SchoolModel", back_populates="users")
+
+
+class AIUsageEventModel(Base):
+    __tablename__ = "ai_usage_events"
+    __table_args__ = (
+        CheckConstraint(
+            "feature IN ('quiz', 'calendar', 'three_ideas', 'lesson_plan', 'worksheet', "
+            "'report_comment', 'scheme_of_work', 'department_plan', 'cat4_interpretation')",
+            name="ck_ai_usage_events_feature",
+        ),
+        CheckConstraint("input_tokens IS NULL OR input_tokens >= 0", name="ck_ai_usage_events_input_tokens"),
+        CheckConstraint("output_tokens IS NULL OR output_tokens >= 0", name="ck_ai_usage_events_output_tokens"),
+        CheckConstraint("total_tokens IS NULL OR total_tokens >= 0", name="ck_ai_usage_events_total_tokens"),
+        Index("ix_ai_usage_events_user_feature_created", "user_id", "feature", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    feature = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    model = Column(String(128), nullable=False)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
 
 
 class PasswordResetTokenModel(Base):

@@ -130,6 +130,7 @@ export default function CalendarPage() {
   const [aiText, setAiText] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPreview, setAiPreview] = useState<AIParseResponse | null>(null);
+  const [aiQuotaNotice, setAiQuotaNotice] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch("/classes")
@@ -410,6 +411,9 @@ export default function CalendarPage() {
       setAiPreview(data);
       hydrateDraftFromAIDraft(data.draft);
       setShowModal(true);
+      void apiFetch("/ai/usage/calendar")
+        .then((usage: { message?: string | null }) => setAiQuotaNotice(usage.message || null))
+        .catch(() => undefined);
     } catch (e: any) {
       setErr(e?.message || "AI parse failed");
     } finally {
@@ -629,6 +633,8 @@ export default function CalendarPage() {
               className="mt-4 w-full rounded-[24px] border border-emerald-100 bg-white/90 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-emerald-200 focus:ring-4 focus:ring-emerald-100/70"
               placeholder="e.g. Staff meeting next Monday at 3pm"
             />
+
+            {aiQuotaNotice ? <div className="mt-3 text-sm font-semibold text-slate-500">{aiQuotaNotice}</div> : null}
 
             {aiPreview && (
               <div className="mt-4 rounded-[24px] border border-emerald-200 bg-white/85 p-4 shadow-sm">
