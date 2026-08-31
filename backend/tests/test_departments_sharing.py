@@ -31,7 +31,10 @@ class DepartmentSharingModelTests(unittest.TestCase):
         self.other_school_teacher = models.UserModel(email="other@example.test", password_hash="x", school_id=self.school_two.id, role="teacher")
         self.db.add_all([self.owner, self.member, self.other_school_teacher]); self.db.flush()
         self.non_member = models.UserModel(email="nonmember@example.test", password_hash="x", school_id=self.school_one.id, role="teacher")
-        self.db.add(self.non_member); self.db.flush()
+        self.school_admin = models.UserModel(email="admin@example.test", password_hash="x", school_id=self.school_one.id, role="school_admin")
+        self.inactive_teacher = models.UserModel(email="inactive@example.test", password_hash="x", school_id=self.school_one.id, role="teacher", is_active=False)
+        self.platform_admin = models.UserModel(email="platform@example.test", password_hash="x", school_id=self.school_one.id, role="platform_admin")
+        self.db.add_all([self.non_member, self.school_admin, self.inactive_teacher, self.platform_admin]); self.db.flush()
         main.app.dependency_overrides[main.get_db] = lambda: self.db
         self.client = TestClient(main.app)
 
@@ -69,6 +72,29 @@ class DepartmentSharingModelTests(unittest.TestCase):
         self.db.add(models.SchoolDepartmentMembershipModel(department_id=department.id, school_id=self.school_one.id, user_id=self.other_school_teacher.id))
         with self.assertRaises(Exception): self.db.commit()
         self.db.rollback()
+
+    def test_department_members_allow_active_teachers_and_school_admins_only(self):
+        department = models.SchoolDepartmentModel(school_id=self.school_one.id, name="Maths")
+        self.db.add(department); self.db.commit()
+
+        response = self.client.put(
+            f"/school-admin/departments/{department.id}/members",
+            json={"user_ids": [self.member.id, self.school_admin.id]},
+            headers=self.auth(self.school_admin),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.db.get(models.UserModel, self.school_admin.id).role, "school_admin")
+        self.assertEqual(
+            {row.user_id for row in self.db.query(models.SchoolDepartmentMembershipModel).filter_by(department_id=department.id)},
+            {self.member.id, self.school_admin.id},
+        )
+        for invalid_user in (self.other_school_teacher, self.inactive_teacher, self.platform_admin):
+            response = self.client.put(
+                f"/school-admin/departments/{department.id}/members",
+                json={"user_ids": [invalid_user.id]},
+                headers=self.auth(self.school_admin),
+            )
+            self.assertEqual(response.status_code, 400, response.text)
 
     def test_department_delete_cascades_permissions_not_original_template(self):
         department = models.SchoolDepartmentModel(school_id=self.school_one.id, name="Maths")
@@ -132,6 +158,37 @@ class DepartmentSharingModelTests(unittest.TestCase):
         self.assertEqual(self.client.post(f"/collab/templates/{template.id}/use-shared", json={"class_id": recipient_class.id}, headers=self.auth(self.non_member)).status_code, 404)
         self.assertEqual(self.client.post(f"/collab/templates/{template.id}/use-shared", json={"class_id": recipient_class.id}, headers=self.auth(self.other_school_teacher)).status_code, 404)
         self.assertEqual(self.client.post(f"/collab/templates/{template.id}/use", json={"class_id": recipient_class.id}, headers=self.auth(self.member)).status_code, 404)
+
+    def test_school_admin_department_member_can_use_shared_resources(self):
+        department = models.SchoolDepartmentModel(school_id=self.school_one.id, name="Science")
+        owner_class = models.ClassModel(owner_user_id=self.owner.id, name="Owner class", subject="Science")
+        admin_class = models.ClassModel(owner_user_id=self.school_admin.id, name="Admin class", subject="Science")
+        self.db.add_all([department, owner_class, admin_class]); self.db.flush()
+        self.db.add_all([
+            models.SchoolDepartmentMembershipModel(department_id=department.id, school_id=self.school_one.id, user_id=self.owner.id),
+            models.SchoolDepartmentMembershipModel(department_id=department.id, school_id=self.school_one.id, user_id=self.school_admin.id),
+        ])
+        quiz = models.SavedQuizModel(class_id=owner_class.id, owner_user_id=self.owner.id, title="Energy", category="Physics")
+        template = models.CollabTemplateModel(owner_user_id=self.owner.id, source_class_id=owner_class.id, title="Starter", board_state_json="[]")
+        self.db.add_all([quiz, template]); self.db.flush()
+        self.db.add(models.SavedQuizQuestionModel(quiz_id=quiz.id, prompt="Question", choice_a="A", choice_b="B", choice_c="C", choice_d="D", correct_index=0, position=0))
+        self.db.add_all([
+            models.DepartmentSavedQuizShareModel(department_id=department.id, saved_quiz_id=quiz.id, shared_by_user_id=self.owner.id),
+            models.DepartmentCollabTemplateShareModel(department_id=department.id, template_id=template.id, shared_by_user_id=self.owner.id),
+        ])
+        self.db.commit()
+
+        copied = self.client.post(f"/quizzes/{quiz.id}/copy-shared", json={"destination_class_id": admin_class.id}, headers=self.auth(self.school_admin))
+        self.assertEqual(copied.status_code, 200, copied.text)
+        self.assertEqual(self.db.get(models.SavedQuizModel, copied.json()["id"]).owner_user_id, self.school_admin.id)
+        used = self.client.post(f"/collab/templates/{template.id}/use-shared", json={"class_id": admin_class.id}, headers=self.auth(self.school_admin))
+        self.assertEqual(used.status_code, 200, used.text)
+        self.assertEqual(self.db.query(models.CollabParticipantModel).count(), 0)
+        self.assertEqual(self.client.post(f"/collab/templates/{template.id}/use", json={"class_id": admin_class.id}, headers=self.auth(self.school_admin)).status_code, 404)
+
+    def test_cat4_transition_aliases_are_authorized(self):
+        for email in ("peter@elume.ie", "pfitzgerald@preskilkenny.ie", "lisa@elume.ie", "lcarey@preskilkenny.ie"):
+            self.assertTrue(main.user_has_cat4_access(models.UserModel(email=email, password_hash="x")))
 
 
 if __name__ == "__main__":

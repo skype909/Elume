@@ -2190,7 +2190,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             {currentRole === "platform_admin" && <button onClick={() => navigate("/platform-admin/schools")} className="rounded-xl border-2 border-violet-200 bg-violet-50 px-3 py-1 text-sm font-semibold text-violet-800 hover:bg-violet-100">Platform Admin</button>}
             {currentRole === "school_admin" && <button onClick={() => navigate("/school-admin")} className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">School Admin</button>}
-            {currentRole === "teacher" && <button onClick={() => navigate("/school-resources")} className="rounded-xl border-2 border-cyan-200 bg-cyan-50 px-3 py-1 text-sm font-semibold text-cyan-800 hover:bg-cyan-100">School Resources</button>}
+            {(currentRole === "teacher" || currentRole === "school_admin") && <button onClick={() => navigate("/school-resources")} className="rounded-xl border-2 border-cyan-200 bg-cyan-50 px-3 py-1 text-sm font-semibold text-cyan-800 hover:bg-cyan-100">School Resources</button>}
             <button onClick={logout} className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100">Logout</button>
           </div>
         </div>

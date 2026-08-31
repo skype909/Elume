@@ -617,9 +617,12 @@ export default function TeacherAdminPage() {
   const isSuperAdmin = email === "admin@elume.ie";
   const normalizedEmail = (email || "").trim().toLowerCase();
   const canAccessCat4Card = new Set([
+    // Transitional aliases keep CAT4 available while Presentation Kilkenny accounts move.
     "peter@elume.ie",
+    "pfitzgerald@preskilkenny.ie",
     "sandra@elume.ie",
     "lisa@elume.ie",
+    "lcarey@preskilkenny.ie",
   ]).has(normalizedEmail);
 
   const [state, setState] = useState<StoredAdminState>(() => {

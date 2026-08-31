@@ -24,6 +24,7 @@ class SchoolAdminTeacherOut(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     is_active: bool
+    role: str
     school_id: int
     created_at: datetime
 
