@@ -12728,7 +12728,7 @@ def list_students(
     rows = (
         db.query(StudentModel)
         .filter(StudentModel.class_id == class_id)
-        .order_by(StudentModel.id.desc())
+        .order_by(StudentModel.id.asc())
         .all()
     )
     return rows

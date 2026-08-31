@@ -300,7 +300,7 @@ export default function ClassAdminPage() {
                 method: "POST",
                 body: JSON.stringify({ first_name: fn, notes: notes.trim() }),
             });
-            setStudents((prev) => [created, ...prev]);
+            setStudents((prev) => [...prev, created]);
             setFirstName("");
             setNotes("");
         } catch (e: any) {
@@ -325,7 +325,7 @@ export default function ClassAdminPage() {
                 body: JSON.stringify({ names }),
             });
             if (Array.isArray(created) && created.length) {
-                setStudents((prev) => [...created.slice().reverse(), ...prev]);
+                setStudents((prev) => [...prev, ...created]);
             }
             setBulkNames("");
         } catch (e: any) {
