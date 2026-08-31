@@ -3665,9 +3665,7 @@ export default function WhiteBoardPage() {
     // One captured primary pointer prevents pen hover/compatibility events from
     // starting or completing a second snip selection.
     if (!e.isPrimary || clipPointerIdRef.current != null) return;
-    if (e.pointerType !== "mouse" && e.pointerType !== "pen") return;
     if (e.pointerType === "mouse" && (e.button !== 0 || (e.buttons & 1) === 0)) return;
-    if (e.pointerType === "pen" && e.button !== 0) return;
 
     e.preventDefault();
 
