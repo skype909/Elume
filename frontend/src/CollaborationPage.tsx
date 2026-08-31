@@ -19,6 +19,7 @@ type CollabStatus = {
     room_count: number;
     timer_minutes?: number | null;
     time_left_seconds?: number | null;
+    board_round?: number;
     joined_count: number;
     assigned_count: number;
 };
@@ -74,23 +75,21 @@ type BoardOption = {
 };
 
 type SessionState = "draft" | "lobby" | "assigning" | "live" | "review" | "ended";
+type SavedBoard = {
+    id: number;
+    title: string;
+    source_class_id: number | null;
+    room_count: number;
+    timer_minutes: number | null;
+    created_at: string;
+    updated_at: string;
+};
 function uid(prefix = "id") {
     return `${prefix}_${Math.random().toString(36).slice(2, 9)}_${Date.now().toString(36)}`;
 }
 
 function cls(...parts: Array<string | false | null | undefined>) {
     return parts.filter(Boolean).join(" ");
-}
-
-function getWsBase() {
-    const isLocal =
-        window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1";
-
-    if (isLocal) return "ws://127.0.0.1:8000";
-
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}`;
 }
 
 function buildRoomsFromParticipants(participants: CollabParticipant[], roomCount: number): BreakoutRoom[] {
@@ -190,6 +189,7 @@ export default function CollaborationPage() {
     const [pdfImportRequestNonce, setPdfImportRequestNonce] = useState(0);
     const [teacherBoardClearNonce, setTeacherBoardClearNonce] = useState(0);
     const [isPreparingNextRound, setIsPreparingNextRound] = useState(false);
+    const [boardRound, setBoardRound] = useState(1);
 
     const [showJoinModal, setShowJoinModal] = useState(false);
     const [showBreakoutModal, setShowBreakoutModal] = useState(false);
@@ -204,6 +204,12 @@ export default function CollaborationPage() {
     const [statusError, setStatusError] = useState<string | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [isStartingBreakout, setIsStartingBreakout] = useState(false);
+    const [savedBoards, setSavedBoards] = useState<SavedBoard[]>([]);
+    const [showSavedBoardsModal, setShowSavedBoardsModal] = useState(false);
+    const [showSaveBoardModal, setShowSaveBoardModal] = useState(false);
+    const [savedBoardTitle, setSavedBoardTitle] = useState("");
+    const [isSavingBoard, setIsSavingBoard] = useState(false);
+    const [isUsingSavedBoard, setIsUsingSavedBoard] = useState(false);
 
 
     const pollRef = useRef<number | null>(null);
@@ -240,7 +246,6 @@ export default function CollaborationPage() {
     const focusedReviewBoardExportRef = useRef<null | (() => Promise<void>)>(null);
 
     const [focusedReviewBoard, setFocusedReviewBoard] = useState<string | null>(null);
-    const [roomInitialSnapshots, setRoomInitialSnapshots] = useState<Record<string, BoardSnapshot>>({});
     const joinCode = sessionCode;
     const hasSession = Boolean(joinCode);
 
@@ -379,6 +384,7 @@ export default function CollaborationPage() {
             const data = (await res.json()) as CollabStatus;
             setStatus(data);
             setSessionState(data.state);
+            setBoardRound(Math.max(1, Number(data.board_round || 1)));
 
             // Only hydrate from backend before a teacher edits locally,
             // or if you want backend to remain the source of truth.
@@ -407,6 +413,84 @@ export default function CollaborationPage() {
             setStatusError(e?.message || "Participants unavailable.");
         }
 
+    }
+
+    async function fetchSavedBoards() {
+        try {
+            const data = await apiFetch(`${API_BASE}/collab/templates`);
+            setSavedBoards(Array.isArray(data?.templates) ? data.templates : []);
+        } catch (e: any) {
+            window.alert(e?.message || "Saved boards are unavailable.");
+        }
+    }
+
+    async function launchSavedBoard(template: SavedBoard) {
+        if (isUsingSavedBoard) return;
+        setIsUsingSavedBoard(true);
+        try {
+            const data = (await apiFetch(`${API_BASE}/collab/templates/${template.id}/use`, {
+                method: "POST",
+                body: JSON.stringify({ class_id: classId }),
+            })) as CollabCreateResponse;
+            if (!data.session_code) throw new Error("Could not start saved board.");
+            setSessionTitle(template.title);
+            setRoomCount(template.room_count);
+            setTimerMinutes(template.timer_minutes ?? 10);
+            setSessionCode(data.session_code);
+            setSessionState("lobby");
+            setBoardRound(1);
+            setShowSavedBoardsModal(false);
+            await Promise.all([fetchStatus(data.session_code), fetchParticipants(data.session_code)]);
+            setShowJoinModal(true);
+        } catch (e: any) {
+            window.alert(e?.message || "Could not use saved board.");
+        } finally {
+            setIsUsingSavedBoard(false);
+        }
+    }
+
+    async function renameSavedBoard(template: SavedBoard) {
+        const title = window.prompt("Rename saved board", template.title)?.trim();
+        if (!title || title === template.title) return;
+        try {
+            await apiFetch(`${API_BASE}/collab/templates/${template.id}`, {
+                method: "PATCH",
+                body: JSON.stringify({ title }),
+            });
+            await fetchSavedBoards();
+        } catch (e: any) {
+            window.alert(e?.message || "Could not rename saved board.");
+        }
+    }
+
+    async function deleteSavedBoard(template: SavedBoard) {
+        if (!window.confirm(`Delete saved board "${template.title}"? This will not affect any live session.`)) return;
+        try {
+            await apiFetch(`${API_BASE}/collab/templates/${template.id}`, { method: "DELETE" });
+            await fetchSavedBoards();
+        } catch (e: any) {
+            window.alert(e?.message || "Could not delete saved board.");
+        }
+    }
+
+    async function saveBoardForLater() {
+        const code = joinCodeRef.current;
+        const title = savedBoardTitle.trim();
+        if (!code || !title || isSavingBoard) return;
+        setIsSavingBoard(true);
+        try {
+            await apiFetch(`${API_BASE}/collab/${code}/save-template`, {
+                method: "POST",
+                body: JSON.stringify({ title }),
+            });
+            setShowSaveBoardModal(false);
+            setSavedBoardTitle("");
+            await fetchSavedBoards();
+        } catch (e: any) {
+            window.alert(e?.message || "Could not save this board.");
+        } finally {
+            setIsSavingBoard(false);
+        }
     }
 
     async function persistAssignments(code: string, nextParticipants: CollabParticipant[]) {
@@ -531,7 +615,6 @@ export default function CollaborationPage() {
         try {
             const nextParticipants = autoAssignParticipants(participants, roomCount);
             const teacherMainSnapshot = teacherBoardSnapshotRef.current?.() ?? null;
-            const roomKeys = Array.from({ length: roomCount }, (_, i) => `room-${i + 1}`);
 
             setParticipants(nextParticipants);
             setRooms(buildRoomsFromParticipants(nextParticipants, roomCount));
@@ -541,20 +624,10 @@ export default function CollaborationPage() {
 
             await apiFetch(`${API_BASE}/collab/${code}/start`, {
                 method: "POST",
-                body: JSON.stringify({}),
+                // The backend captures this once as the immutable teacher-only
+                // source before students receive their room copies.
+                body: JSON.stringify({ snapshot: teacherMainSnapshot }),
             });
-
-            if (teacherMainSnapshot) {
-                setRoomInitialSnapshots(
-                    Object.fromEntries(roomKeys.map((targetRoomKey) => [targetRoomKey, teacherMainSnapshot]))
-                );
-
-                await Promise.allSettled(
-                    roomKeys.map((targetRoomKey) =>
-                        fanOutRoomSnapshot(code, targetRoomKey, teacherMainSnapshot)
-                    )
-                );
-            }
 
             await Promise.all([fetchStatus(code), fetchParticipants(code)]);
             setIsPreparingNextRound(false);
@@ -647,7 +720,7 @@ export default function CollaborationPage() {
         setIsCreating(false);
         setIsStartingBreakout(false);
         setFocusedReviewBoard(null);
-        setRoomInitialSnapshots({});
+        setBoardRound(1);
     }
 
     function handleFullReset() {
@@ -679,67 +752,21 @@ export default function CollaborationPage() {
         );
     }
 
-    function fanOutRoomSnapshot(code: string, targetRoomKey: string, snapshot: BoardSnapshot) {
-        return new Promise<void>((resolve) => {
-            const ws = new WebSocket(`${getWsBase()}/ws/collab/${code}/${targetRoomKey}`);
-            let settled = false;
-
-            const finish = () => {
-                if (settled) return;
-                settled = true;
-                window.setTimeout(() => {
-                    try {
-                        ws.close();
-                    } catch { }
-                }, 80);
-                resolve();
-            };
-
-            const timeout = window.setTimeout(() => {
-                console.warn("[CollaborationPage] breakout snapshot fan-out timed out", { code, targetRoomKey });
-                finish();
-            }, 1500);
-
-            ws.onopen = () => {
-                try {
-                    ws.send(
-                        JSON.stringify({
-                            type: "snapshot-sync",
-                            snapshot,
-                            sourceId: "teacher",
-                        })
-                    );
-                } catch (error) {
-                    console.warn("[CollaborationPage] breakout snapshot send failed", { code, targetRoomKey, error });
-                }
-
-                window.clearTimeout(timeout);
-                finish();
-            };
-
-            ws.onerror = () => {
-                window.clearTimeout(timeout);
-                console.warn("[CollaborationPage] breakout snapshot socket error", { code, targetRoomKey });
-                finish();
-            };
-
-            ws.onclose = () => {
-                window.clearTimeout(timeout);
-                finish();
-            };
-        });
-    }
-
-    function resetCurrentBoardRound() {
-        const nextNonce = teacherBoardClearNonce + 1;
+    async function resetCurrentBoardRound() {
+        const code = joinCodeRef.current;
+        if (!code || isPreparingNextRound) return;
         setIsPreparingNextRound(true);
-        setSessionState("lobby");
-        setFocusedReviewBoard(null);
-        setTimeLeftSeconds(null);
-        setTeacherBoardClearNonce(nextNonce);
-        dispatchScopedBoardClear("teacher-main", nextNonce);
-        for (let i = 1; i <= roomCount; i += 1) {
-            dispatchScopedBoardClear(`room-${i}`, nextNonce);
+        try {
+            const data = await apiFetch(`${API_BASE}/collab/${code}/new-board`, { method: "POST" });
+            setBoardRound(Math.max(1, Number(data?.board_round || boardRound + 1)));
+            setSessionState("lobby");
+            setFocusedReviewBoard(null);
+            setTimeLeftSeconds(null);
+            await fetchStatus(code);
+        } catch (e: any) {
+            window.alert(e?.message || "Could not prepare a new board.");
+        } finally {
+            setIsPreparingNextRound(false);
         }
     }
 
@@ -801,6 +828,19 @@ export default function CollaborationPage() {
                                             )}
                                         >
                                             {isCreating ? "Creating session..." : "Start by creating session"}
+                                        </button>
+                                    )}
+
+                                    {!hasSession && (
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                await fetchSavedBoards();
+                                                setShowSavedBoardsModal(true);
+                                            }}
+                                            className="min-h-11 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-black text-violet-800 shadow-sm transition hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-100"
+                                        >
+                                            My Saved Boards
                                         </button>
                                     )}
 
@@ -1116,6 +1156,7 @@ export default function CollaborationPage() {
                                             <CollabBoard
                                                 sessionCode={joinCode}
                                                 roomKey="teacher-main"
+                                                boardRound={boardRound}
                                                 participantId="teacher"
                                                 tool={
                                                     tool === "highlighter"
@@ -1220,9 +1261,20 @@ export default function CollaborationPage() {
                                                 <button
                                                     type="button"
                                                     onClick={resetCurrentBoardRound}
+                                                    disabled={isPreparingNextRound}
                                                     className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 shadow-sm hover:bg-emerald-100"
                                                 >
-                                                    New Board
+                                                    {isPreparingNextRound ? "Preparing…" : "New Board"}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setSavedBoardTitle(sessionTitle);
+                                                        setShowSaveBoardModal(true);
+                                                    }}
+                                                    className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-black text-violet-800 shadow-sm hover:bg-violet-100"
+                                                >
+                                                    Save for Later
                                                 </button>
                                             </div>
                                         </div>
@@ -1263,6 +1315,7 @@ export default function CollaborationPage() {
                                                     key={`focused-${focusedReviewBoard}`}
                                                     sessionCode={joinCode}
                                                     roomKey={focusedReviewBoard}
+                                                    boardRound={boardRound}
                                                     participantId="teacher-review-focus"
                                                     tool="select"
                                                     penColor={penColor}
@@ -1274,9 +1327,6 @@ export default function CollaborationPage() {
                                                 viewportMode="pan"
                                                 boardWidth={1600}
                                                 boardHeight={960}
-                                                initialSnapshot={
-                                                    focusedReviewBoard ? roomInitialSnapshots[focusedReviewBoard] ?? null : null
-                                                }
                                                 onExportReady={(fn) => {
                                                     focusedReviewBoardExportRef.current = fn;
                                                 }}
@@ -1340,6 +1390,7 @@ export default function CollaborationPage() {
                                                                 key={`${panel.id}-${panel.selectedBoard}`}
                                                                 sessionCode={joinCode}
                                                                 roomKey={panel.selectedBoard}
+                                                                boardRound={boardRound}
                                                                 participantId={`review-${panel.id}`}
                                                                 tool="select"
                                                                 penColor={penColor}
@@ -1351,7 +1402,6 @@ export default function CollaborationPage() {
                                                                 viewportMode="pan"
                                                                 boardWidth={1600}
                                                                 boardHeight={960}
-                                                                initialSnapshot={roomInitialSnapshots[panel.selectedBoard] ?? null}
                                                             />
 
                                                             <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
@@ -1360,6 +1410,7 @@ export default function CollaborationPage() {
                                                                         key={`${panel.id}-${panel.selectedBoard}`}
                                                                         sessionCode={joinCode}
                                                                         roomKey={panel.selectedBoard}
+                                                                        boardRound={boardRound}
                                                                         participantId={`review-${panel.id}`}
                                                                         tool="select"
                                                                         penColor={penColor}
@@ -1371,7 +1422,6 @@ export default function CollaborationPage() {
                                                                         viewportMode="pan"
                                                                         boardWidth={1600}
                                                                         boardHeight={960}
-                                                                        initialSnapshot={roomInitialSnapshots[panel.selectedBoard] ?? null}
                                                                     />
 
                                                                     <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
@@ -1379,6 +1429,7 @@ export default function CollaborationPage() {
                                                                             key={`export-${panel.id}-${panel.selectedBoard}`}
                                                                             sessionCode={joinCode}
                                                                             roomKey={panel.selectedBoard}
+                                                                            boardRound={boardRound}
                                                                             participantId={`review-export-${panel.id}`}
                                                                             tool="select"
                                                                             penColor={penColor}
@@ -1390,7 +1441,6 @@ export default function CollaborationPage() {
                                                                             viewportMode="pan"
                                                                             boardWidth={1600}
                                                                             boardHeight={960}
-                                                                            initialSnapshot={roomInitialSnapshots[panel.selectedBoard] ?? null}
                                                                             onExportReady={(fn) => {
                                                                                 reviewBoardExportRefs.current[panel.selectedBoard] = fn;
                                                                             }}
@@ -1491,6 +1541,54 @@ export default function CollaborationPage() {
                     </div>
                 </div>
             </div>
+
+            {showSavedBoardsModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm">
+                    <div className="w-full max-w-2xl rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-violet-700">My Saved Boards</div>
+                                <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">Start from a proven activity</h3>
+                                <p className="mt-2 text-sm leading-6 text-slate-600">Each use creates a fresh collaboration session for this class.</p>
+                            </div>
+                            <button type="button" onClick={() => setShowSavedBoardsModal(false)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-50">Close</button>
+                        </div>
+                        <div className="mt-5 max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+                            {savedBoards.length ? savedBoards.map((template) => (
+                                <div key={template.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                                    <div>
+                                        <div className="font-black text-slate-900">{template.title}</div>
+                                        <div className="mt-1 text-xs font-semibold text-slate-500">{template.room_count} room{template.room_count === 1 ? "" : "s"}</div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button type="button" onClick={() => void launchSavedBoard(template)} disabled={isUsingSavedBoard} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-violet-700 disabled:opacity-50">Use</button>
+                                        <button type="button" onClick={() => void renameSavedBoard(template)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">Rename</button>
+                                        <button type="button" onClick={() => void deleteSavedBoard(template)} className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-50">Delete</button>
+                                    </div>
+                                </div>
+                            )) : (
+                                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm font-semibold text-slate-500">No saved boards yet. After a breakout, choose Save for Later to keep the clean teacher setup.</div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showSaveBoardModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm">
+                    <div className="w-full max-w-lg rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-[0_25px_80px_rgba(15,23,42,0.20)]">
+                        <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-violet-700">Save for Later</div>
+                        <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">Save the clean activity setup</h3>
+                        <p className="mt-2 text-sm leading-6 text-slate-600">Student work and room assignments are not included.</p>
+                        <label className="mt-5 block text-sm font-black text-slate-800">Board/activity name</label>
+                        <input autoFocus value={savedBoardTitle} onChange={(event) => setSavedBoardTitle(event.target.value)} maxLength={255} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-100" />
+                        <div className="mt-5 flex justify-end gap-3">
+                            <button type="button" onClick={() => setShowSaveBoardModal(false)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">Cancel</button>
+                            <button type="button" onClick={() => void saveBoardForLater()} disabled={!savedBoardTitle.trim() || isSavingBoard} className="rounded-2xl bg-violet-600 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-violet-700 disabled:opacity-50">{isSavingBoard ? "Saving…" : "Save Board"}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {showJoinModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm">

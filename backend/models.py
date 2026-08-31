@@ -589,8 +589,32 @@ class CollabSessionModel(Base):
     started_at = Column(DateTime, nullable=True)
     ended_at = Column(DateTime, nullable=True)
     breakout_started_at = Column(DateTime, nullable=True)
+    # Incremented whenever the teacher begins a clean board round.  The live
+    # socket history is still process-local, but this persisted identity keeps
+    # clients from accepting delayed packets from a previous round.
+    board_round = Column(Integer, nullable=False, default=1)
+    # Immutable teacher-only source captured at breakout start.  It is never
+    # populated from student room histories and is the only source for saved
+    # collaboration templates.
+    clean_snapshot_json = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class CollabTemplateModel(Base):
+    __tablename__ = "collab_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    # The original class is retained as helpful context only.  A teacher may
+    # use their private template for another class they own.
+    source_class_id = Column(Integer, ForeignKey("classes.id", ondelete="SET NULL"), nullable=True, index=True)
+    title = Column(String(255), nullable=False)
+    board_state_json = Column(Text, nullable=False)
+    room_count = Column(Integer, nullable=False, default=4)
+    timer_minutes = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class CollabParticipantModel(Base):

@@ -28,6 +28,7 @@ type StatusResponse = {
   room_count: number;
   timer_minutes?: number | null;
   time_left_seconds?: number | null;
+  board_round?: number;
   joined_count: number;
   assigned_count: number;
 };
@@ -71,6 +72,7 @@ export default function StudentCollabRoomPage() {
   const [participantName, setParticipantName] = useState("");
   const [roomNumber, setRoomNumber] = useState<number | null>(null);
   const [sessionState, setSessionState] = useState<StatusResponse["state"]>("lobby");
+  const [boardRound, setBoardRound] = useState(1);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +90,7 @@ export default function StudentCollabRoomPage() {
     if (!res.ok) throw new Error("Could not fetch session status");
     const data = (await res.json()) as StatusResponse;
     setSessionState(data.state);
+    setBoardRound(Math.max(1, Number(data.board_round || 1)));
   }
 
   async function fetchMe(existingAnonId: string): Promise<number | null> {
@@ -528,6 +531,7 @@ export default function StudentCollabRoomPage() {
           <CollabBoard
             sessionCode={sessionCode}
             roomKey={`room-${roomNumber}`}
+            boardRound={boardRound}
             participantId={anonId}
             participantAnonId={anonId}
             tool={viewportMode === "pan" ? "select" : tool}

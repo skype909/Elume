@@ -59,7 +59,7 @@ export type BoardSnapshot = {
     objects: BoardObject[];
 };
 
-type SocketPayload =
+type SocketPayload = (
     | { type: "stroke"; stroke: Stroke }
     | { type: "stroke-progress"; stroke: Stroke }
     | { type: "cursor"; x: number; y: number; size: number }
@@ -69,7 +69,8 @@ type SocketPayload =
     | { type: "object-create"; object: BoardObject }
     | { type: "object-update"; object: BoardObject }
     | { type: "object-delete"; id: string }
-    | { type: "snapshot-sync"; snapshot: BoardSnapshot; sourceId: string };
+    | { type: "snapshot-sync"; snapshot: BoardSnapshot; sourceId: string }
+) & { board_round?: number };
 
 type NoteItem = {
     id: number;
@@ -80,6 +81,7 @@ type NoteItem = {
 type Props = {
     sessionCode: string;
     roomKey: string;
+    boardRound?: number;
     participantId: string;
     participantAnonId?: string;
     tool: ToolKey;
@@ -247,6 +249,7 @@ function getObjectDefaultFill(type: BoardObjectType) {
 export default function CollabBoard({
     sessionCode,
     roomKey,
+    boardRound = 1,
     participantId,
     participantAnonId,
     tool,
@@ -275,6 +278,7 @@ export default function CollabBoard({
     const wsRef = useRef<WebSocket | null>(null);
     const reconnectTimerRef = useRef<number | null>(null);
     const connectionVersionRef = useRef(0);
+    const activeBoardRoundRef = useRef(boardRound);
     const editable = !readOnly;
 
     const [isConnected, setIsConnected] = useState(false);
@@ -458,7 +462,7 @@ export default function CollabBoard({
     function sendWsMessage(payload: SocketPayload) {
         if (!hasOpenSocket()) return false;
         try {
-            wsRef.current!.send(JSON.stringify(payload));
+            wsRef.current!.send(JSON.stringify({ ...payload, board_round: activeBoardRoundRef.current }));
             return true;
         } catch {
             return false;
@@ -1184,6 +1188,10 @@ export default function CollabBoard({
     }, [syncCanvasSize]);
 
     useEffect(() => {
+        activeBoardRoundRef.current = boardRound;
+    }, [boardRound]);
+
+    useEffect(() => {
         connectionVersionRef.current += 1;
         const connectionVersion = connectionVersionRef.current;
         const maxReconnectAttempts = 5;
@@ -1269,6 +1277,11 @@ export default function CollabBoard({
                 if (connectionVersion !== connectionVersionRef.current || wsRef.current !== ws) return;
                 try {
                     const data = JSON.parse(event.data) as SocketPayload;
+
+                if (typeof data.board_round === "number") {
+                    if (data.board_round < activeBoardRoundRef.current) return;
+                    activeBoardRoundRef.current = data.board_round;
+                }
 
                 if (data.type === "stroke" && data.stroke) {
                     const incoming = data.stroke;
@@ -1358,7 +1371,7 @@ export default function CollabBoard({
             wsRef.current?.close();
             wsRef.current = null;
         };
-    }, [participantAnonId, participantId, readOnly, roomKey, sessionCode]);
+    }, [boardRound, participantAnonId, participantId, readOnly, roomKey, sessionCode]);
 
     useEffect(() => {
         if (!onUndoReady) return;

@@ -25,6 +25,7 @@ from xml.etree import ElementTree as ET
 import stripe
 
 from copy import deepcopy
+from collab_state import board_event_matches_round as _board_event_matches_round, clean_events as _clean_collab_events, decode_events as _decode_collab_events, events_from_snapshot as _events_from_snapshot, snapshot_from_events as _snapshot_from_collab_events
 
 import json
 from collections import Counter, defaultdict
@@ -69,7 +70,7 @@ from uuid import uuid4
 
 from datetime import datetime, timedelta
 
-from models import CollabSessionModel, CollabParticipantModel
+from models import CollabSessionModel, CollabParticipantModel, CollabTemplateModel
 from authorization import (
     ROLE_PLATFORM_ADMIN,
     ROLE_SCHOOL_ADMIN,
@@ -85,6 +86,10 @@ from schemas import (
     CollabJoinResponse,
     CollabAssignmentsPayload,
     CollabStatusResponse,
+    CollabStartPayload,
+    CollabTemplateCreatePayload,
+    CollabTemplateRenamePayload,
+    CollabTemplateUsePayload,
 )
 
 
@@ -9232,6 +9237,10 @@ def _rand_collab_code(db: Session) -> str:
 
 # key = (session_code, room_key) -> ordered list of board events
 collab_room_history: dict[tuple[str, str], list[dict]] = defaultdict(list)
+# The application intentionally has one worker for Collaboration.  This cache
+# mirrors the persisted round while the process is running and avoids a
+# database lookup for every drawing packet.
+collab_session_rounds: dict[str, int] = {}
 
 
 def _collab_history_key(session_code: str, room_key: str) -> tuple[str, str]:
@@ -9248,47 +9257,64 @@ def _replace_collab_history(session_code: str, room_key: str, events: list[dict]
     collab_room_history[key] = [deepcopy(evt) for evt in events]
 
 
-def _events_from_snapshot(snapshot: dict) -> list[dict]:
-    events: list[dict] = []
-
-    for stroke in snapshot.get("strokes", []):
-        events.append({
-            "type": "stroke",
-            "stroke": stroke,
-        })
-
-    for obj in snapshot.get("objects", []):
-        events.append({
-            "type": "object-create",
-            "object": obj,
-        })
-
-    return events
-
-
 def _get_collab_history(session_code: str, room_key: str) -> list[dict]:
     key = _collab_history_key(session_code, room_key)
     return collab_room_history.get(key, [])
 
 
-async def _seed_breakout_rooms_from_teacher(session_code: str, room_count: int) -> None:
-    teacher_events = _get_collab_history(session_code, "teacher-main")
+def _collab_round_for_session(session_code: str) -> int:
+    cached = collab_session_rounds.get(session_code)
+    if cached is not None:
+        return cached
+
+    db = SessionLocal()
+    try:
+        session = db.query(CollabSessionModel).filter(CollabSessionModel.session_code == session_code).first()
+        round_number = int(session.board_round or 1) if session else 1
+        collab_session_rounds[session_code] = round_number
+        return round_number
+    finally:
+        db.close()
+
+
+async def _replace_room_with_snapshot(
+    session_code: str,
+    room_key: str,
+    events: list[dict],
+    board_round: int,
+) -> None:
+    _replace_collab_history(session_code, room_key, events)
+    await collab_room_manager.broadcast(session_code, room_key, {
+        "type": "snapshot-sync",
+        "snapshot": _snapshot_from_collab_events(events),
+        "sourceId": "server",
+        "board_round": board_round,
+    })
+
+
+async def _seed_breakout_rooms_from_teacher(
+    session_code: str,
+    room_count: int,
+    teacher_events: list[dict] | None = None,
+    board_round: int | None = None,
+) -> list[dict]:
+    teacher_events = _clean_collab_events(
+        teacher_events if teacher_events is not None else _get_collab_history(session_code, "teacher-main")
+    )
+    board_round = board_round if board_round is not None else _collab_round_for_session(session_code)
 
     for i in range(1, int(room_count) + 1):
         room_key = f"room-{i}"
+        await _replace_room_with_snapshot(session_code, room_key, teacher_events, board_round)
 
-        # 1) Replace stored history for the room
-        _replace_collab_history(session_code, room_key, teacher_events)
-
-        # 2) Push the copied events into any sockets already connected to that room
-        for evt in teacher_events:
-            await collab_room_manager.broadcast(session_code, room_key, deepcopy(evt))
+    return teacher_events
 
 
 def _clear_collab_session_history(session_code: str) -> None:
     dead_keys = [key for key in collab_room_history.keys() if key[0] == session_code]
     for key in dead_keys:
         del collab_room_history[key]
+    collab_session_rounds.pop(session_code, None)
 
 
 def _collab_participant_matches_room(session_code: str, room_key: str, participant_anon_id: str) -> bool:
@@ -9351,8 +9377,9 @@ async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
     print("WS accepted")
 
     try:
+        current_round = _collab_round_for_session(session_code)
         for evt in _get_collab_history(session_code, room_key):
-            await websocket.send_json(evt)
+            await websocket.send_json({**deepcopy(evt), "board_round": current_round})
 
         await collab_room_manager.broadcast(session_code, room_key, {
             "type": "presence",
@@ -9381,6 +9408,22 @@ async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
                 continue
 
             msg_type = data.get("type")
+
+            if msg_type in {
+                "stroke",
+                "object-create",
+                "object-update",
+                "object-delete",
+                "snapshot-sync",
+            }:
+                current_round = _collab_round_for_session(session_code)
+                message_round = data.get("board_round")
+                # New clients tag board messages.  Legacy clients are accepted
+                # only for the initial round; after New Board they cannot write
+                # delayed work back into the new authoritative room history.
+                if not _board_event_matches_round(message_round, current_round):
+                    continue
+                data["board_round"] = current_round
 
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
@@ -10722,6 +10765,147 @@ def legacy_upload_access(file_path: str):
     )
 
 
+def _collab_template_out(template: CollabTemplateModel) -> dict:
+    return {
+        "id": template.id,
+        "title": template.title,
+        "source_class_id": template.source_class_id,
+        "room_count": template.room_count,
+        "timer_minutes": template.timer_minutes,
+        "created_at": template.created_at,
+        "updated_at": template.updated_at,
+    }
+
+
+@app.get("/collab/templates")
+def collab_templates_list(
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    templates = (
+        db.query(CollabTemplateModel)
+        .filter(CollabTemplateModel.owner_user_id == user.id)
+        .order_by(CollabTemplateModel.updated_at.desc(), CollabTemplateModel.id.desc())
+        .all()
+    )
+    return {"templates": [_collab_template_out(template) for template in templates]}
+
+
+@app.post("/collab/{code}/save-template")
+def collab_save_template(
+    code: str,
+    payload: CollabTemplateCreatePayload,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    session = get_owned_collab_session_or_404(code, db, user)
+    if session.state not in {"review", "ended"}:
+        raise HTTPException(status_code=400, detail="End the breakout before saving it for later")
+
+    events = _decode_collab_events(session.clean_snapshot_json)
+    if not session.clean_snapshot_json:
+        raise HTTPException(status_code=400, detail="This breakout has no clean starting board to save")
+
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Give this board a name")
+
+    template = CollabTemplateModel(
+        owner_user_id=user.id,
+        source_class_id=session.class_id,
+        title=title[:255],
+        board_state_json=json.dumps(events, separators=(",", ":")),
+        room_count=max(1, min(12, int(session.room_count or 4))),
+        timer_minutes=session.timer_minutes,
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return {"template": _collab_template_out(template)}
+
+
+@app.patch("/collab/templates/{template_id}")
+def collab_template_rename(
+    template_id: int,
+    payload: CollabTemplateRenamePayload,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    template = (
+        db.query(CollabTemplateModel)
+        .filter(CollabTemplateModel.id == template_id)
+        .filter(CollabTemplateModel.owner_user_id == user.id)
+        .first()
+    )
+    if not template:
+        raise HTTPException(status_code=404, detail="Saved board not found")
+
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Give this board a name")
+
+    template.title = title[:255]
+    template.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(template)
+    return {"template": _collab_template_out(template)}
+
+
+@app.delete("/collab/templates/{template_id}")
+def collab_template_delete(
+    template_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    template = (
+        db.query(CollabTemplateModel)
+        .filter(CollabTemplateModel.id == template_id)
+        .filter(CollabTemplateModel.owner_user_id == user.id)
+        .first()
+    )
+    if not template:
+        raise HTTPException(status_code=404, detail="Saved board not found")
+    db.delete(template)
+    db.commit()
+    return {"message": "deleted"}
+
+
+@app.post("/collab/templates/{template_id}/use", response_model=CollabCreateResponse)
+def collab_template_use(
+    template_id: int,
+    payload: CollabTemplateUsePayload,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    template = (
+        db.query(CollabTemplateModel)
+        .filter(CollabTemplateModel.id == template_id)
+        .filter(CollabTemplateModel.owner_user_id == user.id)
+        .first()
+    )
+    if not template:
+        raise HTTPException(status_code=404, detail="Saved board not found")
+
+    get_owned_class_or_404(payload.class_id, db, user)
+    code = _rand_collab_code(db)
+    session = CollabSessionModel(
+        class_id=payload.class_id,
+        session_code=code,
+        title=template.title,
+        state="lobby",
+        room_count=max(1, min(12, int(template.room_count or 4))),
+        timer_minutes=template.timer_minutes,
+        board_round=1,
+    )
+    db.add(session)
+    db.commit()
+
+    events = _decode_collab_events(template.board_state_json)
+    _replace_collab_history(code, "teacher-main", events)
+    collab_session_rounds[code] = 1
+    return {"session_code": code, "join_url": None}
+
+
 @app.post("/collab/create", response_model=CollabCreateResponse)
 def collab_create(
     payload: CollabCreatePayload,
@@ -10774,6 +10958,7 @@ def collab_status(code: str, db: Session = Depends(get_db)):
         "room_count": s.room_count,
         "timer_minutes": s.timer_minutes,
         "time_left_seconds": _collab_time_left_seconds(s),
+        "board_round": int(s.board_round or 1),
         "joined_count": joined_count,
         "assigned_count": assigned_count,
     }
@@ -10907,19 +11092,60 @@ async def collab_assignments(
 @app.post("/collab/{code}/start")
 async def collab_start(
     code: str,
+    payload: CollabStartPayload,
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
     s = get_owned_collab_session_or_404(code, db, user)
+    if s.state == "live":
+        raise HTTPException(status_code=400, detail="Breakout is already running")
 
-    # Copy the current teacher board into every breakout room
-    await _seed_breakout_rooms_from_teacher(code, int(s.room_count or 0))
+    teacher_events = _get_collab_history(code, "teacher-main")
+    if payload.snapshot is not None:
+        teacher_events = _events_from_snapshot(payload.snapshot)
+        _replace_collab_history(code, "teacher-main", teacher_events)
+
+    teacher_events = _clean_collab_events(teacher_events)
+    s.clean_snapshot_json = json.dumps(teacher_events, separators=(",", ":"))
+    board_round = int(s.board_round or 1)
+    collab_session_rounds[code] = board_round
+
+    # Capture the clean teacher source once, before students can edit, then
+    # replace every room with that exact source.
+    await _seed_breakout_rooms_from_teacher(code, int(s.room_count or 0), teacher_events, board_round)
 
     s.state = "live"
     s.started_at = s.started_at or datetime.utcnow()
     s.breakout_started_at = datetime.utcnow()
     db.commit()
     return {"message": "started"}
+
+
+@app.post("/collab/{code}/new-board")
+async def collab_new_board(
+    code: str,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    s = get_owned_collab_session_or_404(code, db, user)
+    if s.state == "live":
+        raise HTTPException(status_code=400, detail="End the breakout before starting a new board")
+
+    next_round = int(s.board_round or 1) + 1
+    s.board_round = next_round
+    s.state = "lobby"
+    s.breakout_started_at = None
+    s.clean_snapshot_json = None
+    db.commit()
+    collab_session_rounds[code] = next_round
+
+    # The server history is the source of truth.  Replace it and notify all
+    # currently connected teacher/student boards in the new round.
+    await _replace_room_with_snapshot(code, "teacher-main", [], next_round)
+    for room_number in range(1, int(s.room_count or 0) + 1):
+        await _replace_room_with_snapshot(code, f"room-{room_number}", [], next_round)
+
+    return {"message": "new board", "board_round": next_round}
 
 
 @app.post("/collab/{code}/end")

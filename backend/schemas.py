@@ -471,6 +471,22 @@ class CollabCreateResponse(BaseModel):
     join_url: Optional[str] = None
 
 
+class CollabStartPayload(BaseModel):
+    snapshot: Optional[dict] = None
+
+
+class CollabTemplateCreatePayload(BaseModel):
+    title: str
+
+
+class CollabTemplateRenamePayload(BaseModel):
+    title: str
+
+
+class CollabTemplateUsePayload(BaseModel):
+    class_id: int
+
+
 class CollabJoinPayload(BaseModel):
     anon_id: Optional[str] = None
     name: Optional[str] = None
@@ -506,5 +522,6 @@ class CollabStatusResponse(BaseModel):
     room_count: int
     timer_minutes: Optional[int] = None
     time_left_seconds: Optional[int] = None
+    board_round: int = 1
     joined_count: int
     assigned_count: int
