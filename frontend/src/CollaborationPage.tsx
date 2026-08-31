@@ -4,6 +4,7 @@ import elumeLogo from "./assets/ELogo2.png";
 import CollabBoard from "./CollabBoard";
 import type { BoardSnapshot } from "./CollabBoard";
 import { apiFetch } from "./api";
+import DepartmentShareModal from "./Components/DepartmentShareModal";
 
 const API_BASE = "/api";
 
@@ -210,6 +211,7 @@ export default function CollaborationPage() {
     const [savedBoardTitle, setSavedBoardTitle] = useState("");
     const [isSavingBoard, setIsSavingBoard] = useState(false);
     const [isUsingSavedBoard, setIsUsingSavedBoard] = useState(false);
+    const [sharingTemplateId, setSharingTemplateId] = useState<number | null>(null);
 
 
     const pollRef = useRef<number | null>(null);
@@ -1562,6 +1564,7 @@ export default function CollaborationPage() {
                                     </div>
                                     <div className="flex flex-wrap gap-2">
                                         <button type="button" onClick={() => void launchSavedBoard(template)} disabled={isUsingSavedBoard} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-violet-700 disabled:opacity-50">Use</button>
+                                        <button type="button" onClick={() => setSharingTemplateId(template.id)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800">Share</button>
                                         <button type="button" onClick={() => void renameSavedBoard(template)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">Rename</button>
                                         <button type="button" onClick={() => void deleteSavedBoard(template)} className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-50">Delete</button>
                                     </div>
@@ -1589,6 +1592,7 @@ export default function CollaborationPage() {
                     </div>
                 </div>
             )}
+            {sharingTemplateId !== null && <DepartmentShareModal resource="template" resourceId={sharingTemplateId} onClose={() => setSharingTemplateId(null)} />}
 
             {showJoinModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm">

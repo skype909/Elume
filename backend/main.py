@@ -3489,6 +3489,145 @@ def platform_admin_create_school_admin_invitation(
     }
 
 
+def _department_teacher_out(teacher: models.UserModel) -> dict:
+    return {
+        "id": teacher.id,
+        "email": teacher.email,
+        "first_name": teacher.first_name,
+        "last_name": teacher.last_name,
+        "is_active": teacher.is_active,
+        "school_id": teacher.school_id,
+        "created_at": teacher.created_at,
+    }
+
+
+def _school_department_or_404(db: Session, school_id: int, department_id: int, *, lock: bool = False):
+    query = db.query(models.SchoolDepartmentModel).filter(
+        models.SchoolDepartmentModel.id == department_id,
+        models.SchoolDepartmentModel.school_id == school_id,
+    )
+    if lock:
+        query = query.with_for_update()
+    department = query.first()
+    if not department:
+        raise HTTPException(status_code=404, detail="Department not found")
+    return department
+
+
+def _school_department_payload(db: Session, department: models.SchoolDepartmentModel) -> dict:
+    teachers = (
+        db.query(models.UserModel)
+        .join(models.SchoolDepartmentMembershipModel, models.SchoolDepartmentMembershipModel.user_id == models.UserModel.id)
+        .filter(models.SchoolDepartmentMembershipModel.department_id == department.id)
+        .order_by(models.UserModel.first_name.asc(), models.UserModel.last_name.asc(), models.UserModel.id.asc())
+        .all()
+    )
+    return {
+        "id": department.id,
+        "name": department.name,
+        "school_id": department.school_id,
+        "members": [_department_teacher_out(teacher) for teacher in teachers],
+        "created_at": department.created_at,
+        "updated_at": department.updated_at,
+    }
+
+
+@app.get("/school-admin/departments", response_model=List[schemas.SchoolDepartmentOut])
+def school_admin_list_departments(db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    school_id = _require_school_admin_school_id(user)
+    departments = (
+        db.query(models.SchoolDepartmentModel)
+        .filter(models.SchoolDepartmentModel.school_id == school_id)
+        .order_by(func.lower(models.SchoolDepartmentModel.name).asc(), models.SchoolDepartmentModel.id.asc())
+        .all()
+    )
+    return [_school_department_payload(db, department) for department in departments]
+
+
+@app.post("/school-admin/departments", response_model=schemas.SchoolDepartmentOut, status_code=201)
+def school_admin_create_department(payload: schemas.SchoolDepartmentCreate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    school_id = _require_school_admin_school_id(user)
+    name = (payload.name or "").strip()
+    if not name or len(name) > 120:
+        raise HTTPException(status_code=400, detail="Department name must be between 1 and 120 characters")
+    existing = db.query(models.SchoolDepartmentModel.id).filter(
+        models.SchoolDepartmentModel.school_id == school_id,
+        func.lower(models.SchoolDepartmentModel.name) == name.lower(),
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="A department with this name already exists")
+    department = models.SchoolDepartmentModel(school_id=school_id, name=name)
+    try:
+        db.add(department)
+        db.commit()
+        db.refresh(department)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A department with this name already exists")
+    return _school_department_payload(db, department)
+
+
+@app.patch("/school-admin/departments/{department_id}", response_model=schemas.SchoolDepartmentOut)
+def school_admin_rename_department(department_id: int, payload: schemas.SchoolDepartmentUpdate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    school_id = _require_school_admin_school_id(user)
+    department = _school_department_or_404(db, school_id, department_id, lock=True)
+    name = (payload.name or "").strip()
+    if not name or len(name) > 120:
+        raise HTTPException(status_code=400, detail="Department name must be between 1 and 120 characters")
+    duplicate = db.query(models.SchoolDepartmentModel.id).filter(
+        models.SchoolDepartmentModel.school_id == school_id,
+        func.lower(models.SchoolDepartmentModel.name) == name.lower(),
+        models.SchoolDepartmentModel.id != department.id,
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="A department with this name already exists")
+    department.name = name
+    department.updated_at = datetime.utcnow()
+    try:
+        db.commit()
+        db.refresh(department)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A department with this name already exists")
+    return _school_department_payload(db, department)
+
+
+@app.delete("/school-admin/departments/{department_id}", response_model=schemas.SchoolAdminActionResponse)
+def school_admin_delete_department(department_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    school_id = _require_school_admin_school_id(user)
+    department = _school_department_or_404(db, school_id, department_id, lock=True)
+    db.delete(department)
+    db.commit()
+    return {"success": True, "message": "Department deleted. Teacher memberships and sharing permissions were removed."}
+
+
+@app.put("/school-admin/departments/{department_id}/members", response_model=schemas.SchoolDepartmentOut)
+def school_admin_replace_department_members(department_id: int, payload: schemas.SchoolDepartmentMembersUpdate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    school_id = _require_school_admin_school_id(user)
+    department = _school_department_or_404(db, school_id, department_id, lock=True)
+    user_ids = sorted(set(int(value) for value in (payload.user_ids or [])))
+    teachers = []
+    if user_ids:
+        teachers = db.query(models.UserModel).filter(
+            models.UserModel.id.in_(user_ids),
+            models.UserModel.school_id == school_id,
+            models.UserModel.role == ROLE_TEACHER,
+            models.UserModel.is_active.is_(True),
+        ).all()
+        if len(teachers) != len(user_ids):
+            raise HTTPException(status_code=400, detail="Every department member must be an active teacher in this school")
+    db.query(models.SchoolDepartmentMembershipModel).filter(
+        models.SchoolDepartmentMembershipModel.department_id == department.id
+    ).delete(synchronize_session=False)
+    for teacher in teachers:
+        db.add(models.SchoolDepartmentMembershipModel(
+            department_id=department.id, school_id=school_id, user_id=teacher.id
+        ))
+    db.commit()
+    db.refresh(department)
+    return _school_department_payload(db, department)
+
+
 @app.get("/school-admin/teachers", response_model=List[schemas.SchoolAdminTeacherOut])
 def school_admin_list_teachers(
     db: Session = Depends(get_db),
@@ -10765,6 +10904,171 @@ def legacy_upload_access(file_path: str):
     )
 
 
+def _require_school_teacher(user: models.UserModel) -> int:
+    school_id = getattr(user, "school_id", None)
+    if school_id is None or getattr(user, "role", None) != ROLE_TEACHER:
+        raise HTTPException(status_code=403, detail="School teacher access required")
+    return int(school_id)
+
+
+def _teacher_department_ids(db: Session, user: models.UserModel) -> set[int]:
+    school_id = _require_school_teacher(user)
+    rows = db.query(models.SchoolDepartmentMembershipModel.department_id).filter(
+        models.SchoolDepartmentMembershipModel.school_id == school_id,
+        models.SchoolDepartmentMembershipModel.user_id == user.id,
+    ).all()
+    return {int(row[0]) for row in rows}
+
+
+def _assert_owner_department_ids(db: Session, user: models.UserModel, department_ids: list[int]) -> tuple[int, list[int]]:
+    school_id = _require_school_teacher(user)
+    normalized = sorted(set(int(value) for value in (department_ids or [])))
+    if not normalized:
+        return school_id, []
+    memberships = _teacher_department_ids(db, user)
+    if not set(normalized).issubset(memberships):
+        raise HTTPException(status_code=403, detail="You can only share with departments you belong to")
+    found = db.query(models.SchoolDepartmentModel.id).filter(
+        models.SchoolDepartmentModel.school_id == school_id,
+        models.SchoolDepartmentModel.id.in_(normalized),
+    ).all()
+    if len(found) != len(normalized):
+        raise HTTPException(status_code=404, detail="Department not found")
+    return school_id, normalized
+
+
+def _teacher_display_name(user: models.UserModel) -> str:
+    name = " ".join(part for part in ((user.first_name or "").strip(), (user.last_name or "").strip()) if part).strip()
+    return name or "Teacher"
+
+
+def _owned_template_or_404(template_id: int, db: Session, user: models.UserModel) -> CollabTemplateModel:
+    template = db.query(CollabTemplateModel).filter(
+        CollabTemplateModel.id == template_id,
+        CollabTemplateModel.owner_user_id == user.id,
+    ).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Saved board not found")
+    return template
+
+
+def _owned_quiz_or_404(quiz_id: int, db: Session, user: models.UserModel) -> models.SavedQuizModel:
+    quiz = db.query(models.SavedQuizModel).filter(
+        models.SavedQuizModel.id == quiz_id,
+        models.SavedQuizModel.owner_user_id == user.id,
+    ).first()
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    get_owned_class_or_404(quiz.class_id, db, user)
+    return quiz
+
+
+def _shared_template_department_ids(db: Session, template_id: int, user: models.UserModel) -> list[int]:
+    school_id = _require_school_teacher(user)
+    rows = (
+        db.query(models.DepartmentCollabTemplateShareModel.department_id)
+        .join(models.SchoolDepartmentMembershipModel, models.SchoolDepartmentMembershipModel.department_id == models.DepartmentCollabTemplateShareModel.department_id)
+        .join(models.SchoolDepartmentModel, models.SchoolDepartmentModel.id == models.DepartmentCollabTemplateShareModel.department_id)
+        .filter(
+            models.DepartmentCollabTemplateShareModel.template_id == template_id,
+            models.SchoolDepartmentMembershipModel.user_id == user.id,
+            models.SchoolDepartmentMembershipModel.school_id == school_id,
+            models.SchoolDepartmentModel.school_id == school_id,
+        )
+        .all()
+    )
+    return sorted({int(row[0]) for row in rows})
+
+
+def _shared_quiz_department_ids(db: Session, quiz_id: int, user: models.UserModel) -> list[int]:
+    school_id = _require_school_teacher(user)
+    rows = (
+        db.query(models.DepartmentSavedQuizShareModel.department_id)
+        .join(models.SchoolDepartmentMembershipModel, models.SchoolDepartmentMembershipModel.department_id == models.DepartmentSavedQuizShareModel.department_id)
+        .join(models.SchoolDepartmentModel, models.SchoolDepartmentModel.id == models.DepartmentSavedQuizShareModel.department_id)
+        .filter(
+            models.DepartmentSavedQuizShareModel.saved_quiz_id == quiz_id,
+            models.SchoolDepartmentMembershipModel.user_id == user.id,
+            models.SchoolDepartmentMembershipModel.school_id == school_id,
+            models.SchoolDepartmentModel.school_id == school_id,
+        )
+        .all()
+    )
+    return sorted({int(row[0]) for row in rows})
+
+
+def _department_names(db: Session, department_ids: list[int]) -> list[dict]:
+    if not department_ids:
+        return []
+    rows = db.query(models.SchoolDepartmentModel).filter(models.SchoolDepartmentModel.id.in_(department_ids)).all()
+    names = {row.id: row.name for row in rows}
+    return [{"id": department_id, "name": names[department_id]} for department_id in department_ids if department_id in names]
+
+
+@app.get("/school-resources/departments")
+def school_resource_departments(db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    department_ids = _teacher_department_ids(db, user)
+    rows = db.query(models.SchoolDepartmentModel).filter(
+        models.SchoolDepartmentModel.id.in_(department_ids)
+    ).order_by(func.lower(models.SchoolDepartmentModel.name).asc()).all() if department_ids else []
+    return {"departments": [{"id": row.id, "name": row.name} for row in rows]}
+
+
+@app.get("/school-resources")
+def school_resources(
+    department_id: Optional[int] = None,
+    resource_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    _require_school_teacher(user)
+    allowed_department_ids = _teacher_department_ids(db, user)
+    if department_id is not None:
+        if department_id not in allowed_department_ids:
+            raise HTTPException(status_code=404, detail="Department not found")
+        allowed_department_ids = {department_id}
+    if resource_type not in (None, "collaboration_template", "quiz"):
+        raise HTTPException(status_code=400, detail="Unknown resource type")
+    resources = []
+    if resource_type in (None, "collaboration_template") and allowed_department_ids:
+        templates = db.query(CollabTemplateModel).join(
+            models.DepartmentCollabTemplateShareModel,
+            models.DepartmentCollabTemplateShareModel.template_id == CollabTemplateModel.id,
+        ).filter(
+            models.DepartmentCollabTemplateShareModel.department_id.in_(allowed_department_ids),
+            CollabTemplateModel.owner_user_id != user.id,
+        ).all()
+        for template in {row.id: row for row in templates}.values():
+            owner = db.query(models.UserModel).filter(models.UserModel.id == template.owner_user_id).first()
+            if not owner or owner.school_id != user.school_id:
+                continue
+            departments = _shared_template_department_ids(db, template.id, user)
+            resources.append({
+                "id": template.id, "resource_type": "collaboration_template", "title": template.title,
+                "shared_by": _teacher_display_name(owner), "departments": _department_names(db, departments),
+                "source_class_id": template.source_class_id, "updated_at": template.updated_at,
+            })
+    if resource_type in (None, "quiz") and allowed_department_ids:
+        quizzes = db.query(models.SavedQuizModel).join(
+            models.DepartmentSavedQuizShareModel,
+            models.DepartmentSavedQuizShareModel.saved_quiz_id == models.SavedQuizModel.id,
+        ).filter(
+            models.DepartmentSavedQuizShareModel.department_id.in_(allowed_department_ids),
+            models.SavedQuizModel.owner_user_id != user.id,
+        ).all()
+        for quiz in {row.id: row for row in quizzes}.values():
+            owner = db.query(models.UserModel).filter(models.UserModel.id == quiz.owner_user_id).first()
+            if not owner or owner.school_id != user.school_id:
+                continue
+            departments = _shared_quiz_department_ids(db, quiz.id, user)
+            resources.append({
+                "id": quiz.id, "resource_type": "quiz", "title": quiz.title,
+                "shared_by": _teacher_display_name(owner), "departments": _department_names(db, departments),
+                "source_class_id": quiz.class_id, "category": quiz.category, "updated_at": quiz.updated_at,
+            })
+    return {"resources": sorted(resources, key=lambda item: (item["resource_type"], item["title"].lower(), -item["id"]))}
+
+
 def _collab_template_out(template: CollabTemplateModel) -> dict:
     return {
         "id": template.id,
@@ -10789,6 +11093,39 @@ def collab_templates_list(
         .all()
     )
     return {"templates": [_collab_template_out(template) for template in templates]}
+
+
+@app.get("/collab/templates/{template_id}/department-shares")
+def collab_template_department_shares(template_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    template = _owned_template_or_404(template_id, db, user)
+    _require_school_teacher(user)
+    return {"department_ids": [row[0] for row in db.query(models.DepartmentCollabTemplateShareModel.department_id).filter(models.DepartmentCollabTemplateShareModel.template_id == template.id).all()]}
+
+
+@app.put("/collab/templates/{template_id}/department-shares")
+def collab_template_replace_department_shares(template_id: int, payload: schemas.DepartmentSharesUpdate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    template = _owned_template_or_404(template_id, db, user)
+    _, department_ids = _assert_owner_department_ids(db, user, payload.department_ids)
+    db.query(models.DepartmentCollabTemplateShareModel).filter(
+        models.DepartmentCollabTemplateShareModel.template_id == template.id
+    ).delete(synchronize_session=False)
+    for department_id in department_ids:
+        db.add(models.DepartmentCollabTemplateShareModel(
+            department_id=department_id, template_id=template.id, shared_by_user_id=user.id
+        ))
+    db.commit()
+    return {"department_ids": department_ids}
+
+
+@app.delete("/collab/templates/{template_id}/department-shares")
+def collab_template_clear_department_shares(template_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    template = _owned_template_or_404(template_id, db, user)
+    _require_school_teacher(user)
+    db.query(models.DepartmentCollabTemplateShareModel).filter(
+        models.DepartmentCollabTemplateShareModel.template_id == template.id
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"department_ids": []}
 
 
 @app.post("/collab/{code}/save-template")
@@ -10870,22 +11207,85 @@ def collab_template_delete(
     return {"message": "deleted"}
 
 
-@app.post("/collab/templates/{template_id}/use", response_model=CollabCreateResponse)
-def collab_template_use(
-    template_id: int,
-    payload: CollabTemplateUsePayload,
-    db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
-):
-    template = (
-        db.query(CollabTemplateModel)
-        .filter(CollabTemplateModel.id == template_id)
-        .filter(CollabTemplateModel.owner_user_id == user.id)
-        .first()
-    )
-    if not template:
-        raise HTTPException(status_code=404, detail="Saved board not found")
+@app.get("/quizzes/{quiz_id}/department-shares")
+def quiz_department_shares(quiz_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    quiz = _owned_quiz_or_404(quiz_id, db, user)
+    _require_school_teacher(user)
+    rows = db.query(models.DepartmentSavedQuizShareModel.department_id).filter(
+        models.DepartmentSavedQuizShareModel.saved_quiz_id == quiz.id
+    ).all()
+    return {"department_ids": [row[0] for row in rows]}
 
+
+@app.put("/quizzes/{quiz_id}/department-shares")
+def quiz_replace_department_shares(quiz_id: int, payload: schemas.DepartmentSharesUpdate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    quiz = _owned_quiz_or_404(quiz_id, db, user)
+    _, department_ids = _assert_owner_department_ids(db, user, payload.department_ids)
+    db.query(models.DepartmentSavedQuizShareModel).filter(
+        models.DepartmentSavedQuizShareModel.saved_quiz_id == quiz.id
+    ).delete(synchronize_session=False)
+    for department_id in department_ids:
+        db.add(models.DepartmentSavedQuizShareModel(
+            department_id=department_id, saved_quiz_id=quiz.id, shared_by_user_id=user.id
+        ))
+    db.commit()
+    return {"department_ids": department_ids}
+
+
+@app.delete("/quizzes/{quiz_id}/department-shares")
+def quiz_clear_department_shares(quiz_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    quiz = _owned_quiz_or_404(quiz_id, db, user)
+    _require_school_teacher(user)
+    db.query(models.DepartmentSavedQuizShareModel).filter(
+        models.DepartmentSavedQuizShareModel.saved_quiz_id == quiz.id
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"department_ids": []}
+
+
+@app.post("/quizzes/{quiz_id}/copy-shared", response_model=schemas.SavedQuizOut)
+def copy_shared_quiz(quiz_id: int, payload: schemas.SharedQuizCopyPayload, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    _require_school_teacher(user)
+    quiz = db.query(models.SavedQuizModel).filter(models.SavedQuizModel.id == quiz_id).first()
+    if not quiz or quiz.owner_user_id == user.id or not _shared_quiz_department_ids(db, quiz_id, user):
+        raise HTTPException(status_code=404, detail="Shared quiz not found")
+    owner = db.query(models.UserModel).filter(models.UserModel.id == quiz.owner_user_id).first()
+    if not owner or owner.school_id != user.school_id:
+        raise HTTPException(status_code=404, detail="Shared quiz not found")
+    get_owned_class_or_404(payload.destination_class_id, db, user)
+    now = datetime.utcnow()
+    copied = models.SavedQuizModel(
+        class_id=payload.destination_class_id,
+        owner_user_id=user.id,
+        title=quiz.title,
+        category=quiz.category,
+        description=quiz.description,
+        is_starred=False,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(copied)
+    db.flush()
+    for question in sorted(quiz.questions, key=lambda item: item.position):
+        db.add(models.SavedQuizQuestionModel(
+            quiz_id=copied.id,
+            prompt=question.prompt,
+            choice_a=question.choice_a,
+            choice_b=question.choice_b,
+            choice_c=question.choice_c,
+            choice_d=question.choice_d,
+            correct_index=question.correct_index,
+            explanation=question.explanation,
+            position=question.position,
+            created_at=now,
+            updated_at=now,
+        ))
+    db.commit()
+    db.refresh(copied)
+    return _quiz_out(copied)
+
+
+def _use_collab_template(template: CollabTemplateModel, payload: CollabTemplateUsePayload, db: Session, user: models.UserModel):
     get_owned_class_or_404(payload.class_id, db, user)
     code = _rand_collab_code(db)
     session = CollabSessionModel(
@@ -10904,6 +11304,23 @@ def collab_template_use(
     _replace_collab_history(code, "teacher-main", events)
     collab_session_rounds[code] = 1
     return {"session_code": code, "join_url": None}
+
+
+@app.post("/collab/templates/{template_id}/use", response_model=CollabCreateResponse)
+def collab_template_use(template_id: int, payload: CollabTemplateUsePayload, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    return _use_collab_template(_owned_template_or_404(template_id, db, user), payload, db, user)
+
+
+@app.post("/collab/templates/{template_id}/use-shared", response_model=CollabCreateResponse)
+def collab_template_use_shared(template_id: int, payload: CollabTemplateUsePayload, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    _require_school_teacher(user)
+    template = db.query(CollabTemplateModel).filter(CollabTemplateModel.id == template_id).first()
+    if not template or template.owner_user_id == user.id or not _shared_template_department_ids(db, template_id, user):
+        raise HTTPException(status_code=404, detail="Shared board not found")
+    owner = db.query(models.UserModel).filter(models.UserModel.id == template.owner_user_id).first()
+    if not owner or owner.school_id != user.school_id:
+        raise HTTPException(status_code=404, detail="Shared board not found")
+    return _use_collab_template(template, payload, db, user)
 
 
 @app.post("/collab/create", response_model=CollabCreateResponse)

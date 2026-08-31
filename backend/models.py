@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 
@@ -28,10 +28,24 @@ class SchoolModel(Base):
     users = relationship("UserModel", back_populates="school")
 
 
+class SchoolDepartmentModel(Base):
+    __tablename__ = "school_departments"
+    __table_args__ = (
+        UniqueConstraint("id", "school_id", name="uq_school_departments_id_school"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="RESTRICT"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class UserModel(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint("role IN ('teacher', 'school_admin', 'platform_admin')", name="ck_users_role"),
+        UniqueConstraint("id", "school_id", name="uq_users_id_school"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -71,6 +85,53 @@ class UserModel(Base):
 
     classes = relationship("ClassModel", back_populates="owner")
     school = relationship("SchoolModel", back_populates="users")
+
+
+class SchoolDepartmentMembershipModel(Base):
+    __tablename__ = "school_department_memberships"
+    __table_args__ = (
+        UniqueConstraint("department_id", "user_id", name="uq_school_department_memberships_department_user"),
+        ForeignKeyConstraint(
+            ["department_id", "school_id"], ["school_departments.id", "school_departments.school_id"],
+            name="fk_school_department_memberships_department_school", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["user_id", "school_id"], ["users.id", "users.school_id"],
+            name="fk_school_department_memberships_user_school", ondelete="RESTRICT",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    department_id = Column(Integer, nullable=False, index=True)
+    school_id = Column(Integer, nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class DepartmentCollabTemplateShareModel(Base):
+    __tablename__ = "department_collab_template_shares"
+    __table_args__ = (
+        UniqueConstraint("department_id", "template_id", name="uq_department_collab_template_share"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    department_id = Column(Integer, ForeignKey("school_departments.id", ondelete="CASCADE"), nullable=False, index=True)
+    template_id = Column(Integer, ForeignKey("collab_templates.id", ondelete="CASCADE"), nullable=False, index=True)
+    shared_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class DepartmentSavedQuizShareModel(Base):
+    __tablename__ = "department_saved_quiz_shares"
+    __table_args__ = (
+        UniqueConstraint("department_id", "saved_quiz_id", name="uq_department_saved_quiz_share"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    department_id = Column(Integer, ForeignKey("school_departments.id", ondelete="CASCADE"), nullable=False, index=True)
+    saved_quiz_id = Column(Integer, ForeignKey("saved_quizzes.id", ondelete="CASCADE"), nullable=False, index=True)
+    shared_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class AIUsageEventModel(Base):

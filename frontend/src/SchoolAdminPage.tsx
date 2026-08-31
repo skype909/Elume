@@ -19,6 +19,7 @@ type Overview = {
 type Teacher = { id: number; email: string; first_name?: string | null; last_name?: string | null; is_active: boolean };
 type Invitation = { id: number; email: string; status: "pending" | "accepted" | "revoked" | "expired"; created_at: string; expires_at: string };
 type AuditItem = { id: number; action: string; created_at: string };
+type Department = { id: number; name: string; school_id: number; members: Teacher[] };
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-IE", { dateStyle: "medium" }).format(new Date(value));
@@ -54,25 +55,31 @@ export default function SchoolAdminPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [activity, setActivity] = useState<AuditItem[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [departmentName, setDepartmentName] = useState("");
+  const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
+  const [departmentMembersOpen, setDepartmentMembersOpen] = useState<Department | null>(null);
   const [confirm, setConfirm] = useState<{ kind: "disable" | "revoke"; id: number; label: string } | null>(null);
 
   const loadData = useCallback(async () => {
-    const [overviewData, teachersData, invitationsData, auditData] = await Promise.all([
+    const [overviewData, teachersData, invitationsData, auditData, departmentsData] = await Promise.all([
       apiFetch("/school-admin/overview"),
       apiFetch("/school-admin/teachers"),
       apiFetch("/school-admin/invitations"),
       apiFetch("/school-admin/audit-log?limit=20"),
+      apiFetch("/school-admin/departments"),
     ]);
     setOverview(overviewData as Overview);
     setTeachers(teachersData as Teacher[]);
     setInvitations(invitationsData as Invitation[]);
     setActivity(auditData as AuditItem[]);
+    setDepartments(departmentsData as Department[]);
   }, []);
 
   useEffect(() => {
@@ -155,6 +162,34 @@ export default function SchoolAdminPage() {
     }
   }
 
+  async function saveDepartment(event: React.FormEvent) {
+    event.preventDefault();
+    const name = departmentName.trim();
+    if (!name) return;
+    setActionKey("department");
+    try {
+      if (editingDepartment) await apiFetch(`/school-admin/departments/${editingDepartment.id}`, { method: "PATCH", body: { name } });
+      else await apiFetch("/school-admin/departments", { method: "POST", body: { name } });
+      setDepartmentName(""); setEditingDepartment(null); await refresh();
+    } catch (err: any) { setError(friendlyError(err)); } finally { setActionKey(null); }
+  }
+
+  async function saveDepartmentMembers() {
+    if (!departmentMembersOpen) return;
+    setActionKey(`members-${departmentMembersOpen.id}`);
+    try {
+      await apiFetch(`/school-admin/departments/${departmentMembersOpen.id}/members`, { method: "PUT", body: { user_ids: departmentMembersOpen.members.map((teacher) => teacher.id) } });
+      setDepartmentMembersOpen(null); await refresh();
+    } catch (err: any) { setError(friendlyError(err)); } finally { setActionKey(null); }
+  }
+
+  async function deleteDepartment(department: Department) {
+    if (!window.confirm(`Delete ${department.name}? This removes department memberships and sharing permissions, but never teachers or original resources.`)) return;
+    setActionKey(`delete-department-${department.id}`);
+    try { await apiFetch(`/school-admin/departments/${department.id}`, { method: "DELETE" }); await refresh(); }
+    catch (err: any) { setError(friendlyError(err)); } finally { setActionKey(null); }
+  }
+
   const usedSeats = overview ? `${overview.active_teacher_count} / ${overview.seat_limit}` : "—";
 
   return (
@@ -189,6 +224,11 @@ export default function SchoolAdminPage() {
               <Panel title="Invitations" subtitle="Pending invitations do not reserve a teacher seat.">
                 {invitations.length === 0 ? <Empty text="No invitations have been sent yet." /> : <div className="divide-y divide-slate-100">{invitations.map((invitation) => <div key={invitation.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="font-bold text-slate-900">{invitation.email}</div><div className="mt-1 text-xs text-slate-500">Sent {formatDate(invitation.created_at)}{invitation.status === "pending" ? ` · Expires ${formatDate(invitation.expires_at)}` : ""}</div></div><div className="flex items-center gap-2"><InvitationBadge status={invitation.status} />{invitation.status === "pending" && <><button type="button" disabled={actionKey !== null} onClick={() => invitationAction(invitation.id, "resend")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">{actionKey === `resend-${invitation.id}` ? "Sending…" : "Resend"}</button><button type="button" disabled={actionKey !== null} onClick={() => setConfirm({ kind: "revoke", id: invitation.id, label: invitation.email })} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">Revoke</button></>}</div></div>)}</div>}
               </Panel>
+
+              <Panel title="Departments" subtitle="Teachers can belong to more than one department. Sharing never changes ownership of original resources.">
+                <form onSubmit={saveDepartment} className="flex flex-wrap gap-2"><input value={departmentName} onChange={(event) => setDepartmentName(event.target.value)} placeholder={editingDepartment ? "Rename department" : "e.g. Science"} className="min-w-[190px] flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm" /><button type="submit" disabled={actionKey !== null} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white">{editingDepartment ? "Save name" : "Create Department"}</button>{editingDepartment && <button type="button" onClick={() => { setEditingDepartment(null); setDepartmentName(""); }} className="rounded-xl px-3 py-2 text-sm font-bold text-slate-600">Cancel</button>}</form>
+                {departments.length === 0 ? <div className="mt-4"><Empty text="No departments yet. Create one to organise sharing." /></div> : <div className="mt-4 divide-y divide-slate-100">{departments.map((department) => <div key={department.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="font-bold text-slate-900">{department.name}</div><div className="text-sm text-slate-600">{department.members.length ? `${department.members.length} teacher${department.members.length === 1 ? "" : "s"}` : "No teachers assigned yet"}</div></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => setDepartmentMembersOpen({ ...department, members: [...department.members] })} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">Teachers</button><button type="button" onClick={() => { setEditingDepartment(department); setDepartmentName(department.name); }} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700">Rename</button><button type="button" onClick={() => void deleteDepartment(department)} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">Delete</button></div></div>)}</div>}
+              </Panel>
             </div>
 
             <Panel title="Recent activity" subtitle="A simple record of recent school access changes.">
@@ -200,6 +240,7 @@ export default function SchoolAdminPage() {
 
       {inviteOpen && <Modal title="Invite a teacher" onClose={() => !actionKey && setInviteOpen(false)}><form onSubmit={inviteTeacher} className="space-y-4"><p className="text-sm leading-6 text-slate-600">We’ll send a secure invitation link. A teacher seat is checked when the invitation is accepted.</p><label className="block"><span className="mb-1.5 block text-sm font-bold text-slate-800">Teacher email</span><input type="email" required value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} autoComplete="email" className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" /></label><div className="flex justify-end gap-3"><button type="button" onClick={() => setInviteOpen(false)} disabled={actionKey !== null} className="rounded-xl px-4 py-2 font-bold text-slate-600">Cancel</button><button type="submit" disabled={actionKey !== null} className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white disabled:opacity-50">{actionKey === "invite" ? "Sending…" : "Send invitation"}</button></div></form></Modal>}
       {confirm && <Modal title={confirm.kind === "disable" ? "Disable teacher access?" : "Revoke invitation?"} onClose={() => !actionKey && setConfirm(null)}><p className="text-sm leading-6 text-slate-600">{confirm.kind === "disable" ? `${confirm.label} will no longer be able to use protected Elume features. Their classes and data will remain intact.` : `The invitation for ${confirm.label} will stop working immediately.`}</p><div className="mt-6 flex justify-end gap-3"><button type="button" onClick={() => setConfirm(null)} disabled={actionKey !== null} className="rounded-xl px-4 py-2 font-bold text-slate-600">Cancel</button><button type="button" disabled={actionKey !== null} onClick={() => confirm.kind === "disable" ? teacherAction(teachers.find((teacher) => teacher.id === confirm.id)!, "deactivate") : invitationAction(confirm.id, "revoke")} className="rounded-xl bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-50">{actionKey ? "Working…" : confirm.kind === "disable" ? "Disable teacher" : "Revoke invitation"}</button></div></Modal>}
+      {departmentMembersOpen && <Modal title={`${departmentMembersOpen.name} teachers`} onClose={() => !actionKey && setDepartmentMembersOpen(null)}><p className="mb-3 text-sm text-slate-600">Select active teachers. A teacher can appear in several departments.</p><div className="max-h-72 space-y-2 overflow-auto">{teachers.filter((teacher) => teacher.is_active).map((teacher) => { const checked = departmentMembersOpen.members.some((member) => member.id === teacher.id); return <label key={teacher.id} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-3"><input type="checkbox" checked={checked} onChange={() => setDepartmentMembersOpen((current) => current ? { ...current, members: checked ? current.members.filter((member) => member.id !== teacher.id) : [...current.members, teacher] } : current)} /><span className="text-sm font-semibold text-slate-800">{`${teacher.first_name || ""} ${teacher.last_name || ""}`.trim() || teacher.email}</span></label>; })}</div><div className="mt-5 flex justify-end gap-3"><button type="button" onClick={() => setDepartmentMembersOpen(null)} className="rounded-xl px-3 py-2 font-bold text-slate-600">Cancel</button><button type="button" onClick={() => void saveDepartmentMembers()} className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white">Save teachers</button></div></Modal>}
     </main>
   );
 }

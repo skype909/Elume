@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
+import DepartmentShareModal from "./Components/DepartmentShareModal";
 
 /** ---------------- Types ---------------- */
 type MCQQuestion = {
@@ -264,6 +265,7 @@ export default function QuizzesPage() {
   /** --------- UI State --------- */
   const [showQuizModal, setShowQuizModal] = useState(false);
   const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
+  const [sharingQuizId, setSharingQuizId] = useState<number | null>(null);
 
   const [quizTitle, setQuizTitle] = useState("");
   const [quizCategory, setQuizCategory] = useState("General");
@@ -1161,6 +1163,9 @@ export default function QuizzesPage() {
                               <button className={pill} type="button" onClick={() => startPlay(q.id, false)}>
                                 Preview in order
                               </button>
+                              <button className={pill} type="button" onClick={() => setSharingQuizId(Number(q.id))}>
+                                Share
+                              </button>
                               <button className={dangerBtn} type="button" onClick={() => deleteQuiz(q.id)}>
                                 Delete
                               </button>
@@ -1484,6 +1489,7 @@ export default function QuizzesPage() {
           </div>
         </div>
       )}
+      {sharingQuizId !== null && <DepartmentShareModal resource="quiz" resourceId={sharingQuizId} onClose={() => setSharingQuizId(null)} />}
 
       {/* Question Modal */}
       {showQuestionModal && (

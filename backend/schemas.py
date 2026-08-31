@@ -46,6 +46,35 @@ class SchoolAdminActionResponse(BaseModel):
     message: str
 
 
+class SchoolDepartmentCreate(BaseModel):
+    name: str
+
+
+class SchoolDepartmentUpdate(BaseModel):
+    name: str
+
+
+class SchoolDepartmentMembersUpdate(BaseModel):
+    user_ids: List[int]
+
+
+class SchoolDepartmentOut(BaseModel):
+    id: int
+    name: str
+    school_id: int
+    members: List[SchoolAdminTeacherOut] = []
+    created_at: datetime
+    updated_at: datetime
+
+
+class DepartmentSharesUpdate(BaseModel):
+    department_ids: List[int]
+
+
+class SharedQuizCopyPayload(BaseModel):
+    destination_class_id: int
+
+
 class SchoolInvitationValidationOut(BaseModel):
     school_name: str
     email: str

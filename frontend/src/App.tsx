@@ -38,6 +38,7 @@ import BillingOnboardingPage from "./BillingOnboardingPage";
 import ArchivedClassesPage from "./ArchivedClassesPage";
 import Cat4DemoPage from "./Cat4DemoPage";
 import SchoolAdminPage from "./SchoolAdminPage";
+import SchoolResourcesPage from "./SchoolResourcesPage";
 import SchoolInvitationPage from "./SchoolInvitationPage";
 import PlatformAdminSchoolsPage from "./PlatformAdminSchoolsPage";
 import SchoolBrand from "./Components/SchoolBrand";
@@ -2189,6 +2190,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             {currentRole === "platform_admin" && <button onClick={() => navigate("/platform-admin/schools")} className="rounded-xl border-2 border-violet-200 bg-violet-50 px-3 py-1 text-sm font-semibold text-violet-800 hover:bg-violet-100">Platform Admin</button>}
             {currentRole === "school_admin" && <button onClick={() => navigate("/school-admin")} className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">School Admin</button>}
+            {currentRole === "teacher" && <button onClick={() => navigate("/school-resources")} className="rounded-xl border-2 border-cyan-200 bg-cyan-50 px-3 py-1 text-sm font-semibold text-cyan-800 hover:bg-cyan-100">School Resources</button>}
             <button onClick={logout} className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100">Logout</button>
           </div>
         </div>
@@ -2221,6 +2223,7 @@ export default function App() {
         <Route path="/admin" element={<TeacherAdminPage />} />
         <Route path="/admin-users" element={<AdminUsersPage />} />
         <Route path="/school-admin" element={<SchoolAdminPage />} />
+        <Route path="/school-resources" element={<SchoolResourcesPage />} />
         <Route path="/platform-admin/schools" element={<PlatformAdminSchoolsPage />} />
         <Route path="/class/:id/report" element={<ClassReportPage />} />
         <Route path="/class/:id/student-report/:studentId" element={<StudentReportPage />} />
