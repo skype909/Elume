@@ -11045,7 +11045,6 @@ def school_resources(
             models.DepartmentCollabTemplateShareModel.template_id == CollabTemplateModel.id,
         ).filter(
             models.DepartmentCollabTemplateShareModel.department_id.in_(allowed_department_ids),
-            CollabTemplateModel.owner_user_id != user.id,
         ).all()
         for template in {row.id: row for row in templates}.values():
             owner = db.query(models.UserModel).filter(models.UserModel.id == template.owner_user_id).first()
@@ -11055,6 +11054,7 @@ def school_resources(
             resources.append({
                 "id": template.id, "resource_type": "collaboration_template", "title": template.title,
                 "shared_by": _teacher_display_name(owner), "departments": _department_names(db, departments),
+                "is_owner": template.owner_user_id == user.id,
                 "source_class_id": template.source_class_id, "updated_at": template.updated_at,
             })
     if resource_type in (None, "quiz") and allowed_department_ids:
@@ -11063,7 +11063,6 @@ def school_resources(
             models.DepartmentSavedQuizShareModel.saved_quiz_id == models.SavedQuizModel.id,
         ).filter(
             models.DepartmentSavedQuizShareModel.department_id.in_(allowed_department_ids),
-            models.SavedQuizModel.owner_user_id != user.id,
         ).all()
         for quiz in {row.id: row for row in quizzes}.values():
             owner = db.query(models.UserModel).filter(models.UserModel.id == quiz.owner_user_id).first()
@@ -11073,6 +11072,7 @@ def school_resources(
             resources.append({
                 "id": quiz.id, "resource_type": "quiz", "title": quiz.title,
                 "shared_by": _teacher_display_name(owner), "departments": _department_names(db, departments),
+                "is_owner": quiz.owner_user_id == user.id,
                 "source_class_id": quiz.class_id, "category": quiz.category, "updated_at": quiz.updated_at,
             })
     return {"resources": sorted(resources, key=lambda item: (item["resource_type"], item["title"].lower(), -item["id"]))}

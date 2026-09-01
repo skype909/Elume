@@ -122,6 +122,13 @@ class DepartmentSharingModelTests(unittest.TestCase):
         self.db.add(models.DepartmentSavedQuizShareModel(department_id=department.id, saved_quiz_id=quiz.id, shared_by_user_id=self.owner.id))
         self.db.commit()
 
+        owner_resources = self.client.get("/school-resources", headers=self.auth(self.owner))
+        self.assertEqual(owner_resources.status_code, 200, owner_resources.text)
+        self.assertEqual(
+            [(item["id"], item["is_owner"]) for item in owner_resources.json()["resources"]],
+            [(quiz.id, True)],
+        )
+
         response = self.client.post(f"/quizzes/{quiz.id}/copy-shared", json={"destination_class_id": recipient_class.id}, headers=self.auth(self.member))
         self.assertEqual(response.status_code, 200, response.text)
         copied = self.db.get(models.SavedQuizModel, response.json()["id"])
@@ -147,6 +154,13 @@ class DepartmentSharingModelTests(unittest.TestCase):
         self.db.add(template); self.db.flush()
         self.db.add(models.DepartmentCollabTemplateShareModel(department_id=department.id, template_id=template.id, shared_by_user_id=self.owner.id))
         self.db.commit()
+
+        owner_resources = self.client.get("/school-resources", headers=self.auth(self.owner))
+        self.assertEqual(owner_resources.status_code, 200, owner_resources.text)
+        self.assertEqual(
+            [(item["id"], item["is_owner"]) for item in owner_resources.json()["resources"]],
+            [(template.id, True)],
+        )
 
         response = self.client.post(f"/collab/templates/{template.id}/use-shared", json={"class_id": recipient_class.id}, headers=self.auth(self.member))
         self.assertEqual(response.status_code, 200, response.text)
