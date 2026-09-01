@@ -224,19 +224,29 @@ class StructuredLessonPlanTests(unittest.TestCase):
         self.assertIn("Misconceptions to address", table_text)
         self.assertIn("Assessment and checks for understanding", table_text)
 
-    def test_structured_lesson_plan_docx_embeds_selected_elume_logo(self):
+    def test_structured_lesson_plan_docx_embeds_selected_elume_logo_in_footer(self):
         result = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")
         data = render_structured_lesson_plan_docx(
             validate_structured_lesson_plan_document(result["document"]),
-            meta={"brandingChoice": "elume"},
+            teacher="Ms Example",
+            meta={"brandingChoice": "elume", "schoolName": "Example School"},
         )
 
         with zipfile.ZipFile(BytesIO(data)) as archive:
             media_files = [name for name in archive.namelist() if name.startswith("word/media/")]
             header_files = [name for name in archive.namelist() if name.startswith("word/header") and name.endswith(".xml")]
+            footer_files = [name for name in archive.namelist() if name.startswith("word/footer") and name.endswith(".xml")]
             self.assertTrue(media_files)
             self.assertTrue(header_files)
-            self.assertIn(b"a:blip", archive.read(header_files[0]))
+            self.assertTrue(footer_files)
+            self.assertNotIn(b"a:blip", archive.read(header_files[0]))
+            self.assertIn(b"a:blip", archive.read(footer_files[0]))
+
+        from docx import Document
+
+        reopened = Document(BytesIO(data))
+        self.assertEqual(reopened.sections[0].header.paragraphs[0].text, "")
+        self.assertEqual(reopened.sections[0].footer.paragraphs[0].text, "Ms Example  |  Example School\t")
 
     def test_structured_lesson_plan_docx_embeds_valid_school_logo_data_url(self):
         school_logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL+XQAAAABJRU5ErkJggg=="
@@ -248,6 +258,8 @@ class StructuredLessonPlanTests(unittest.TestCase):
 
         with zipfile.ZipFile(BytesIO(data)) as archive:
             self.assertTrue([name for name in archive.namelist() if name.startswith("word/media/")])
+            footer_files = [name for name in archive.namelist() if name.startswith("word/footer") and name.endswith(".xml")]
+            self.assertIn(b"a:blip", archive.read(footer_files[0]))
 
     def test_structured_lesson_plan_docx_ignores_bad_or_unselected_logo_data(self):
         result = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")

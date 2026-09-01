@@ -57,25 +57,19 @@ def _branding_logo_bytes(meta: dict[str, Any]) -> bytes | None:
     return logo if logo else None
 
 
-def _add_header_branding(header, meta: dict[str, Any], *, logo_height) -> None:
+def _add_footer_branding(paragraph, meta: dict[str, Any], *, logo_height, right_edge) -> None:
     """Add the selected printable logo without allowing a bad image to fail export."""
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.text import WD_TAB_ALIGNMENT
 
-    paragraph = header.paragraphs[0]
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     logo = _branding_logo_bytes(meta)
     if logo:
         try:
-            paragraph.add_run().add_picture(BytesIO(logo), height=logo_height)
-            paragraph.add_run("  ")
+            paragraph.paragraph_format.tab_stops.add_tab_stop(right_edge, WD_TAB_ALIGNMENT.RIGHT)
+            paragraph.add_run("\t").add_picture(BytesIO(logo), height=logo_height)
         except Exception:
             # School branding is optional presentation metadata; a bad/unsupported
             # image must never prevent a teacher from exporting their lesson plan.
             pass
-    label = paragraph.add_run("LESSON PLAN")
-    label.font.name = "Arial"
-    label.font.size = __import__("docx").shared.Pt(8)
-    label.font.color.rgb = __import__("docx").shared.RGBColor.from_string(EMERALD)
 
 
 def _set_cell_shading(cell, fill: str) -> None:
@@ -244,21 +238,27 @@ def render_structured_lesson_plan_docx(document: StructuredLessonPlanDocument, *
     normal.font.size = Pt(10)
     normal.paragraph_format.space_after = Pt(5)
 
-    _add_header_branding(section.header, meta, logo_height=Inches(0.32))
+    section.header.paragraphs[0].clear()
 
-    branding_choice = str(meta.get("brandingChoice") or "elume").strip().lower()
-    footer_parts = ["Elume"] if branding_choice == "elume" else []
+    footer_parts = []
     school_name = str(meta.get("schoolName") or "").strip()
     if teacher:
         footer_parts.append(teacher)
     if school_name:
         footer_parts.append(school_name)
     footer = section.footer.paragraphs[0]
-    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    footer.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    footer.paragraph_format.space_after = Pt(0)
     footer_run = footer.add_run("  |  ".join(footer_parts))
     footer_run.font.name = "Arial"
     footer_run.font.size = Pt(8)
     footer_run.font.color.rgb = RGBColor.from_string(SLATE)
+    _add_footer_branding(
+        footer,
+        meta,
+        logo_height=Inches(0.24),
+        right_edge=section.page_width - section.left_margin - section.right_margin,
+    )
 
     title = doc.add_paragraph()
     title.paragraph_format.space_after = Pt(4)

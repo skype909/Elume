@@ -2337,7 +2337,6 @@ export default function CreateResources() {
           
         </div>
 
-        <div className="mt-8 text-xs text-slate-500">(c) 2026 Elume Beta. P Fitzgerald</div>
       </div>
 
       {scopeOpen && (
