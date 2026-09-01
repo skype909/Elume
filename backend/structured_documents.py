@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, constr, validator
@@ -268,6 +269,7 @@ _LESSON_FLOW_ALIASES = {
     "check": "check_for_understanding",
     "assessment_check": "check_for_understanding",
 }
+_WHOLE_MINUTES = re.compile(r"\s*([1-9][0-9]*)\s*(?:minutes?|mins?)?\s*", re.IGNORECASE)
 
 
 def _move_aliases(value: dict[str, Any], aliases: dict[str, str]) -> dict[str, Any]:
@@ -277,6 +279,18 @@ def _move_aliases(value: dict[str, Any], aliases: dict[str, str]) -> dict[str, A
             normalised.setdefault(canonical, normalised[alias])
             del normalised[alias]
     return normalised
+
+
+def _normalise_lesson_flow_minutes(value: Any) -> str:
+    """Normalise simple AI minute values without changing established text values."""
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return str(value)
+    if isinstance(value, str):
+        match = _WHOLE_MINUTES.fullmatch(value)
+        if match:
+            return match.group(1)
+        return value
+    raise ValueError("invalid lesson flow minutes")
 
 
 def _normalise_lesson_plan_ai_document(data: dict[str, Any]) -> dict[str, Any]:
@@ -312,10 +326,13 @@ def _normalise_lesson_plan_ai_document(data: dict[str, Any]) -> dict[str, Any]:
     if "lesson_flow" in document and isinstance(document["lesson_flow"], dict):
         document["lesson_flow"] = [document["lesson_flow"]]
     if isinstance(document.get("lesson_flow"), list):
-        document["lesson_flow"] = [
-            _move_aliases(item, _LESSON_FLOW_ALIASES) if isinstance(item, dict) else item
-            for item in document["lesson_flow"]
-        ]
+        normalised_flow = []
+        for item in document["lesson_flow"]:
+            normalised_item = _move_aliases(item, _LESSON_FLOW_ALIASES) if isinstance(item, dict) else item
+            if isinstance(normalised_item, dict) and "minutes" in normalised_item:
+                normalised_item["minutes"] = _normalise_lesson_flow_minutes(normalised_item["minutes"])
+            normalised_flow.append(normalised_item)
+        document["lesson_flow"] = normalised_flow
 
     if isinstance(document.get("duration"), (int, float)) and not isinstance(document["duration"], bool):
         document["duration"] = f"{document['duration']} minutes"
@@ -330,6 +347,8 @@ def structured_lesson_plan_validation_summary(exc: Exception) -> str:
             location = error.get("loc") or ()
             fields.append(".".join(str(part) for part in location))
         return "validation_fields=" + (", ".join(fields) or "unknown")
+    if isinstance(exc, ValueError) and str(exc) == "invalid lesson flow minutes":
+        return "validation_fields=lesson_flow.minutes"
     return "validation_reason=" + type(exc).__name__
 
 

@@ -15463,7 +15463,7 @@ def ai_create_resources(
     lesson_plan_json_rule = (
         "Return ONLY valid JSON with exactly one key: document. "
         "document must contain exactly these content keys: title, subject, level, class_context, duration, primary_outcome, learning_intentions, success_criteria, definitions, resources, prior_knowledge, lesson_flow, differentiation, misconceptions, assessment, teacher_note, homework, stopping_point. "
-        "lesson_flow must contain 2 to 8 practical entries, each with minutes, phase, teacher_action, student_action, and optional check_for_understanding. "
+        "lesson_flow must contain 2 to 8 practical entries, each with minutes as a positive whole-number minute count (for example 5, not '5 minutes'), phase, teacher_action, student_action, and optional check_for_understanding. "
         "definitions must contain term and definition. Use [] for optional list sections (definitions, resources, prior_knowledge, differentiation, misconceptions, assessment) and null only for optional text sections (teacher_note, homework, stopping_point). "
         "Do not include markdown, formatting instructions, colours, fonts, tables, or presentation decisions."
         if (payload.kind or "").strip().lower() == "lesson_plan"

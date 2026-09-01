@@ -109,6 +109,36 @@ class StructuredLessonPlanTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             normalise_create_resources_result("lesson_plan", direct_document, "Fallback")
 
+    def test_ai_whole_minute_variants_normalise_to_canonical_minute_strings(self):
+        payload = lesson_plan_payload()
+        payload["document"]["lesson_flow"] = [
+            {"minutes": 5, "phase": "Starter", "teacher_action": "Set the retrieval task.", "student_action": "Complete the retrieval task."},
+            {"minutes": "10", "phase": "Model", "teacher_action": "Model the worked example.", "student_action": "Annotate the worked example."},
+            {"minutes": "15 minutes", "phase": "Practice", "teacher_action": "Guide practice.", "student_action": "Complete guided questions."},
+            {"minutes": "5 minute", "phase": "Check", "teacher_action": "Ask checking questions.", "student_action": "Explain answers."},
+            {"minutes": "3 min", "phase": "Plenary", "teacher_action": "Set an exit prompt.", "student_action": "Answer the exit prompt."},
+            {"minutes": "2 mins", "phase": "Close", "teacher_action": "Summarise learning.", "student_action": "Record the next step."},
+        ]
+
+        result = normalise_create_resources_result("lesson_plan", payload, "Fallback")
+        timeline = next(block for block in result["document"]["blocks"] if block["type"] == "timeline")
+        self.assertEqual([item["minutes"] for item in timeline["items"]], ["5", "10", "15", "5", "3", "2"])
+
+    def test_existing_range_minute_strings_remain_compatible(self):
+        payload = lesson_plan_payload()
+        result = normalise_create_resources_result("lesson_plan", payload, "Fallback")
+
+        timeline = next(block for block in result["document"]["blocks"] if block["type"] == "timeline")
+        self.assertEqual([item["minutes"] for item in timeline["items"]], ["0-8 min", "8-45 min"])
+
+    def test_ai_invalid_non_text_lesson_flow_minutes_are_rejected(self):
+        for invalid_minutes in (5.5, 0, -5, True):
+            with self.subTest(invalid_minutes=invalid_minutes):
+                payload = lesson_plan_payload()
+                payload["document"]["lesson_flow"][0]["minutes"] = invalid_minutes
+                with self.assertRaisesRegex(ValueError, "invalid lesson flow minutes"):
+                    normalise_create_resources_result("lesson_plan", payload, "Fallback")
+
     def test_validation_summary_contains_only_field_names(self):
         payload = lesson_plan_payload()
         payload["document"]["learning_intentions"] = []
