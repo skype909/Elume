@@ -2290,7 +2290,16 @@ def export_pdf(payload: ExportDocxRequest):
     content = payload.content or ""
     teacher = (payload.teacher or "").strip() or None
 
-    data = _pdf_from_markdownish(title, content, teacher=teacher, meta=payload.meta or {})
+    if payload.document is not None:
+        try:
+            document = validate_structured_lesson_plan_document(payload.document)
+            docx_data = render_structured_lesson_plan_docx(document, teacher=teacher, meta=payload.meta or {})
+            data = _convert_structured_lesson_plan_docx_to_pdf(docx_data)
+            title = document.title
+        except (ValueError, StructuredDocumentValidationError) as exc:
+            raise HTTPException(status_code=422, detail="This structured Lesson Plan cannot be exported. Please regenerate it and try again.") from exc
+    else:
+        data = _pdf_from_markdownish(title, content, teacher=teacher, meta=payload.meta or {})
 
     filename_safe = re.sub(r"[^a-zA-Z0-9_\- ]+", "", title).strip().replace(" ", "_")
     if not filename_safe:
@@ -12515,6 +12524,74 @@ def _pptx_slide_count(source_path: Path) -> int:
 
 def _office_conversion_error(message: str, status_code: int = 422) -> HTTPException:
     return HTTPException(status_code=status_code, detail=message)
+
+
+def _convert_structured_lesson_plan_docx_to_pdf(docx_data: bytes) -> bytes:
+    """Convert the canonical structured Lesson Plan DOCX into a validated PDF."""
+    command = _libreoffice_command()
+    if not command:
+        raise _office_conversion_error(
+            "PDF export for structured Lesson Plans is not available on this server yet. Please download DOCX instead.",
+            503,
+        )
+
+    if not _office_conversion_lock.acquire(blocking=False):
+        raise _office_conversion_error(
+            "Another resource is being prepared right now. Please wait a moment and try again.",
+            429,
+        )
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="elume-structured-pdf-") as temporary_directory:
+            temp_dir = Path(temporary_directory)
+            source_path = temp_dir / "lesson-plan.docx"
+            converted_dir = temp_dir / "converted"
+            converted_dir.mkdir()
+            source_path.write_bytes(docx_data)
+
+            try:
+                result = subprocess.run(
+                    [
+                        command,
+                        "--headless",
+                        "--convert-to",
+                        "pdf",
+                        "--outdir",
+                        str(converted_dir),
+                        str(source_path),
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=OFFICE_CONVERSION_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise _office_conversion_error(
+                    "Elume could not export this Lesson Plan to PDF in time. Please try again or download DOCX instead."
+                ) from exc
+            except OSError as exc:
+                logger.warning("Structured Lesson Plan PDF conversion command could not start: %s", exc)
+                raise _office_conversion_error(
+                    "PDF export for structured Lesson Plans is not available on this server yet. Please download DOCX instead.",
+                    503,
+                ) from exc
+
+            converted_files = list(converted_dir.glob("*.pdf"))
+            if result.returncode != 0 or len(converted_files) != 1:
+                logger.warning("Structured Lesson Plan PDF conversion failed with return code %s", result.returncode)
+                raise _office_conversion_error(
+                    "Elume could not export this Lesson Plan to PDF. Please try again or download DOCX instead."
+                )
+
+            pdf_data = converted_files[0].read_bytes()
+            if not pdf_data or not pdf_data.startswith(b"%PDF-"):
+                raise _office_conversion_error(
+                    "Elume could not validate this Lesson Plan PDF. Please try again or download DOCX instead."
+                )
+            return pdf_data
+    finally:
+        _office_conversion_lock.release()
 
 
 def _convert_office_upload_to_pdf(file: UploadFile, output_path: Path) -> None:

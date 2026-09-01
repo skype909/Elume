@@ -3,6 +3,10 @@ import unittest
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+from uuid import uuid4
+import shutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -39,6 +43,17 @@ def lesson_plan_payload():
 
 
 class StructuredLessonPlanTests(unittest.TestCase):
+    class _WorkspaceTempDirectory:
+        def __init__(self):
+            self.path = Path.cwd() / f".structured-pdf-test-{uuid4().hex}"
+
+        def __enter__(self):
+            self.path.mkdir()
+            return str(self.path)
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            shutil.rmtree(self.path)
+
     def test_valid_structured_lesson_plan_builds_document_and_export_text(self):
         result = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")
 
@@ -122,6 +137,89 @@ class StructuredLessonPlanTests(unittest.TestCase):
 
         data = _docx_from_markdownish("Legacy worksheet", "# Questions\n\n- Explain the process.")
         self.assertTrue(zipfile.is_zipfile(BytesIO(data)))
+
+    def test_structured_lesson_plan_pdf_export_uses_canonical_docx_then_conversion(self):
+        from main import ExportDocxRequest, export_pdf
+
+        result = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")
+        with patch("main.render_structured_lesson_plan_docx", return_value=b"canonical-docx") as render_docx, patch(
+            "main._convert_structured_lesson_plan_docx_to_pdf", return_value=b"%PDF-1.7\nstructured"
+        ) as convert_pdf:
+            response = export_pdf(
+                ExportDocxRequest(
+                    title=result["title"],
+                    content=result["content"],
+                    document=result["document"],
+                    teacher="Ms Example",
+                )
+            )
+
+        render_docx.assert_called_once()
+        convert_pdf.assert_called_once_with(b"canonical-docx")
+        self.assertEqual(response.media_type, "application/pdf")
+        self.assertIn('.pdf"', response.headers["content-disposition"])
+
+    def test_structured_pdf_conversion_uses_isolated_temp_docx_and_cleans_up(self):
+        from main import _convert_structured_lesson_plan_docx_to_pdf
+
+        observed = {}
+
+        def fake_run(args, **kwargs):
+            source_path = Path(args[-1])
+            converted_dir = Path(args[args.index("--outdir") + 1])
+            observed["source_path"] = source_path
+            observed["converted_dir"] = converted_dir
+            observed["args"] = args
+            self.assertEqual(source_path.read_bytes(), b"canonical-docx")
+            (converted_dir / "lesson-plan.pdf").write_bytes(b"%PDF-1.7\nconverted")
+            return SimpleNamespace(returncode=0)
+
+        temporary_directory = self._WorkspaceTempDirectory()
+        with patch("main.tempfile.TemporaryDirectory", return_value=temporary_directory) as temp_factory, patch(
+            "main._libreoffice_command", return_value="libreoffice"
+        ), patch("main.subprocess.run", side_effect=fake_run):
+            result = _convert_structured_lesson_plan_docx_to_pdf(b"canonical-docx")
+
+        self.assertTrue(result.startswith(b"%PDF-"))
+        temp_factory.assert_called_once_with(prefix="elume-structured-pdf-")
+        self.assertEqual(observed["args"][0], "libreoffice")
+        self.assertIn("--headless", observed["args"])
+        self.assertFalse(observed["source_path"].parent.exists())
+        self.assertFalse(observed["converted_dir"].exists())
+
+    def test_structured_pdf_conversion_failure_is_controlled_and_cleans_up(self):
+        from fastapi import HTTPException
+        from main import _convert_structured_lesson_plan_docx_to_pdf
+
+        observed = {}
+
+        def fake_run(args, **kwargs):
+            observed["source_path"] = Path(args[-1])
+            return SimpleNamespace(returncode=1)
+
+        temporary_directory = self._WorkspaceTempDirectory()
+        with patch("main.tempfile.TemporaryDirectory", return_value=temporary_directory), patch(
+            "main._libreoffice_command", return_value="libreoffice"
+        ), patch("main.subprocess.run", side_effect=fake_run):
+            with self.assertRaises(HTTPException) as raised:
+                _convert_structured_lesson_plan_docx_to_pdf(b"canonical-docx")
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertNotIn("elume-structured-pdf-", raised.exception.detail)
+        self.assertFalse(observed["source_path"].parent.exists())
+
+    def test_structured_pdf_export_rejects_invalid_document_and_legacy_pdf_still_works(self):
+        from fastapi import HTTPException
+        from main import ExportDocxRequest, _pdf_from_markdownish, export_pdf
+
+        malformed = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")
+        malformed["document"]["blocks"][0]["unexpected"] = "invalid"
+        with self.assertRaises(HTTPException) as raised:
+            export_pdf(ExportDocxRequest(title="Bad", content="", document=malformed["document"]))
+        self.assertEqual(raised.exception.status_code, 422)
+
+        legacy_pdf = _pdf_from_markdownish("Legacy worksheet", "# Questions\n\n- Explain the process.")
+        self.assertTrue(legacy_pdf.startswith(b"%PDF-"))
 
 
 if __name__ == "__main__":
