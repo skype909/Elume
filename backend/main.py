@@ -46,7 +46,7 @@ load_dotenv(BASE_DIR / ".env")
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, Column, Integer, String, Text, Boolean, case, distinct, func, inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError
@@ -15307,6 +15307,7 @@ class AICreateResourcesRequest(BaseModel):
     tone: str | None = None         # legacy payload
     level: str | None = None
     detail: str | None = None
+    lesson_duration_minutes: int | None = Field(default=None, ge=1, le=480)
     scope: AICreateResourcesScope
     prompt: str
     sources: list[AICreateResourcesSource] = []
@@ -15460,12 +15461,19 @@ def ai_create_resources(
         "dept_plan": "Produce department-facing planning for shared use across a subject team.",
     }.get((payload.kind or "").strip().lower(), "Produce a clear classroom resource.")
 
+    requested_lesson_duration = payload.lesson_duration_minutes if (payload.kind or "").strip().lower() == "lesson_plan" else None
+    lesson_plan_duration_rule = (
+        f"The lesson must be designed for exactly {requested_lesson_duration} minutes. document.duration must be exactly '{requested_lesson_duration} minutes', and the sum of all lesson_flow minutes must equal exactly {requested_lesson_duration}. "
+        if requested_lesson_duration is not None
+        else ""
+    )
     lesson_plan_json_rule = (
         "Return ONLY valid JSON with exactly one key: document. "
         "document must contain exactly these content keys: title, subject, level, class_context, duration, primary_outcome, learning_intentions, success_criteria, definitions, resources, prior_knowledge, lesson_flow, differentiation, misconceptions, assessment, teacher_note, homework, stopping_point. "
         "lesson_flow must contain 2 to 8 practical entries, each with minutes as a positive whole-number minute count (for example 5, not '5 minutes'), phase, teacher_action, student_action, and optional check_for_understanding. "
         "definitions must contain term and definition. Use [] for optional list sections (definitions, resources, prior_knowledge, differentiation, misconceptions, assessment) and null only for optional text sections (teacher_note, homework, stopping_point). "
-        "Do not include markdown, formatting instructions, colours, fonts, tables, or presentation decisions."
+        + lesson_plan_duration_rule
+        + "Do not include markdown, formatting instructions, colours, fonts, tables, or presentation decisions."
         if (payload.kind or "").strip().lower() == "lesson_plan"
         else "JSON must have exactly these keys: title, content. content should be plain text with clear headings and bullet points where useful. Do not include any extra keys."
     )
@@ -15572,7 +15580,12 @@ def ai_create_resources(
         raise HTTPException(status_code=500, detail=f"Could not parse AI JSON: {e}")
 
     try:
-        result = normalise_create_resources_result(payload.kind, data, f"{template} - {p}"[:80])
+        result = normalise_create_resources_result(
+            payload.kind,
+            data,
+            f"{template} - {p}"[:80],
+            expected_duration_minutes=requested_lesson_duration,
+        )
     except (ValueError, StructuredDocumentValidationError) as exc:
         if (payload.kind or "").strip().lower() == "lesson_plan":
             logger.warning("Structured Lesson Plan validation failed: %s", structured_lesson_plan_validation_summary(exc))

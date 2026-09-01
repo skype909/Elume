@@ -349,10 +349,44 @@ def structured_lesson_plan_validation_summary(exc: Exception) -> str:
         return "validation_fields=" + (", ".join(fields) or "unknown")
     if isinstance(exc, ValueError) and str(exc) == "invalid lesson flow minutes":
         return "validation_fields=lesson_flow.minutes"
+    if isinstance(exc, ValueError) and str(exc) == "lesson plan duration mismatch":
+        return "validation_fields=duration"
+    if isinstance(exc, ValueError) and str(exc) in {"invalid lesson flow minutes for requested duration", "lesson flow duration total mismatch"}:
+        return "validation_fields=lesson_flow.minutes"
+    if isinstance(exc, ValueError) and str(exc) == "invalid requested lesson duration":
+        return "validation_fields=lesson_duration_minutes"
     return "validation_reason=" + type(exc).__name__
 
 
-def normalise_create_resources_result(kind: str, data: dict[str, Any], fallback_title: str) -> dict[str, Any]:
+def _validate_requested_lesson_duration(content: LessonPlanContent, expected_duration_minutes: int | None) -> None:
+    """Enforce an explicit live-generation duration without changing legacy documents."""
+    if expected_duration_minutes is None:
+        return
+    if isinstance(expected_duration_minutes, bool) or not isinstance(expected_duration_minutes, int) or expected_duration_minutes <= 0:
+        raise ValueError("invalid requested lesson duration")
+
+    duration_match = _WHOLE_MINUTES.fullmatch(content.duration or "")
+    if not duration_match or int(duration_match.group(1)) != expected_duration_minutes:
+        raise ValueError("lesson plan duration mismatch")
+
+    minute_values = []
+    for item in content.lesson_flow:
+        if not re.fullmatch(r"[1-9][0-9]*", item.minutes):
+            raise ValueError("invalid lesson flow minutes for requested duration")
+        minute_values.append(int(item.minutes))
+    if sum(minute_values) != expected_duration_minutes:
+        raise ValueError("lesson flow duration total mismatch")
+
+    content.duration = f"{expected_duration_minutes} minutes"
+
+
+def normalise_create_resources_result(
+    kind: str,
+    data: dict[str, Any],
+    fallback_title: str,
+    *,
+    expected_duration_minutes: int | None = None,
+) -> dict[str, Any]:
     if (kind or "").strip().lower() != "lesson_plan":
         title = str(data.get("title") or fallback_title).strip()
         content = str(data.get("content") or "").strip()
@@ -360,6 +394,7 @@ def normalise_create_resources_result(kind: str, data: dict[str, Any], fallback_
             raise ValueError("AI returned empty content")
         return {"title": title, "content": content}
     content = _model_validate(LessonPlanContent, _normalise_lesson_plan_ai_document(data))
+    _validate_requested_lesson_duration(content, expected_duration_minutes)
     document = build_lesson_plan_document(content)
     return {"title": content.title, "content": lesson_plan_to_legacy_text(content), "document": _model_dump(document)}
 

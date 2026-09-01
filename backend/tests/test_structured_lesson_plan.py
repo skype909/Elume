@@ -131,6 +131,35 @@ class StructuredLessonPlanTests(unittest.TestCase):
         timeline = next(block for block in result["document"]["blocks"] if block["type"] == "timeline")
         self.assertEqual([item["minutes"] for item in timeline["items"]], ["0-8 min", "8-45 min"])
 
+    def test_requested_lesson_duration_accepts_matching_total_and_canonicalises_duration(self):
+        payload = lesson_plan_payload()
+        payload["document"]["duration"] = "58 min"
+        payload["document"]["lesson_flow"] = [
+            {"minutes": 8, "phase": "Starter", "teacher_action": "Set retrieval work.", "student_action": "Complete retrieval work."},
+            {"minutes": "35 minutes", "phase": "Development", "teacher_action": "Model the new content.", "student_action": "Complete guided practice."},
+            {"minutes": "15", "phase": "Plenary", "teacher_action": "Lead the final check.", "student_action": "Complete an exit response."},
+        ]
+
+        result = normalise_create_resources_result("lesson_plan", payload, "Fallback", expected_duration_minutes=58)
+        timeline = next(block for block in result["document"]["blocks"] if block["type"] == "timeline")
+        self.assertEqual(result["document"]["duration"], "58 minutes")
+        self.assertEqual([item["minutes"] for item in timeline["items"]], ["8", "35", "15"])
+
+    def test_requested_lesson_duration_rejects_non_matching_total(self):
+        payload = lesson_plan_payload()
+        payload["document"]["duration"] = "58 minutes"
+        payload["document"]["lesson_flow"] = [
+            {"minutes": 8, "phase": "Starter", "teacher_action": "Set retrieval work.", "student_action": "Complete retrieval work."},
+            {"minutes": 35, "phase": "Development", "teacher_action": "Model the new content.", "student_action": "Complete guided practice."},
+        ]
+
+        with self.assertRaisesRegex(ValueError, "lesson flow duration total mismatch"):
+            normalise_create_resources_result("lesson_plan", payload, "Fallback", expected_duration_minutes=58)
+
+    def test_requested_lesson_duration_rejects_range_flow_values_without_affecting_legacy_documents(self):
+        with self.assertRaisesRegex(ValueError, "invalid lesson flow minutes for requested duration"):
+            normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback", expected_duration_minutes=55)
+
     def test_ai_invalid_non_text_lesson_flow_minutes_are_rejected(self):
         for invalid_minutes in (5.5, 0, -5, True):
             with self.subTest(invalid_minutes=invalid_minutes):

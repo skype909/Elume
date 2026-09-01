@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 import StructuredLessonPlanPreview, { isStructuredLessonPlanDocument, type StructuredLessonPlanDocument } from "./Components/StructuredLessonPlanPreview";
 import AiAssistanceNotice from "./Components/AiAssistanceNotice";
+import { applyLessonPlanDurationDefault, deriveLessonPlanDuration, type TeacherTimetableState } from "./createResourcesDuration";
 
 type ClassItem = { id: number; name: string; subject: string; color?: string | null };
 type BrandingChoice = "none" | "elume" | "school";
@@ -38,7 +39,7 @@ type TeacherProfile = {
   } | null;
 };
 
-type StoredAdminState = {
+type StoredAdminState = TeacherTimetableState & {
   profile: TeacherProfile;
   updatedAt?: string | null;
 };
@@ -171,6 +172,19 @@ function loadTeacherAdminProfile(): TeacherProfile | null {
       if (!raw) continue;
       const parsed = JSON.parse(raw) as StoredAdminState;
       if (parsed?.profile) return parsed.profile;
+    } catch {}
+  }
+  return null;
+}
+
+function loadTeacherAdminTimetableState(): TeacherTimetableState | null {
+  const keys = [teacherAdminStorageKeyForUser(), teacherAdminLegacyKeyForUser()];
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as TeacherTimetableState;
+      if (parsed?.timetableConfig && parsed?.schedule) return parsed;
     } catch {}
   }
   return null;
@@ -681,6 +695,9 @@ export default function CreateResources() {
   const [aiErr, setAiErr] = useState<string | null>(null);
   const [aiQuotaNotice, setAiQuotaNotice] = useState<string | null>(null);
   const [preview, setPreview] = useState<GeneratedDoc | null>(null);
+  const [timetableState, setTimetableState] = useState<TeacherTimetableState | null>(() => loadTeacherAdminTimetableState());
+  const [lessonLengthMinutes, setLessonLengthMinutes] = useState(60);
+  const [lessonLengthManuallyEdited, setLessonLengthManuallyEdited] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [savedResourceLocation, setSavedResourceLocation] = useState<{ classId: number; folder: "Lesson Plans" | "Worksheets" } | null>(null);
   const [postingIdeaId, setPostingIdeaId] = useState<string | null>(null);
@@ -688,6 +705,7 @@ export default function CreateResources() {
 
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const manualFileRef = useRef<HTMLInputElement | null>(null);
+  const lessonLengthScopeRef = useRef<string | null>(null);
 
   const card = "rounded-[32px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.94))] shadow-[0_22px_60px_rgba(15,23,42,0.10)] backdrop-blur";
   const soft = "rounded-[28px] border border-white/75 bg-[linear-gradient(135deg,rgba(255,255,255,0.94),rgba(240,253,250,0.88),rgba(245,243,255,0.88))] shadow-[0_12px_32px_rgba(15,23,42,0.06)]";
@@ -698,6 +716,10 @@ export default function CreateResources() {
   const teacherNameShort = useMemo(() => teacherDisplayNameShort(teacherProfile), [teacherProfile]);
   const teacherSchoolName = useMemo(() => String(teacherProfile?.schoolName ?? "").trim(), [teacherProfile]);
   const hasSchoolLogoOption = useMemo(() => Boolean(teacherProfile?.schoolBranding?.logoDataUrl), [teacherProfile]);
+  const timetableLessonLength = useMemo(
+    () => deriveLessonPlanDuration(timetableState, scope.mode === "single" ? scope.classId : null),
+    [scope, timetableState]
+  );
   const destinationOptions = useMemo(() => destinationOptionsForOutput(outputKind), [outputKind]);
   const sourceOptions = useMemo(() => sourceOptionsForOutput(outputKind), [outputKind]);
   const previewIdeas = useMemo(() => (preview?.kind === "ideas" ? parseIdeaPreviewBlocks(preview.content) : []), [preview]);
@@ -744,6 +766,38 @@ export default function CreateResources() {
       "Resources"
     );
   }, [destinationChoices]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    apiFetch("/teacher-admin/state")
+      .then((data: any) => {
+        const nextState = data?.state as TeacherTimetableState | undefined;
+        if (!cancelled && nextState?.timetableConfig && nextState?.schedule) {
+          setTimetableState(nextState);
+        }
+      })
+      .catch(() => {
+        // The local Teacher Admin state remains a safe fallback for this optional default.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const next = applyLessonPlanDurationDefault(
+      lessonLengthScopeRef.current,
+      scopeKey,
+      { minutes: lessonLengthMinutes, manuallyEdited: lessonLengthManuallyEdited },
+      timetableLessonLength
+    );
+    lessonLengthScopeRef.current = scopeKey;
+
+    if (next.minutes !== lessonLengthMinutes) setLessonLengthMinutes(next.minutes);
+    if (next.manuallyEdited !== lessonLengthManuallyEdited) setLessonLengthManuallyEdited(next.manuallyEdited);
+  }, [lessonLengthManuallyEdited, lessonLengthMinutes, scopeKey, timetableLessonLength]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1323,6 +1377,7 @@ export default function CreateResources() {
       scope,
       level,
       detail,
+      lesson_duration_minutes: outputKind === "lesson_plan" ? lessonLengthMinutes : undefined,
       british_english_required: true,
       curriculum_context: {
         country: "Ireland",
@@ -1801,7 +1856,7 @@ export default function CreateResources() {
 
                   <div className="rounded-[30px] border border-sky-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(239,246,255,0.93),rgba(245,243,255,0.92))] p-4 shadow-[0_16px_34px_rgba(59,130,246,0.08)]">
                     <div className="grid gap-3">
-                      <div className="grid gap-3 md:grid-cols-2">
+                      <div className={`grid gap-3 ${outputKind === "lesson_plan" ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
                         <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
                           <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Level</label>
                           <select value={level} onChange={(e) => setLevel(e.target.value as PhaseLevel)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
@@ -1818,6 +1873,32 @@ export default function CreateResources() {
                             <option value="Detailed">Detailed</option>
                           </select>
                         </div>
+
+                        {outputKind === "lesson_plan" && (
+                          <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
+                            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Lesson length</label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min={1}
+                                max={480}
+                                step={1}
+                                value={lessonLengthMinutes}
+                                aria-label="Lesson length in minutes"
+                                onChange={(e) => {
+                                  const next = Math.trunc(Number(e.target.value));
+                                  setLessonLengthManuallyEdited(true);
+                                  if (Number.isFinite(next) && next >= 1 && next <= 480) setLessonLengthMinutes(next);
+                                }}
+                                className="min-w-0 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800"
+                              />
+                              <span className="text-sm font-semibold text-slate-600">minutes</span>
+                            </div>
+                            {!lessonLengthManuallyEdited && timetableLessonLength.fromTimetable && (
+                              <div className="mt-2 text-xs font-semibold text-emerald-700">From your timetable</div>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       <div className="grid gap-3 md:grid-cols-2">
