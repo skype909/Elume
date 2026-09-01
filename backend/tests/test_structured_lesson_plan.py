@@ -1,10 +1,13 @@
 import sys
 import unittest
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from structured_documents import ValidationError, normalise_create_resources_result
+from lesson_plan_docx import render_structured_lesson_plan_docx
+from structured_documents import ValidationError, normalise_create_resources_result, validate_structured_lesson_plan_document
 
 
 def lesson_plan_payload():
@@ -74,6 +77,51 @@ class StructuredLessonPlanTests(unittest.TestCase):
         result = normalise_create_resources_result("worksheet", {"title": "Cells worksheet", "content": "Questions"}, "Fallback")
 
         self.assertEqual(result, {"title": "Cells worksheet", "content": "Questions"})
+
+    def test_structured_lesson_plan_docx_contains_document_sections_and_tables(self):
+        from docx import Document
+
+        result = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")
+        document = validate_structured_lesson_plan_document(result["document"])
+        data = render_structured_lesson_plan_docx(document, teacher="Ms Example", meta={"schoolName": "Example School"})
+
+        self.assertTrue(zipfile.is_zipfile(BytesIO(data)))
+        reopened = Document(BytesIO(data))
+        text = "\n".join(paragraph.text for paragraph in reopened.paragraphs)
+        table_text = "\n".join(cell.text for table in reopened.tables for row in table.rows for cell in row.cells)
+        self.assertIn("Photosynthesis: energy transfer", text)
+        self.assertIn("PRIMARY LEARNING OUTCOME", table_text)
+        self.assertIn("Time", table_text)
+        self.assertIn("Teacher", table_text)
+        self.assertIn("Chlorophyll", table_text)
+        self.assertIn("Suggested homework", table_text)
+        self.assertIn("Misconceptions to address", table_text)
+        self.assertIn("Assessment and checks for understanding", table_text)
+
+    def test_structured_lesson_plan_docx_allows_absent_optional_sections(self):
+        payload = lesson_plan_payload()
+        for field in ("definitions", "resources", "prior_knowledge", "differentiation", "misconceptions", "assessment"):
+            payload["document"][field] = []
+        payload["document"]["teacher_note"] = None
+        payload["document"]["homework"] = None
+        payload["document"]["stopping_point"] = None
+
+        result = normalise_create_resources_result("lesson_plan", payload, "Fallback")
+        data = render_structured_lesson_plan_docx(validate_structured_lesson_plan_document(result["document"]))
+        self.assertTrue(zipfile.is_zipfile(BytesIO(data)))
+
+    def test_export_document_rejects_malformed_renderer_blocks(self):
+        result = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")
+        result["document"]["blocks"][0]["unexpected"] = "not allowed"
+
+        with self.assertRaises(ValueError):
+            validate_structured_lesson_plan_document(result["document"])
+
+    def test_legacy_docx_exporter_remains_available(self):
+        from main import _docx_from_markdownish
+
+        data = _docx_from_markdownish("Legacy worksheet", "# Questions\n\n- Explain the process.")
+        self.assertTrue(zipfile.is_zipfile(BytesIO(data)))
 
 
 if __name__ == "__main__":

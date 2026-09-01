@@ -1508,6 +1508,7 @@ export default function CreateResources() {
     const body = {
       title: preview.title,
       content: preview.content,
+      document: preview.kind === "lesson_plan" && preview.document ? preview.document : null,
       teacher: preview.teacherDisplayNameShort || teacherNameShort,
       meta: {
         kind: preview.kind,

@@ -89,6 +89,88 @@ class StructuredLessonPlanDocument(BaseModel):
         extra = "forbid"
 
 
+def _require_text(value: Any, *, field: str, maximum: int = 2200, required: bool = True) -> str | None:
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > maximum:
+        raise ValueError(f"invalid {field}")
+    return value.strip()
+
+
+def _require_text_list(value: Any, *, field: str, maximum: int) -> list[str]:
+    if not isinstance(value, list) or len(value) > maximum:
+        raise ValueError(f"invalid {field}")
+    return [_require_text(item, field=field, maximum=280) for item in value]
+
+
+def validate_structured_lesson_plan_document(raw_document: dict[str, Any]) -> StructuredLessonPlanDocument:
+    """Validate the renderer-facing document sent back by the browser for export."""
+    document = _model_validate(StructuredLessonPlanDocument, raw_document)
+    _require_text(document.title, field="document title", maximum=280)
+    for value, field, maximum in ((document.subject, "subject", 120), (document.level, "level", 120), (document.class_context, "class context", 180), (document.duration, "duration", 80)):
+        _require_text(value, field=field, maximum=maximum, required=False)
+    for block in document.blocks:
+        block_type = block["type"]
+        allowed_fields = {
+            "heading": {"type", "text"},
+            "paragraph": {"type", "text"},
+            "bullet_list": {"type", "title", "items"},
+            "info_panel": {"type", "label", "text", "definitions"},
+            "timeline": {"type", "title", "items"},
+            "teacher_note": {"type", "title", "text"},
+            "student_task": {"type", "title", "items"},
+            "assessment_checkpoint": {"type", "title", "items"},
+            "callout": {"type", "tone", "title", "text", "items"},
+            "homework": {"type", "title", "text"},
+        }[block_type]
+        if set(block) - allowed_fields:
+            raise ValueError("document block contains unsupported fields")
+        if block_type in {"heading", "paragraph"}:
+            _require_text(block.get("text"), field="block text")
+        elif block_type in {"bullet_list", "student_task", "assessment_checkpoint"}:
+            _require_text(block.get("title"), field="block title", maximum=280)
+            _require_text_list(block.get("items"), field="block items", maximum=12)
+        elif block_type == "info_panel":
+            _require_text(block.get("label"), field="panel label", maximum=280)
+            if "text" not in block and "definitions" not in block:
+                raise ValueError("panel needs text or definitions")
+            if "text" in block:
+                _require_text(block.get("text"), field="panel text", required=False)
+            if "definitions" in block:
+                definitions = block["definitions"]
+                if not isinstance(definitions, list) or len(definitions) > 8:
+                    raise ValueError("invalid definitions")
+                for definition in definitions:
+                    if not isinstance(definition, dict) or set(definition) != {"term", "definition"}:
+                        raise ValueError("invalid definition")
+                    _require_text(definition["term"], field="definition term", maximum=280)
+                    _require_text(definition["definition"], field="definition text")
+        elif block_type == "timeline":
+            _require_text(block.get("title"), field="timeline title", maximum=280)
+            items = block.get("items")
+            if not isinstance(items, list) or not 2 <= len(items) <= 8:
+                raise ValueError("invalid lesson flow")
+            for item in items:
+                if not isinstance(item, dict) or set(item) - {"minutes", "phase", "teacher_action", "student_action", "check_for_understanding"}:
+                    raise ValueError("invalid lesson flow item")
+                for field, maximum in (("minutes", 40), ("phase", 280), ("teacher_action", 2200), ("student_action", 2200)):
+                    _require_text(item.get(field), field=field, maximum=maximum)
+                if "check_for_understanding" in item:
+                    _require_text(item.get("check_for_understanding"), field="check for understanding", maximum=500, required=False)
+        elif block_type in {"teacher_note", "homework"}:
+            _require_text(block.get("title"), field="block title", maximum=280)
+            _require_text(block.get("text"), field="block text")
+        elif block_type == "callout":
+            _require_text(block.get("title"), field="callout title", maximum=280)
+            if block.get("tone") not in {"warning", "info", None}:
+                raise ValueError("invalid callout tone")
+            if "text" in block:
+                _require_text(block.get("text"), field="callout text", required=False)
+            if "items" in block:
+                _require_text_list(block.get("items"), field="callout items", maximum=12)
+    return document
+
+
 def build_lesson_plan_document(content: LessonPlanContent) -> StructuredLessonPlanDocument:
     blocks: list[dict[str, Any]] = [
         {"type": "info_panel", "label": "Primary learning outcome", "text": content.primary_outcome},
@@ -173,4 +255,4 @@ def normalise_create_resources_result(kind: str, data: dict[str, Any], fallback_
     return {"title": content.title, "content": lesson_plan_to_legacy_text(content), "document": _model_dump(document)}
 
 
-__all__ = ["LessonPlanContent", "StructuredLessonPlanDocument", "ValidationError", "normalise_create_resources_result"]
+__all__ = ["LessonPlanContent", "StructuredLessonPlanDocument", "ValidationError", "normalise_create_resources_result", "validate_structured_lesson_plan_document"]

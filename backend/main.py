@@ -96,7 +96,8 @@ from schemas import (
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
 import schemas
 from ai_usage import AI_FEATURES, allowance_available, allowance_message, allowance_warning, current_allowance_period, feature_policy, resource_feature
-from structured_documents import ValidationError as StructuredDocumentValidationError, normalise_create_resources_result
+from structured_documents import ValidationError as StructuredDocumentValidationError, normalise_create_resources_result, validate_structured_lesson_plan_document
+from lesson_plan_docx import render_structured_lesson_plan_docx
 from db import Base, SessionLocal, engine
 
 from models import (
@@ -891,6 +892,7 @@ class ExportDocxRequest(BaseModel):
     content: str
     teacher: str | None = None
     meta: dict | None = None  # optional: scope/level/template/date etc.
+    document: dict[str, Any] | None = None
 
 
 def _pdf_escape(text: str) -> str:
@@ -2259,7 +2261,15 @@ def export_docx(payload: ExportDocxRequest):
     content = payload.content or ""
     teacher = (payload.teacher or "").strip() or None
 
-    data = _docx_from_markdownish(title, content, teacher=teacher, meta=payload.meta or {})
+    if payload.document is not None:
+        try:
+            document = validate_structured_lesson_plan_document(payload.document)
+            data = render_structured_lesson_plan_docx(document, teacher=teacher, meta=payload.meta or {})
+            title = document.title
+        except (ValueError, StructuredDocumentValidationError) as exc:
+            raise HTTPException(status_code=422, detail="This structured Lesson Plan cannot be exported. Please regenerate it and try again.") from exc
+    else:
+        data = _docx_from_markdownish(title, content, teacher=teacher, meta=payload.meta or {})
 
     filename_safe = re.sub(r"[^a-zA-Z0-9_\- ]+", "", title).strip().replace(" ", "_")
     if not filename_safe:
