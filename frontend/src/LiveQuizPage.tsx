@@ -384,14 +384,15 @@ export default function LiveQuizPage() {
 
   const [mode, setMode] = useState<"saved" | "starred" | "custom">("saved");
 
-  const [shuffleQuestions, setShuffleQuestions] = useState<boolean>(false);
-  const [autoPlay, setAutoPlay] = useState<boolean>(false);
-  const [autoEndWhenAllAnswered, setAutoEndWhenAllAnswered] = useState<boolean>(false);
+  const [shuffleQuestions, setShuffleQuestions] = useState<boolean>(true);
+  const [autoPlay, setAutoPlay] = useState<boolean>(true);
+  const [autoEndWhenAllAnswered, setAutoEndWhenAllAnswered] = useState<boolean>(true);
   const [secondsPerQuestion, setSecondsPerQuestion] = useState<number>(20);
   const [useTimer, setUseTimer] = useState<boolean>(true);
-  const [musicEnabled, setMusicEnabled] = useState<boolean>(false);
+  const [musicEnabled, setMusicEnabled] = useState<boolean>(true);
   const [musicVolume, setMusicVolume] = useState<number>(35);
   const [musicNotice, setMusicNotice] = useState<string | null>(null);
+  const [showQuizStartedConfirmation, setShowQuizStartedConfirmation] = useState(false);
 
   const [customTitle, setCustomTitle] = useState<string>("Quick Poll");
   const [customQuestions, setCustomQuestions] = useState<LiveQuestion[]>([
@@ -752,6 +753,12 @@ export default function LiveQuizPage() {
   }, []);
 
   useEffect(() => {
+    if (!showQuizStartedConfirmation) return;
+    const timeout = window.setTimeout(() => setShowQuizStartedConfirmation(false), 2500);
+    return () => window.clearTimeout(timeout);
+  }, [showQuizStartedConfirmation]);
+
+  useEffect(() => {
     const audio = new Audio(quizLoopMp3);
     audio.loop = true;
     audio.preload = "auto";
@@ -972,6 +979,10 @@ export default function LiveQuizPage() {
 
       fetchStatus(session.code);
 
+      if (action === "start") {
+        setShowQuizStartedConfirmation(true);
+      }
+
       if (action === "start" && musicEnabled && audioRef.current) {
         void audioRef.current.play().then(() => {
           setMusicNotice(null);
@@ -1035,6 +1046,25 @@ export default function LiveQuizPage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
+      {showQuizStartedConfirmation ? (
+        <div className="fixed inset-x-4 top-4 z-[80] mx-auto max-w-lg" role="status" aria-live="polite">
+          <div className="flex items-start gap-3 rounded-[28px] border border-emerald-200 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 p-4 text-white shadow-[0_18px_48px_rgba(13,148,136,0.32)]">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/20 text-xl" aria-hidden="true">✓</div>
+            <div className="min-w-0 flex-1">
+              <div className="text-lg font-black">Quiz has started</div>
+              <div className="mt-0.5 text-sm font-semibold text-emerald-50">Students can now answer the first question.</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowQuizStartedConfirmation(false)}
+              className="rounded-xl px-2 py-1 text-lg font-black text-white/90 transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white"
+              aria-label="Dismiss quiz started confirmation"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute -left-24 top-[-60px] h-80 w-80 rounded-full bg-cyan-300/20 blur-3xl" />
         <div className="absolute right-[-90px] top-12 h-96 w-96 rounded-full bg-violet-300/20 blur-3xl" />
