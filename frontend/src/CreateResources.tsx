@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
+import StructuredLessonPlanPreview, { isStructuredLessonPlanDocument, type StructuredLessonPlanDocument } from "./Components/StructuredLessonPlanPreview";
 
 type ClassItem = { id: number; name: string; subject: string; color?: string | null };
 type BrandingChoice = "none" | "elume" | "school";
@@ -70,6 +71,7 @@ type GeneratedDoc = {
   brandingChoice?: BrandingChoice;
   worksheetIncludeAnswers?: boolean;
   content: string;
+  document?: StructuredLessonPlanDocument;
 };
 
 type SavedGeneratedResource = {
@@ -1387,6 +1389,9 @@ export default function CreateResources() {
         (data as any)?.draft?.title ??
         `${labelForOutput(outputKind)}${META_SEPARATOR}${teacherPrompt}`.slice(0, 90);
       const content = (data as any)?.content ?? (data as any)?.draft?.content ?? "";
+      const document = outputKind === "lesson_plan" && isStructuredLessonPlanDocument((data as any)?.document)
+        ? (data as any).document
+        : undefined;
 
       if (!content) {
         const fallback = localGenerate(outputKind, teacherPrompt);
@@ -1408,6 +1413,7 @@ export default function CreateResources() {
           brandingChoice,
           worksheetIncludeAnswers: outputKind === "worksheet" ? worksheetIncludeAnswers : undefined,
           content,
+          document,
         });
         const feature = outputKind === "ideas" ? "three_ideas" : outputKind === "scheme" ? "scheme_of_work" : outputKind === "dept_plan" ? "department_plan" : outputKind;
         try {
@@ -2190,25 +2196,40 @@ export default function CreateResources() {
                     </div>
                   )}
 
-                  <RenderDoc
-                    text={preview.content}
-                    title={preview.title}
-                    subtitle={[
-                      preview.scopeLabel,
-                      `${level}${META_SEPARATOR}${detail}`,
-                      `${displayLabelForBucket(preview.saveBucket)}${preview.saveFolder ? ` / ${preview.saveFolder}` : ""}`,
-                      new Date(preview.createdAt).toLocaleString("en-IE"),
-                    ].join(META_SEPARATOR)}
-                    footer={`${preview.teacherDisplayNameShort || teacherNameShort}${
-                      preview.schoolName || teacherSchoolName ? `${META_SEPARATOR}${preview.schoolName || teacherSchoolName}` : ""
-                    }${META_SEPARATOR}${
-                      preview.brandingChoice === "none"
-                        ? "No branding"
-                        : preview.brandingChoice === "school" && hasSchoolLogoOption
-                          ? "School logo"
-                          : "Elume logo"
-                    }`}
-                  />
+                  {preview.kind === "lesson_plan" && preview.document ? (
+                    <StructuredLessonPlanPreview
+                      document={preview.document}
+                      footer={`${preview.teacherDisplayNameShort || teacherNameShort}${
+                        preview.schoolName || teacherSchoolName ? `${META_SEPARATOR}${preview.schoolName || teacherSchoolName}` : ""
+                      }${META_SEPARATOR}${
+                        preview.brandingChoice === "none"
+                          ? "No branding"
+                          : preview.brandingChoice === "school" && hasSchoolLogoOption
+                            ? "School logo"
+                            : "Elume logo"
+                      }`}
+                    />
+                  ) : (
+                    <RenderDoc
+                      text={preview.content}
+                      title={preview.title}
+                      subtitle={[
+                        preview.scopeLabel,
+                        `${level}${META_SEPARATOR}${detail}`,
+                        `${displayLabelForBucket(preview.saveBucket)}${preview.saveFolder ? ` / ${preview.saveFolder}` : ""}`,
+                        new Date(preview.createdAt).toLocaleString("en-IE"),
+                      ].join(META_SEPARATOR)}
+                      footer={`${preview.teacherDisplayNameShort || teacherNameShort}${
+                        preview.schoolName || teacherSchoolName ? `${META_SEPARATOR}${preview.schoolName || teacherSchoolName}` : ""
+                      }${META_SEPARATOR}${
+                        preview.brandingChoice === "none"
+                          ? "No branding"
+                          : preview.brandingChoice === "school" && hasSchoolLogoOption
+                            ? "School logo"
+                            : "Elume logo"
+                      }`}
+                    />
+                  )}
 
                   <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500">
                     Footer for print/export: {preview.teacherDisplayNameShort || teacherNameShort}

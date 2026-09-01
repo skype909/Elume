@@ -96,6 +96,7 @@ from schemas import (
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
 import schemas
 from ai_usage import AI_FEATURES, allowance_available, allowance_message, allowance_warning, current_allowance_period, feature_policy, resource_feature
+from structured_documents import ValidationError as StructuredDocumentValidationError, normalise_create_resources_result
 from db import Base, SessionLocal, engine
 
 from models import (
@@ -15151,8 +15152,10 @@ def ai_parse_event(
 
     try:
         data = json.loads(m.group(0))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not parse AI JSON: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Elume could not read this AI resource. Please try again.") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=500, detail="Elume could not read this AI resource. Please try again.")
 
     # Some models return {"draft": {...}}; accept both shapes
     if isinstance(data, dict) and "draft" in data and isinstance(data["draft"], dict):
@@ -15241,6 +15244,7 @@ class AICreateResourcesRequest(BaseModel):
 class AICreateResourcesResponse(BaseModel):
     title: str
     content: str
+    document: dict[str, Any] | None = None
 
 
 def _ai_create_resources_template_for_kind(kind: str) -> str:
@@ -15408,6 +15412,16 @@ def ai_create_resources(
         "dept_plan": "Produce department-facing planning for shared use across a subject team.",
     }.get((payload.kind or "").strip().lower(), "Produce a clear classroom resource.")
 
+    lesson_plan_json_rule = (
+        "Return ONLY valid JSON with exactly one key: document. "
+        "document must contain exactly these content keys: title, subject, level, class_context, duration, primary_outcome, learning_intentions, success_criteria, definitions, resources, prior_knowledge, lesson_flow, differentiation, misconceptions, assessment, teacher_note, homework, stopping_point. "
+        "lesson_flow must contain 2 to 8 practical entries, each with minutes, phase, teacher_action, student_action, and optional check_for_understanding. "
+        "definitions must contain term and definition. Use null or [] for optional content when it is not useful. "
+        "Do not include markdown, formatting instructions, colours, fonts, tables, or presentation decisions."
+        if (payload.kind or "").strip().lower() == "lesson_plan"
+        else "JSON must have exactly these keys: title, content. content should be plain text with clear headings and bullet points where useful. Do not include any extra keys."
+    )
+
     system = (
         f"Today is {datetime.now().date().isoformat()} in timezone {payload.timezone}. "
         "You are an assistant for teachers writing classroom resources for the Irish secondary school / post-primary context. "
@@ -15421,9 +15435,7 @@ def ai_create_resources(
         "If something is not in the sources, write it as a sensible teaching suggestion, not as a quoted fact, and do not invent curriculum citations, exam-board references, or school policies. "
         "Do not clutter the resource with branding or footer metadata; that is handled separately. "
         "Return ONLY valid JSON (no markdown, no backticks). "
-        "JSON must have exactly these keys: title, content. "
-        "content should be plain text with clear headings and bullet points where useful. "
-        "Do not include any extra keys."
+        + lesson_plan_json_rule
     )
 
     user_msg = (
@@ -15481,31 +15493,11 @@ def ai_create_resources(
         "- If worksheet, do not include lesson-plan sections such as Learning Intentions, Success Criteria, Lesson Flow, Assessment, or Homework.\n"
         "- If worksheet, do not let markdown markers like ### Task 1 or ### Reflection appear in the final worksheet body.\n"
         "- If worksheet, include an answer key unless told not to.\n"
-        "- If lesson_plan, do not use tables.\n"
-        "- If lesson_plan, keep it concise, printable, teacher-facing, and suitable for roughly 12 pages or less when exported.\n"
-        "- If lesson_plan, use clear headings only, keep spacing clean, and avoid unnecessary explanation, symbols, or excessive line breaks.\n"
-        "- If lesson_plan, do not write like a raw markdown dump or a generic scaffold.\n"
-        "- If lesson_plan, write for Irish post-primary / secondary classrooms using practical, realistic classroom phrasing.\n"
-        "- If lesson_plan, avoid US curriculum assumptions unless the teacher explicitly asks for them.\n"
-        "- If lesson_plan, title it as Lesson Plan: {topic/title} and follow with one clean metadata line in the form Subject | Level | Duration.\n"
-        "- If lesson_plan, keep Learning Overview short and topic-led rather than padded with a long overview paragraph.\n"
-        "- If lesson_plan, write Success Criteria as checklist-style 'I can ...' statements.\n"
-        "- If lesson_plan, follow exactly this structure and order:\n"
-        "  1. Learning Overview\n"
-        "  2. Learning Intentions\n"
-        "  3. Success Criteria\n"
-        "  4. Lesson Flow\n"
-        "  5. Starter\n"
-        "  6. Teaching and Development\n"
-        "  7. Activity and Application\n"
-        "  8. Plenary and Closure\n"
-        "  9. Resources\n"
-        "  10. Differentiation\n"
-        "  11. Assessment\n"
-        "  12. Suggested Homework\n"
-        "  13. Reflection\n"
-        "- If lesson_plan, make each lesson-flow subsection usable and specific rather than filler.\n"
-        "- If lesson_plan, make the four timed lesson-flow subsections read as concrete classroom actions, not vague scaffold text.\n"
+        "- If lesson_plan, provide the requested JSON fields as useful teacher content only; Elume applies the layout and presentation.\n"
+        "- If lesson_plan, write for Irish post-primary / secondary classrooms using practical, realistic classroom phrasing and avoid US curriculum assumptions unless explicitly requested.\n"
+        "- If lesson_plan, make the primary outcome topic-led and concise; make success criteria checklist-style 'I can ...' statements.\n"
+        "- If lesson_plan, provide a practical timed lesson flow with specific teacher questioning, student activity, and meaningful checks for understanding rather than generic filler.\n"
+        "- If lesson_plan, include precise definitions, realistic misconceptions, and exam-safe content where the subject and level make them useful.\n"
         "- If lesson_plan, if usable source content exists, preserve its topic framing, vocabulary, named facts, and sequence where possible.\n"
         "- If lesson_plan, keep the tone practical, school-ready, and concise.\n"
         "\n"
@@ -15539,16 +15531,15 @@ def ai_create_resources(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not parse AI JSON: {e}")
 
-    title = (data.get("title") or "").strip()
-    body = (data.get("content") or "").strip()
-
-    if not title:
-        title = f"{template} - {p}"[:80]
-    if not body:
-        raise HTTPException(status_code=500, detail="AI returned empty content")
+    try:
+        result = normalise_create_resources_result(payload.kind, data, f"{template} - {p}"[:80])
+    except (ValueError, StructuredDocumentValidationError) as exc:
+        if (payload.kind or "").strip().lower() == "lesson_plan":
+            raise HTTPException(status_code=500, detail="Elume could not validate this Lesson Plan. Please try again.") from exc
+        raise HTTPException(status_code=500, detail="AI returned empty content") from exc
 
     _record_ai_feature_usage(db, user, feature, resp, model_name)
-    return {"title": title, "content": body}
+    return result
 class AIReportCommentRequest(BaseModel):
     length: str = "Medium"            # Short | Medium | Long
     indicators: List[str] = []
