@@ -96,6 +96,7 @@ from schemas import (
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
 import schemas
 from ai_usage import AI_FEATURES, allowance_available, allowance_message, allowance_warning, current_allowance_period, feature_policy, resource_feature
+from ai_privacy import append_report_comment_sign_off, cat4_facts_for_ai, report_comment_ai_input, restore_report_comment_student_name
 from structured_documents import ValidationError as StructuredDocumentValidationError, normalise_create_resources_result, validate_structured_lesson_plan_document
 from lesson_plan_docx import render_structured_lesson_plan_docx
 from db import Base, SessionLocal, engine
@@ -14675,7 +14676,7 @@ def cat4_student_interpretation(
         "If discrepancy_label is present, explain it clearly in plain English without overstating certainty. "
         "Return plain text only."
     )
-    user_message = json.dumps(facts, ensure_ascii=True)
+    user_message = json.dumps(cat4_facts_for_ai(facts), ensure_ascii=True)
 
     try:
         client = OpenAI(api_key=api_key)
@@ -15136,7 +15137,6 @@ def ai_parse_event(
 
     user_message = (
         f"Text: {text}\n"
-        f"class_id: {payload.class_id}\n"
         f"default_duration_minutes: {payload.default_duration_minutes}\n"
         f"timezone: {payload.timezone}"
         f"today: {datetime.now().date().isoformat()}\n"
@@ -15302,7 +15302,7 @@ def _ai_create_resources_include_answer_key(payload: AICreateResourcesRequest) -
     return True
 
 
-def _ai_create_resources_source_bundle(payload: AICreateResourcesRequest) -> tuple[str, str]:
+def _ai_create_resources_source_bundle(payload: AICreateResourcesRequest) -> str:
     combined: list[AICreateResourcesSource] = []
     if payload.sources:
         combined.extend(payload.sources)
@@ -15314,15 +15314,13 @@ def _ai_create_resources_source_bundle(payload: AICreateResourcesRequest) -> tup
     used = 0
 
     for idx, s in enumerate(combined[:24], start=1):
-        title = (s.title or "").strip() or f"Source {idx}"
         text_value = (s.text or "").strip()
         if not text_value:
             continue
         text_value = re.sub(r"\s+\n", "\n", text_value)
         text_value = re.sub(r"\n{3,}", "\n\n", text_value)
         text_value = text_value[:1800]
-        pages = f" (pages: {s.pages})" if s.pages else ""
-        chunk = f"---\nSOURCE: {title}{pages}\n{text_value}"
+        chunk = f"---\nSOURCE EXCERPT {idx}\n{text_value}"
         if used + len(chunk) > char_budget:
             remaining = max(0, char_budget - used)
             if remaining < 200:
@@ -15333,17 +15331,7 @@ def _ai_create_resources_source_bundle(payload: AICreateResourcesRequest) -> tup
         if used >= char_budget:
             break
 
-    file_notes = []
-    for f in payload.manual_file_sources[:12]:
-        filename = (f.filename or "").strip()
-        if filename:
-            file_notes.append(filename)
-    file_hint = ""
-    if file_notes:
-        file_hint = "Teacher also selected uploaded files for context: " + ", ".join(file_notes)
-
-    sources_txt = "\n".join(chunks)
-    return sources_txt, file_hint
+    return "\n".join(chunks)
 
 @app.post("/ai/create-resources", response_model=AICreateResourcesResponse)
 def ai_create_resources(
@@ -15376,44 +15364,17 @@ def ai_create_resources(
     tone = _ai_create_resources_tone(payload.kind, payload.detail, payload.tone)
     level = (payload.level or "").strip() or "Not specified"
     answer_key = _ai_create_resources_include_answer_key(payload)
-    sources_txt, file_hint = _ai_create_resources_source_bundle(payload)
+    sources_txt = _ai_create_resources_source_bundle(payload)
 
     scope_desc = ""
     if payload.scope.mode == "general":
         scope_desc = "General (not tied to a specific class)"
     elif payload.scope.mode == "single":
-        scope_desc = f"Single class_id: {payload.scope.classId}"
+        scope_desc = "Single selected class"
     else:
-        scope_desc = f"Group class_ids: {payload.scope.classIds} | groupName: {payload.scope.groupName}"
+        scope_desc = "Selected class group"
 
-    save_bucket = (payload.save_target.bucket if payload.save_target else None) or ""
-    save_folder = (payload.save_target.folder if payload.save_target else None) or ""
-    source_context = payload.source_context or {}
-    selected_folder = (
-        (source_context.get("selected_folder") if isinstance(source_context, dict) else None)
-        or save_folder
-        or ""
-    )
-    selected_bucket = (
-        (source_context.get("selected_bucket") if isinstance(source_context, dict) else None)
-        or save_bucket
-        or ""
-    )
     output_kind = (payload.outputKind or payload.kind or "").strip()
-    teacher_name_short = (
-        (payload.teacherDisplayNameShort or "").strip()
-        or str((payload.branding or {}).get("teacherDisplayNameShort") or "").strip()
-        or "Teacher"
-    )
-    school_name = (
-        (payload.schoolName or "").strip()
-        or str((payload.branding or {}).get("schoolName") or "").strip()
-    )
-    branding_choice = (
-        (payload.brandingChoice or "").strip()
-        or str((payload.branding or {}).get("brandingChoice") or "").strip()
-        or "elume"
-    )
     audience_rule = {
         "ideas": "Produce three structured teacher-facing teaching ideas for immediate classroom use, not a lesson plan.",
         "lesson_plan": "Produce a concise teacher-facing lesson plan for an Irish post-primary classroom using the exact requested section structure.",
@@ -15439,7 +15400,7 @@ def ai_create_resources(
         "Prioritise Irish classroom framing, curriculum assumptions, and school language. "
         "Do not drift into US or non-Irish assumptions unless the teacher explicitly asks for that context. "
         "Treat the selected class or group as the default working context. "
-        "Treat the selected folder as the priority search context when relevant. "
+        "Treat the selected source excerpts as the priority context when relevant. "
         "Manual pasted or uploaded sources are teacher-selected guidance and should be used carefully when present. "
         "CRITICAL RULE: You may ONLY use the provided SOURCE EXCERPTS as factual grounding. "
         "If something is not in the sources, write it as a sensible teaching suggestion, not as a quoted fact, and do not invent curriculum citations, exam-board references, or school policies. "
@@ -15449,10 +15410,6 @@ def ai_create_resources(
     )
 
     user_msg = (
-        f"Teacher: {user.email}\n"
-        f"teacherDisplayNameShort: {teacher_name_short}\n"
-        f"schoolName: {school_name or '[Not provided]'}\n"
-        f"brandingChoice: {branding_choice}\n"
         f"kind: {payload.kind}\n"
         f"outputKind: {output_kind or payload.kind}\n"
         f"template: {template}\n"
@@ -15462,9 +15419,6 @@ def ai_create_resources(
         f"audience: {(payload.audience or '').strip() or '[Inferred from kind]'}\n"
         f"output_intent: {(payload.output_intent or '').strip() or template}\n"
         f"scope: {scope_desc}\n"
-        f"save_target_bucket: {save_bucket or '[Not provided]'}\n"
-        f"selected_folder_priority: {selected_folder or '[Top level / none]'}\n"
-        f"selected_bucket_context: {selected_bucket or '[Not provided]'}\n"
         f"include_answer_key: {'Yes' if answer_key else 'No'}\n"
         f"audience_rule: {audience_rule}\n"
         f"prompt: {p}\n"
@@ -15475,7 +15429,7 @@ def ai_create_resources(
         "- Keep the response appropriate to the output kind.\n"
         "- When sources are present, use them carefully and do not invent unsupported facts.\n"
         "- When no sources are present, draft sensibly but avoid fabricated curriculum citations.\n"
-        "- When teacher-selected files or manual notes are present for lesson_plan or worksheet, treat them as the primary truth and preserve their facts, framing, vocabulary, and sequence where possible.\n"
+        "- When teacher-selected source excerpts are present for lesson_plan or worksheet, treat them as the primary truth and preserve their facts, framing, vocabulary, and sequence where possible.\n"
         "- For lesson_plan or worksheet, do not drift into generic content if usable source content exists.\n"
         "- If you add support content beyond the source, frame it as sensible teaching support rather than as a source fact.\n"
         "- If ideas, produce exactly 3 structured teaching ideas and do not turn them into a lesson plan.\n"
@@ -15513,7 +15467,6 @@ def ai_create_resources(
         "\n"
         "SOURCE EXCERPTS (allowed):\n"
         f"{sources_txt if sources_txt else '[No sources selected]'}\n"
-        f"{file_hint + chr(10) if file_hint else ''}"
         "\n"
         "Write the best possible resource for the teacher."
     )
@@ -15641,13 +15594,12 @@ def generate_report_comment(
         f"Today is {datetime.now().date().isoformat()}. "
         "You are an assistant helping a teacher write a school report comment. "
         "Write in a professional, natural, supportive school-report style suitable for Ireland/UK schools. "
-        "Start the comment with the student's first name. "
-        "ALWAYS include the student's first name. "
+        "Start the comment with the neutral phrase 'The student'. "
+        "Do not use or request a student's name. "
         "Do not use bullet points. Do not use markdown. "
         "Write one polished paragraph only. "
         "Do not invent facts beyond the data provided. "
         "If behaviour or effort indicators are provided, weave them in naturally. "
-        "If a sign-off is provided, place it naturally at the end."
         "Avoid repeating identical sentence structures across comments. "
         "When mentioning scores, averages, or test results, always format them as whole-number percentages (e.g., 82%) with no decimal places."
     )
@@ -15659,19 +15611,13 @@ def generate_report_comment(
     else:
         length_rule = "Write about 3 sentences."
 
-    user_msg = (
-        f"Teacher email: {user.email}\n"
-        f"Student name: {student.first_name}\n"
-        f"Class id: {class_id}\n"
-        f"Average score: {average if average is not None else 'N/A'}\n"
-        f"Latest score: {latest_score if latest_score is not None else 'N/A'}\n"
-        f"Assessments completed: {taken}\n"
-        f"Assessments missed: {missed}\n"
-        f"Indicators: {', '.join(payload.indicators) if payload.indicators else 'None'}\n"
-        f"Sign-off: {(payload.sign_off or '').strip() or 'None'}\n"
-        f"Length instruction: {length_rule}\n"
-        "\n"
-        "Write the final student report comment now."
+    user_msg = report_comment_ai_input(
+        average=average,
+        latest_score=latest_score,
+        assessments_completed=taken,
+        assessments_missed=missed,
+        indicators=payload.indicators,
+        length_instruction=length_rule,
     )
 
     model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -15688,6 +15634,9 @@ def generate_report_comment(
     comment = (resp.choices[0].message.content or "").strip()
     if not comment:
         raise HTTPException(status_code=500, detail="AI returned empty comment")
+
+    comment = restore_report_comment_student_name(comment, student.first_name)
+    comment = append_report_comment_sign_off(comment, payload.sign_off or "")
 
     _record_ai_feature_usage(db, user, "report_comment", resp, model_name)
     return {"comment": comment}
