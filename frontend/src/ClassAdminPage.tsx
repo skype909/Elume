@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "./api";
+import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 
 const API_BASE = "/api";
 
@@ -73,6 +74,7 @@ type StudentReportDraft = {
     indicators: string[];
     signOff: string;
     comment: string;
+    aiGenerated?: boolean;
 };
 
 const REPORT_INDICATORS = [
@@ -678,6 +680,7 @@ export default function ClassAdminPage() {
 
             updateReportDraft(studentId, {
                 comment: data.comment || "",
+                aiGenerated: Boolean(String(data.comment || "").trim()),
             });
             void apiFetch("/ai/usage/report_comment")
                 .then((usage: { message?: string | null }) => setReportQuotaNotice(usage.message || null))
@@ -1351,6 +1354,8 @@ export default function ClassAdminPage() {
                             </div>
                         </div>
 
+                        <AiAssistanceNotice variant="input" className="mt-4" />
+
                         {reportError && (
                             <div className="mt-4 rounded-2xl border-2 border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
                                 {reportError}
@@ -1478,6 +1483,8 @@ export default function ClassAdminPage() {
                                                                 ⧉
                                                             </button>
                                                         </div>
+
+                                                        {draft.aiGenerated && <AiAssistanceNotice variant="output" className="mb-2" />}
 
                                                         <textarea
                                                             value={draft.comment}

@@ -2,6 +2,7 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 import StructuredLessonPlanPreview, { isStructuredLessonPlanDocument, type StructuredLessonPlanDocument } from "./Components/StructuredLessonPlanPreview";
+import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 
 type ClassItem = { id: number; name: string; subject: string; color?: string | null };
 type BrandingChoice = "none" | "elume" | "school";
@@ -72,6 +73,7 @@ type GeneratedDoc = {
   worksheetIncludeAnswers?: boolean;
   content: string;
   document?: StructuredLessonPlanDocument;
+  aiGenerated?: boolean;
 };
 
 type SavedGeneratedResource = {
@@ -1414,6 +1416,7 @@ export default function CreateResources() {
           worksheetIncludeAnswers: outputKind === "worksheet" ? worksheetIncludeAnswers : undefined,
           content,
           document,
+          aiGenerated: true,
         });
         const feature = outputKind === "ideas" ? "three_ideas" : outputKind === "scheme" ? "scheme_of_work" : outputKind === "dept_plan" ? "department_plan" : outputKind;
         try {
@@ -2095,6 +2098,8 @@ export default function CreateResources() {
                 <div className="mt-3 text-sm font-semibold text-slate-500">{aiQuotaNotice}</div>
               )}
 
+              <AiAssistanceNotice variant="input" className="mt-4" />
+
               {!preview && (
                 <div className="mt-4 rounded-[28px] border border-slate-200 bg-white/80 p-5 text-sm leading-relaxed text-slate-600 shadow-sm">
                   Generate a draft to preview it here. The intent is simple: Irish post-primary context first, selected class and folder next, optional manual sources after that, then save the finished resource to the right class location.
@@ -2103,6 +2108,7 @@ export default function CreateResources() {
 
               {preview && (
                 <div className="mt-4 space-y-4">
+                  {preview.aiGenerated && <AiAssistanceNotice variant="output" />}
                   <div className="flex flex-wrap items-start justify-between gap-4 rounded-[28px] border border-white/80 bg-white/92 p-4 shadow-sm">
                     <div className="min-w-0">
                       <div className="truncate text-lg font-extrabold tracking-tight text-slate-900">{preview.title}</div>

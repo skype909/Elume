@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "./api";
+import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 
 type ClassItem = { id: number; name: string; subject: string };
 
@@ -634,10 +635,13 @@ export default function CalendarPage() {
               placeholder="e.g. Staff meeting next Monday at 3pm"
             />
 
+            <AiAssistanceNotice variant="input" className="mt-3" />
+
             {aiQuotaNotice ? <div className="mt-3 text-sm font-semibold text-slate-500">{aiQuotaNotice}</div> : null}
 
             {aiPreview && (
               <div className="mt-4 rounded-[24px] border border-emerald-200 bg-white/85 p-4 shadow-sm">
+                <AiAssistanceNotice variant="output" className="mb-3" />
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="text-sm font-black text-slate-900">AI suggestion ready</div>

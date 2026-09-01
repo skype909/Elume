@@ -4,6 +4,7 @@ import { apiFetch } from "./api";
 import { jsPDF } from "jspdf";
 import { toPng } from "html-to-image";
 import ELogo2 from "./assets/ELogo2.png";
+import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 
 const API_BASE = "/api";
 
@@ -3547,6 +3548,7 @@ export default function Cat4InsightsPage({ publicDemo = false }: Cat4InsightsPag
 
                 {selectedInterpretation?.explanation ? (
                   <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                    {selectedInterpretation.source === "ai" && <AiAssistanceNotice variant="output" className="mb-3" />}
                     <div className="mb-3">
                       <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${publicDemo || selectedInterpretation.source !== "fallback" ? "border-sky-200 bg-sky-50 text-sky-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
                         {publicDemo ? "Elume summary" : selectedInterpretation.source === "fallback" ? "Elume fallback summary" : "Elume summary"}

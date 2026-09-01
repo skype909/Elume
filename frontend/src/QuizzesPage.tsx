@@ -2,6 +2,7 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 import DepartmentShareModal from "./Components/DepartmentShareModal";
+import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 
 /** ---------------- Types ---------------- */
 type MCQQuestion = {
@@ -284,6 +285,7 @@ export default function QuizzesPage() {
 
   /** --------- AI Generate Modal --------- */
   const [showGenerate, setShowGenerate] = useState(false);
+  const [aiGeneratedQuizIds, setAiGeneratedQuizIds] = useState<Set<string>>(() => new Set());
   const [genKind, setGenKind] = useState<"notes" | "exam">("notes");
   const [genNotes, setGenNotes] = useState<NoteItem[]>([]);
   const [genLoading, setGenLoading] = useState(false);
@@ -726,6 +728,7 @@ export default function QuizzesPage() {
 
       const newQuiz = mapSavedQuizToQuizItem(savedQuiz);
       setQuizzes((prev) => [newQuiz, ...prev]);
+      setAiGeneratedQuizIds((prev) => new Set(prev).add(newQuiz.id));
       setEditingQuizId(newQuiz.id);
       setShowGenerate(false);
       void apiFetch("/ai/usage/quiz")
@@ -1206,6 +1209,8 @@ export default function QuizzesPage() {
                       </button>
                     </div>
                   </div>
+
+                  {aiGeneratedQuizIds.has(editingQuiz.id) && <AiAssistanceNotice variant="output" className="mt-4" />}
 
                   {editingQuiz.questions.length === 0 ? (
                     <div className="mt-5 rounded-[24px] border-2 border-slate-200 bg-slate-50 p-5 text-sm text-slate-700">
@@ -1790,6 +1795,8 @@ export default function QuizzesPage() {
                       {genBusy ? "Generating..." : "Generate quiz"}
                     </button>
                   </div>
+
+                  <AiAssistanceNotice variant="input" />
 
                   <div className="rounded-[18px] border-2 border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                     Tip: cleaner text-based PDFs usually produce the best quiz results.
