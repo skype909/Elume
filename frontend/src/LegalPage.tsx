@@ -18,7 +18,7 @@ export default function LegalPage() {
                 and the terms that apply when you use the platform.
               </p>
               <p className="mt-3 text-xs font-medium text-white/80 sm:text-sm">
-                Last updated: 2 March 2026
+                Last updated: 1 September 2026
               </p>
             </div>
           </div>
@@ -139,13 +139,27 @@ export default function LegalPage() {
                   </div>
 
                   <div>
-                    <h3 className="text-base font-semibold text-slate-900">7. AI features and uploaded content</h3>
-                    <p className="mt-2">
-                      Elume may use AI-assisted features to generate educational outputs from content that
-                      users upload or create. Users should only upload content they are entitled to use and
-                      should avoid including unnecessary personal data. Users are responsible for reviewing
-                      AI-generated outputs before relying on them.
-                    </p>
+                    <h3 className="text-base font-semibold text-slate-900">7. Artificial Intelligence Processing</h3>
+                    <div className="mt-2 space-y-3">
+                      <p>
+                        Certain Elume features use third-party artificial intelligence service providers to process
+                        user instructions or prompts and generate requested content. Information may be transmitted
+                        to an AI provider when a user deliberately invokes an AI-assisted feature. Elume aims to
+                        transmit only the information reasonably necessary to provide that requested functionality.
+                      </p>
+                      <p>
+                        Users should avoid entering unnecessary identifying, confidential, sensitive, or special-category
+                        personal data about students or other individuals into free-text AI prompts. Where technically
+                        practicable, Elume may minimise, pseudonymise, or remove identifying information before
+                        information is submitted for AI processing.
+                      </p>
+                      <p>
+                        AI-generated responses are returned to Elume for presentation to the teacher or other user who
+                        requested them. These features are designed to assist educators and are not designed to make
+                        autonomous decisions about individuals. Personal data processed through Elume remains subject to
+                        applicable data-protection law, including the GDPR and the Irish Data Protection Act 2018.
+                      </p>
+                    </div>
                   </div>
 
                   <div>
@@ -239,11 +253,45 @@ export default function LegalPage() {
                   </div>
 
                   <div>
-                    <h3 className="text-base font-semibold text-slate-900">5. AI-generated outputs</h3>
-                    <p className="mt-2">
-                      AI-assisted outputs may contain errors or unsuitable content. You are responsible for
-                      reviewing and validating generated outputs before using them in teaching or sharing them with others.
-                    </p>
+                    <h3 className="text-base font-semibold text-slate-900">5. Artificial Intelligence and AI-Assisted Features</h3>
+                    <div className="mt-2 space-y-3">
+                      <p>
+                        Elume contains artificial intelligence and generative AI-assisted features. These features may
+                        assist users to create or prepare lesson plans, schemes of work, department plans, worksheets,
+                        teaching resources, quizzes, assessment materials, summaries, suggested comments, planning
+                        material, and other educational or administrative content.
+                      </p>
+                      <p>
+                        AI-generated content is an assistance tool and draft only. It may contain inaccuracies,
+                        omissions, misleading information, bias, inappropriate content, or out-of-date information.
+                        Teachers and school leaders must exercise their own professional judgement and should review,
+                        verify and, where appropriate, amend AI-generated material before relying on it or sharing it
+                        with students, parents or guardians, colleagues, or other third parties.
+                      </p>
+                      <p>
+                        Elume&apos;s AI features are designed to support, and not replace, the professional judgement of
+                        teachers and school leaders. The responsible educator remains the final decision-maker. Elume
+                        does not autonomously make consequential educational decisions about students.
+                      </p>
+                      <p>
+                        AI-generated suggestions, comments, insights, or recommendations must not be used as the sole
+                        basis for decisions about assessment outcomes, educational level, progression, admission,
+                        discipline, safeguarding, special educational needs, or other significant decisions materially
+                        affecting a student.
+                      </p>
+                      <p>
+                        Users remain responsible for ensuring that their use of AI-generated material complies with
+                        applicable school policies, Department of Education and Youth guidance, State Examinations
+                        Commission requirements, NCCA requirements, and applicable Irish and EU law. Users should not
+                        enter unnecessary personal, confidential, sensitive, or special-category personal data about
+                        students or other individuals into free-text AI prompts.
+                      </p>
+                      <p>
+                        AI-generated outputs may not be unique. Before publication or external or commercial reuse,
+                        users should review the output and ensure that they have the appropriate rights to any source
+                        or uploaded material used with Elume.
+                      </p>
+                    </div>
                   </div>
 
                   <div>
@@ -278,8 +326,8 @@ export default function LegalPage() {
                     <p className="mt-2">
                       To the maximum extent permitted by law, Elume shall not be liable for indirect,
                       incidental, consequential, or loss-of-profit damages, or for loss of data, downtime,
-                      or business interruption arising from use of the service. Nothing in these terms excludes
-                      liability that cannot legally be excluded.
+                      or business interruption arising from use of the service. Nothing in these Terms excludes or
+                      limits liability where such liability cannot lawfully be excluded or limited.
                     </p>
                   </div>
 
