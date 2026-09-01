@@ -11,7 +11,7 @@ import shutil
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lesson_plan_docx import render_structured_lesson_plan_docx
-from structured_documents import ValidationError, normalise_create_resources_result, validate_structured_lesson_plan_document
+from structured_documents import ValidationError, normalise_create_resources_result, structured_lesson_plan_validation_summary, validate_structured_lesson_plan_document
 
 
 def lesson_plan_payload():
@@ -69,6 +69,58 @@ class StructuredLessonPlanTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             normalise_create_resources_result("lesson_plan", payload, "Fallback")
+
+    def test_ai_null_optional_lists_are_normalised_before_validation(self):
+        payload = lesson_plan_payload()
+        for field in ("definitions", "resources", "prior_knowledge", "differentiation", "misconceptions", "assessment"):
+            payload["document"][field] = None
+
+        result = normalise_create_resources_result("lesson_plan", payload, "Fallback")
+
+        self.assertEqual(result["title"], "Photosynthesis: energy transfer")
+        self.assertIn("Lesson flow", [block.get("title") for block in result["document"]["blocks"]])
+
+    def test_reasonable_ai_lesson_plan_aliases_normalise_to_the_canonical_schema(self):
+        payload = lesson_plan_payload()["document"]
+        payload["learning_objectives"] = payload.pop("learning_intentions")
+        payload["key_definitions"] = [{"name": "Chlorophyll", "meaning": "A pigment that absorbs light energy."}]
+        del payload["definitions"]
+        payload["lesson_timeline"] = payload.pop("lesson_flow")
+        for item in payload["lesson_timeline"]:
+            item["time"] = item.pop("minutes")
+            item["teacher_activity"] = item.pop("teacher_action")
+            item["student_activity"] = item.pop("student_action")
+            item["check"] = item.pop("check_for_understanding")
+
+        result = normalise_create_resources_result("lesson_plan", payload, "Fallback")
+
+        timeline = next(block for block in result["document"]["blocks"] if block["type"] == "timeline")
+        self.assertEqual(timeline["items"][0]["minutes"], "0-8 min")
+        self.assertEqual(timeline["items"][0]["teacher_action"], "Elicit the plant-cell structures needed for photosynthesis.")
+        definitions = next(block for block in result["document"]["blocks"] if block.get("label") == "Key definitions")
+        self.assertEqual(definitions["definitions"][0]["term"], "Chlorophyll")
+
+    def test_direct_lesson_plan_document_is_accepted_but_invalid_content_still_fails(self):
+        direct_document = lesson_plan_payload()["document"]
+        result = normalise_create_resources_result("lesson_plan", direct_document, "Fallback")
+        self.assertEqual(result["title"], "Photosynthesis: energy transfer")
+
+        direct_document["lesson_flow"] = [{"minutes": "0-5", "phase": "Starter", "teacher_action": "Ask", "student_action": "Answer"}]
+        with self.assertRaises(ValidationError):
+            normalise_create_resources_result("lesson_plan", direct_document, "Fallback")
+
+    def test_validation_summary_contains_only_field_names(self):
+        payload = lesson_plan_payload()
+        payload["document"]["learning_intentions"] = []
+        try:
+            normalise_create_resources_result("lesson_plan", payload, "Fallback")
+        except ValidationError as exc:
+            summary = structured_lesson_plan_validation_summary(exc)
+        else:
+            self.fail("Expected structured validation to fail")
+
+        self.assertIn("learning_intentions", summary)
+        self.assertNotIn("Photosynthesis", summary)
 
     def test_excessive_lesson_flow_is_rejected(self):
         payload = lesson_plan_payload()

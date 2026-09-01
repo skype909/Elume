@@ -97,7 +97,7 @@ import models  # IMPORTANT: needed because we reference models.Topic, models.Not
 import schemas
 from ai_usage import AI_FEATURES, allowance_available, allowance_message, allowance_warning, current_allowance_period, feature_policy, resource_feature
 from ai_privacy import append_report_comment_sign_off, cat4_facts_for_ai, report_comment_ai_input, restore_report_comment_student_name
-from structured_documents import ValidationError as StructuredDocumentValidationError, normalise_create_resources_result, validate_structured_lesson_plan_document
+from structured_documents import ValidationError as StructuredDocumentValidationError, normalise_create_resources_result, structured_lesson_plan_validation_summary, validate_structured_lesson_plan_document
 from lesson_plan_docx import render_structured_lesson_plan_docx
 from db import Base, SessionLocal, engine
 
@@ -15464,7 +15464,7 @@ def ai_create_resources(
         "Return ONLY valid JSON with exactly one key: document. "
         "document must contain exactly these content keys: title, subject, level, class_context, duration, primary_outcome, learning_intentions, success_criteria, definitions, resources, prior_knowledge, lesson_flow, differentiation, misconceptions, assessment, teacher_note, homework, stopping_point. "
         "lesson_flow must contain 2 to 8 practical entries, each with minutes, phase, teacher_action, student_action, and optional check_for_understanding. "
-        "definitions must contain term and definition. Use null or [] for optional content when it is not useful. "
+        "definitions must contain term and definition. Use [] for optional list sections (definitions, resources, prior_knowledge, differentiation, misconceptions, assessment) and null only for optional text sections (teacher_note, homework, stopping_point). "
         "Do not include markdown, formatting instructions, colours, fonts, tables, or presentation decisions."
         if (payload.kind or "").strip().lower() == "lesson_plan"
         else "JSON must have exactly these keys: title, content. content should be plain text with clear headings and bullet points where useful. Do not include any extra keys."
@@ -15575,6 +15575,7 @@ def ai_create_resources(
         result = normalise_create_resources_result(payload.kind, data, f"{template} - {p}"[:80])
     except (ValueError, StructuredDocumentValidationError) as exc:
         if (payload.kind or "").strip().lower() == "lesson_plan":
+            logger.warning("Structured Lesson Plan validation failed: %s", structured_lesson_plan_validation_summary(exc))
             raise HTTPException(status_code=500, detail="Elume could not validate this Lesson Plan. Please try again.") from exc
         raise HTTPException(status_code=500, detail="AI returned empty content") from exc
 

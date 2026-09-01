@@ -240,6 +240,99 @@ def lesson_plan_to_legacy_text(content: LessonPlanContent) -> str:
     return "\n".join(lines).strip()
 
 
+_LESSON_PLAN_ROOT_ALIASES = {
+    "learning_objectives": "learning_intentions",
+    "key_definitions": "definitions",
+    "lesson_timeline": "lesson_flow",
+    "lesson_steps": "lesson_flow",
+    "teacher_notes": "teacher_note",
+    "next_step": "stopping_point",
+}
+_LESSON_PLAN_LIST_FIELDS = (
+    "learning_intentions",
+    "success_criteria",
+    "resources",
+    "prior_knowledge",
+    "differentiation",
+    "misconceptions",
+    "assessment",
+)
+_LESSON_FLOW_ALIASES = {
+    "time": "minutes",
+    "time_minutes": "minutes",
+    "duration": "minutes",
+    "teacher_activity": "teacher_action",
+    "teacher_actions": "teacher_action",
+    "student_activity": "student_action",
+    "student_actions": "student_action",
+    "check": "check_for_understanding",
+    "assessment_check": "check_for_understanding",
+}
+
+
+def _move_aliases(value: dict[str, Any], aliases: dict[str, str]) -> dict[str, Any]:
+    normalised = dict(value)
+    for alias, canonical in aliases.items():
+        if alias in normalised:
+            normalised.setdefault(canonical, normalised[alias])
+            del normalised[alias]
+    return normalised
+
+
+def _normalise_lesson_plan_ai_document(data: dict[str, Any]) -> dict[str, Any]:
+    """Accept narrow, known AI variations before validating the canonical contract."""
+    raw_document = data.get("document")
+    if raw_document is None:
+        raw_document = data
+    if not isinstance(raw_document, dict):
+        raise ValueError("Lesson Plan document is missing")
+
+    document = _move_aliases(raw_document, _LESSON_PLAN_ROOT_ALIASES)
+    for field in _LESSON_PLAN_LIST_FIELDS:
+        if field in document:
+            if document[field] is None:
+                document[field] = []
+            elif isinstance(document[field], str):
+                document[field] = [document[field]]
+
+    if "definitions" in document:
+        definitions = document["definitions"]
+        if definitions is None:
+            document["definitions"] = []
+        elif isinstance(definitions, dict):
+            document["definitions"] = [definitions]
+        elif isinstance(definitions, list):
+            document["definitions"] = [
+                _move_aliases(item, {"name": "term", "meaning": "definition", "description": "definition"})
+                if isinstance(item, dict)
+                else item
+                for item in definitions
+            ]
+
+    if "lesson_flow" in document and isinstance(document["lesson_flow"], dict):
+        document["lesson_flow"] = [document["lesson_flow"]]
+    if isinstance(document.get("lesson_flow"), list):
+        document["lesson_flow"] = [
+            _move_aliases(item, _LESSON_FLOW_ALIASES) if isinstance(item, dict) else item
+            for item in document["lesson_flow"]
+        ]
+
+    if isinstance(document.get("duration"), (int, float)) and not isinstance(document["duration"], bool):
+        document["duration"] = f"{document['duration']} minutes"
+    return document
+
+
+def structured_lesson_plan_validation_summary(exc: Exception) -> str:
+    """Produce a log-safe validation summary without recording generated content."""
+    if isinstance(exc, ValidationError):
+        fields = []
+        for error in exc.errors()[:6]:
+            location = error.get("loc") or ()
+            fields.append(".".join(str(part) for part in location))
+        return "validation_fields=" + (", ".join(fields) or "unknown")
+    return "validation_reason=" + type(exc).__name__
+
+
 def normalise_create_resources_result(kind: str, data: dict[str, Any], fallback_title: str) -> dict[str, Any]:
     if (kind or "").strip().lower() != "lesson_plan":
         title = str(data.get("title") or fallback_title).strip()
@@ -247,12 +340,9 @@ def normalise_create_resources_result(kind: str, data: dict[str, Any], fallback_
         if not content:
             raise ValueError("AI returned empty content")
         return {"title": title, "content": content}
-    raw_document = data.get("document")
-    if not isinstance(raw_document, dict):
-        raise ValueError("Lesson Plan document is missing")
-    content = _model_validate(LessonPlanContent, raw_document)
+    content = _model_validate(LessonPlanContent, _normalise_lesson_plan_ai_document(data))
     document = build_lesson_plan_document(content)
     return {"title": content.title, "content": lesson_plan_to_legacy_text(content), "document": _model_dump(document)}
 
 
-__all__ = ["LessonPlanContent", "StructuredLessonPlanDocument", "ValidationError", "normalise_create_resources_result", "validate_structured_lesson_plan_document"]
+__all__ = ["LessonPlanContent", "StructuredLessonPlanDocument", "ValidationError", "normalise_create_resources_result", "structured_lesson_plan_validation_summary", "validate_structured_lesson_plan_document"]
