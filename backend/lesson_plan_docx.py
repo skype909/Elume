@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 from structured_documents import StructuredLessonPlanDocument
@@ -17,6 +19,63 @@ LIGHT_EMERALD = "ECFDF5"
 LIGHT_AMBER = "FFFBEB"
 LIGHT_VIOLET = "F5F3FF"
 LIGHT_SLATE = "F8FAFC"
+_MAX_LOGO_BYTES = 2 * 1024 * 1024
+
+
+def _school_logo_bytes(data_url: Any) -> bytes | None:
+    """Return a small, in-memory school logo only when it is a supported data URL."""
+    if not isinstance(data_url, str):
+        return None
+    raw = data_url.strip()
+    if not raw.startswith("data:") or "," not in raw:
+        return None
+    header, encoded = raw.split(",", 1)
+    mime_type = header[5:].split(";", 1)[0].lower()
+    if mime_type not in {"image/png", "image/jpeg", "image/webp", "image/svg+xml"} or ";base64" not in header.lower():
+        return None
+    if len(encoded) > ((_MAX_LOGO_BYTES + 2) // 3) * 4:
+        return None
+    try:
+        image = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        return None
+    return image if 0 < len(image) <= _MAX_LOGO_BYTES else None
+
+
+def _branding_logo_bytes(meta: dict[str, Any]) -> bytes | None:
+    branding_choice = str(meta.get("brandingChoice") or "elume").strip().lower()
+    if branding_choice == "school":
+        return _school_logo_bytes(meta.get("schoolLogoDataUrl"))
+    if branding_choice != "elume":
+        return None
+
+    logo_path = Path(__file__).resolve().parents[1] / "frontend" / "src" / "assets" / "ELogo2.png"
+    try:
+        logo = logo_path.read_bytes()
+    except OSError:
+        return None
+    return logo if logo else None
+
+
+def _add_header_branding(header, meta: dict[str, Any], *, logo_height) -> None:
+    """Add the selected printable logo without allowing a bad image to fail export."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    paragraph = header.paragraphs[0]
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    logo = _branding_logo_bytes(meta)
+    if logo:
+        try:
+            paragraph.add_run().add_picture(BytesIO(logo), height=logo_height)
+            paragraph.add_run("  ")
+        except Exception:
+            # School branding is optional presentation metadata; a bad/unsupported
+            # image must never prevent a teacher from exporting their lesson plan.
+            pass
+    label = paragraph.add_run("LESSON PLAN")
+    label.font.name = "Arial"
+    label.font.size = __import__("docx").shared.Pt(8)
+    label.font.color.rgb = __import__("docx").shared.RGBColor.from_string(EMERALD)
 
 
 def _set_cell_shading(cell, fill: str) -> None:
@@ -185,14 +244,10 @@ def render_structured_lesson_plan_docx(document: StructuredLessonPlanDocument, *
     normal.font.size = Pt(10)
     normal.paragraph_format.space_after = Pt(5)
 
-    header = section.header.paragraphs[0]
-    header.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    header_run = header.add_run("ELUME  |  LESSON PLAN")
-    header_run.font.name = "Arial"
-    header_run.font.size = Pt(8)
-    header_run.font.color.rgb = RGBColor.from_string(EMERALD)
+    _add_header_branding(section.header, meta, logo_height=Inches(0.32))
 
-    footer_parts = ["Elume"]
+    branding_choice = str(meta.get("brandingChoice") or "elume").strip().lower()
+    footer_parts = ["Elume"] if branding_choice == "elume" else []
     school_name = str(meta.get("schoolName") or "").strip()
     if teacher:
         footer_parts.append(teacher)

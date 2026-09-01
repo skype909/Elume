@@ -224,6 +224,43 @@ class StructuredLessonPlanTests(unittest.TestCase):
         self.assertIn("Misconceptions to address", table_text)
         self.assertIn("Assessment and checks for understanding", table_text)
 
+    def test_structured_lesson_plan_docx_embeds_selected_elume_logo(self):
+        result = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")
+        data = render_structured_lesson_plan_docx(
+            validate_structured_lesson_plan_document(result["document"]),
+            meta={"brandingChoice": "elume"},
+        )
+
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            media_files = [name for name in archive.namelist() if name.startswith("word/media/")]
+            header_files = [name for name in archive.namelist() if name.startswith("word/header") and name.endswith(".xml")]
+            self.assertTrue(media_files)
+            self.assertTrue(header_files)
+            self.assertIn(b"a:blip", archive.read(header_files[0]))
+
+    def test_structured_lesson_plan_docx_embeds_valid_school_logo_data_url(self):
+        school_logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL+XQAAAABJRU5ErkJggg=="
+        result = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")
+        data = render_structured_lesson_plan_docx(
+            validate_structured_lesson_plan_document(result["document"]),
+            meta={"brandingChoice": "school", "schoolLogoDataUrl": school_logo},
+        )
+
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            self.assertTrue([name for name in archive.namelist() if name.startswith("word/media/")])
+
+    def test_structured_lesson_plan_docx_ignores_bad_or_unselected_logo_data(self):
+        result = normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback")
+        document = validate_structured_lesson_plan_document(result["document"])
+        for meta in (
+            {"brandingChoice": "school", "schoolLogoDataUrl": "data:image/png;base64,not-a-logo"},
+            {"brandingChoice": "none", "schoolLogoDataUrl": "data:image/png;base64,not-a-logo"},
+        ):
+            with self.subTest(meta=meta):
+                data = render_structured_lesson_plan_docx(document, meta=meta)
+                with zipfile.ZipFile(BytesIO(data)) as archive:
+                    self.assertFalse([name for name in archive.namelist() if name.startswith("word/media/")])
+
     def test_structured_lesson_plan_docx_allows_absent_optional_sections(self):
         payload = lesson_plan_payload()
         for field in ("definitions", "resources", "prior_knowledge", "differentiation", "misconceptions", "assessment"):
