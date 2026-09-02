@@ -702,6 +702,8 @@ export default function CreateResources() {
   const [savedResourceLocation, setSavedResourceLocation] = useState<{ classId: number; folder: "Lesson Plans" | "Worksheets" } | null>(null);
   const [postingIdeaId, setPostingIdeaId] = useState<string | null>(null);
   const [ideaPostStatus, setIdeaPostStatus] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<"pdf" | "docx" | null>(null);
 
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const manualFileRef = useRef<HTMLInputElement | null>(null);
@@ -710,6 +712,7 @@ export default function CreateResources() {
   const card = "rounded-[32px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.94))] shadow-[0_22px_60px_rgba(15,23,42,0.10)] backdrop-blur";
   const soft = "rounded-[28px] border border-white/75 bg-[linear-gradient(135deg,rgba(255,255,255,0.94),rgba(240,253,250,0.88),rgba(245,243,255,0.88))] shadow-[0_12px_32px_rgba(15,23,42,0.06)]";
   const btn = "rounded-2xl border-2 border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 active:translate-y-[1px]";
+  const exportBtn = `${btn} disabled:cursor-not-allowed disabled:opacity-50`;
   const btnPrimary = "rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 active:translate-y-[1px] disabled:opacity-50";
   const chipBase = "rounded-full border-2 px-4 py-2 text-sm font-semibold transition";
   const teacherProfile = useMemo(() => loadTeacherAdminProfile(), []);
@@ -1563,6 +1566,9 @@ export default function CreateResources() {
   async function exportPreviewDocx() {
     if (!preview) return;
 
+    setExportError(null);
+    setExporting("docx");
+
     const body = {
       title: preview.title,
       content: preview.content,
@@ -1586,19 +1592,25 @@ export default function CreateResources() {
       },
     };
 
-    const blob = await apiFetchBlob("/exports/docx", {
-      method: "POST",
-      body,
-    });
+    try {
+      const blob = await apiFetchBlob("/exports/docx", {
+        method: "POST",
+        body,
+      });
 
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${(preview.title || "ELume_Resource").replace(/[^\w\- ]+/g, "").trim() || "ELume_Resource"}.docx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(preview.title || "ELume_Resource").replace(/[^\w\- ]+/g, "").trim() || "ELume_Resource"}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setExportError("Couldn’t export this document. Please try again.");
+    } finally {
+      setExporting(null);
+    }
   }
 
   function exportPreviewPdf() {
@@ -1674,6 +1686,9 @@ export default function CreateResources() {
   async function exportPreviewPdfFile() {
     if (!preview) return;
 
+    setExportError(null);
+    setExporting("pdf");
+
     const body = {
       title: preview.title,
       content: preview.content,
@@ -1697,19 +1712,25 @@ export default function CreateResources() {
       },
     };
 
-    const blob = await apiFetchBlob("/exports/pdf", {
-      method: "POST",
-      body,
-    });
+    try {
+      const blob = await apiFetchBlob("/exports/pdf", {
+        method: "POST",
+        body,
+      });
 
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${(preview.title || "ELume_Resource").replace(/[^\w\- ]+/g, "").trim() || "ELume_Resource"}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(preview.title || "ELume_Resource").replace(/[^\w\- ]+/g, "").trim() || "ELume_Resource"}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setExportError("Couldn’t export this document. Please try again.");
+    } finally {
+      setExporting(null);
+    }
   }
 
   const saveDestinationLabel = useMemo(() => {
@@ -2210,14 +2231,20 @@ export default function CreateResources() {
                       <button type="button" className={btnPrimary} onClick={savePreview}>
                         Save
                       </button>
-                      <button type="button" className={btn} onClick={exportPreviewPdfFile}>
-                        Export PDF
+                      <button type="button" className={exportBtn} onClick={exportPreviewPdfFile} disabled={exporting !== null}>
+                        {exporting === "pdf" ? "Exporting PDF..." : "Export PDF"}
                       </button>
-                      <button type="button" className={btn} onClick={exportPreviewDocx}>
-                        Export DOCX
+                      <button type="button" className={exportBtn} onClick={exportPreviewDocx} disabled={exporting !== null}>
+                        {exporting === "docx" ? "Exporting DOCX..." : "Export DOCX"}
                       </button>
                     </div>
                   </div>
+
+                  {exportError && (
+                    <div role="alert" className="rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                      {exportError}
+                    </div>
+                  )}
 
                   {saveStatus && (
                     <div className="flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
