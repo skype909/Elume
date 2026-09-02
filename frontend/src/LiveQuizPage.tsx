@@ -1504,7 +1504,7 @@ export default function LiveQuizPage() {
 
                       <div className="mt-4 rounded-[28px] border border-slate-200 bg-white px-6 py-5 shadow-sm">
                         <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                          Session code
+                          Quiz code
                         </div>
                         <div className="mt-3 text-center text-5xl font-black tracking-[0.24em] text-slate-900 md:text-6xl">
                           {session.code}
@@ -1514,7 +1514,7 @@ export default function LiveQuizPage() {
                             className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
                             onClick={() => copyToClipboard(session.code)}
                           >
-                            Copy code
+                            Copy quiz code
                           </button>
                         </div>
                       </div>

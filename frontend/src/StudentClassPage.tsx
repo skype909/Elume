@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import ELogo2 from "./assets/ELogo2.png";
-import { rememberStudentClass } from "./studentClasses";
+import { rememberStudentClass, removeRememberedStudentClassAccessToken } from "./studentClasses";
 
 const API_BASE = "/api";
 
@@ -113,6 +113,7 @@ function cleanSessionCode(s: string) {
 
 export default function StudentClassPage() {
   const { token } = useParams();
+  const navigate = useNavigate();
 
   const [data, setData] = useState<StudentPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -141,28 +142,38 @@ export default function StudentClassPage() {
 
     fetch(`/api/student/${token}`, { signal: controller.signal })
       .then(async (r) => {
-        if (!r.ok) throw new Error(`Student page failed (${r.status})`);
+        if (!r.ok) {
+          const error = new Error(`Student page failed (${r.status})`) as Error & { status?: number };
+          error.status = r.status;
+          throw error;
+        }
         return (await r.json()) as StudentPayload;
       })
       .then((j) => setData(j ?? null))
       .catch((e: any) => {
         if (e?.name === "AbortError") return;
+        if (e?.status === 404 && token) {
+          removeRememberedStudentClassAccessToken(token);
+          navigate("/student?mode=class&notice=access-refreshed", { replace: true });
+          return;
+        }
         setErr(e?.message || "Failed to load student page");
         setData(null);
       })
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [token]);
+  }, [navigate, token]);
 
   useEffect(() => {
     if (!data?.class_code) return;
     rememberStudentClass({
       classCode: data.class_code,
+      accessToken: token,
       className: data.class_name,
       subject: data.subject,
     });
-  }, [data?.class_code, data?.class_name, data?.subject]);
+  }, [data?.class_code, data?.class_name, data?.subject, token]);
 
   useEffect(() => {
     const dismissed = localStorage.getItem(dismissKey) === "1";
@@ -245,7 +256,7 @@ export default function StudentClassPage() {
   function goToQuizJoin() {
     const code = cleanSessionCode(quizCode);
     if (!code) {
-      setQuizJoinError("Enter your session code first.");
+      setQuizJoinError("Enter your quiz code first.");
       return;
     }
     setQuizJoinError(null);
@@ -419,30 +430,30 @@ export default function StudentClassPage() {
 
               <button
                 type="button"
-                className={`${btnBase} border-violet-200 bg-violet-50 hover:bg-violet-100`}
+                className={`${btnBase} border-amber-200 bg-amber-50 hover:bg-amber-100`}
                 onClick={() => {
                   const el = document.getElementById("live-quiz-card");
                   if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
                 }}
               >
-                <div className="text-sm font-black text-violet-900">Join Live Quiz</div>
-                <div className="mt-1 text-xs font-semibold text-violet-800/80">
-                  Enter a session code
+                <div className="text-sm font-black text-amber-900">LIVE QUIZ</div>
+                <div className="mt-1 text-xs font-semibold text-amber-800/80">
+                  QUIZ CODE
                 </div>
               </button>
             </div>
           </div>
           <button
             type="button"
-            className={`${btnBase} border-cyan-200 bg-cyan-50 hover:bg-cyan-100`}
+            className={`${btnBase} border-violet-200 bg-violet-50 hover:bg-violet-100`}
             onClick={() => {
               const el = document.getElementById("live-collab-card");
               if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
           >
-            <div className="text-sm font-black text-cyan-900">Join Collab Board</div>
-            <div className="mt-1 text-xs font-semibold text-cyan-800/80">
-              Enter a session code
+            <div className="text-sm font-black text-violet-900">COLLAB BOARD</div>
+            <div className="mt-1 text-xs font-semibold text-violet-800/80">
+              COLLAB CODE
             </div>
           </button>
 
@@ -486,19 +497,19 @@ export default function StudentClassPage() {
     return (
       <div id="live-quiz-card" className={`${card} p-5`}>
         <div className="flex items-start gap-3">
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-violet-200 bg-violet-50 shadow-sm">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-amber-200 bg-amber-50 shadow-sm">
             <span className="text-xl">🎯</span>
           </div>
 
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-black uppercase tracking-[0.16em] text-violet-700">
+            <div className="text-sm font-black uppercase tracking-[0.16em] text-amber-700">
               Live Quiz
             </div>
             <div className="mt-1 text-xl font-black tracking-tight text-slate-900">
-              Join with session code
+              JOIN A LIVE QUIZ
             </div>
             <div className="mt-2 text-sm leading-6 text-slate-600">
-              Your teacher will give you a code. Type it below to jump straight into the live quiz.
+              Use the Live Quiz code shown by your teacher.
             </div>
           </div>
         </div>
@@ -511,14 +522,15 @@ export default function StudentClassPage() {
             autoCapitalize="characters"
             autoCorrect="off"
             spellCheck={false}
-            placeholder="Enter session code"
-            className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-base font-black uppercase tracking-[0.12em] text-slate-900 shadow-sm outline-none placeholder:normal-case placeholder:tracking-normal placeholder:font-semibold placeholder:text-slate-400 focus:border-violet-400 focus:ring-4 focus:ring-violet-100"
+            placeholder="QUIZ CODE"
+            aria-label="Quiz code"
+            className="min-w-0 flex-1 rounded-2xl border border-amber-200 bg-white px-4 py-4 text-base font-black uppercase tracking-[0.12em] text-slate-900 shadow-sm outline-none placeholder:normal-case placeholder:tracking-normal placeholder:font-semibold placeholder:text-slate-400 focus:border-amber-400 focus:ring-4 focus:ring-amber-100"
           />
 
           <button
             type="button"
             onClick={goToQuizJoin}
-            className="rounded-2xl bg-gradient-to-r from-violet-500 via-fuchsia-500 to-cyan-500 px-5 py-4 text-sm font-black text-white shadow-lg active:scale-[0.99] sm:min-w-[150px]"
+            className="rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-400 to-orange-400 px-5 py-4 text-sm font-black text-slate-900 shadow-lg active:scale-[0.99] sm:min-w-[150px]"
           >
             Join Quiz
           </button>
@@ -530,7 +542,7 @@ export default function StudentClassPage() {
           </div>
         ) : null}
 
-        <div className="mt-4 rounded-2xl border border-violet-100 bg-violet-50/70 px-4 py-3 text-xs leading-5 text-violet-900">
+        <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-xs leading-5 text-amber-900">
           Tip: if you save this page to your phone’s home screen, you’ll only need to enter the code next time.
         </div>
       </div>
@@ -606,19 +618,19 @@ export default function StudentClassPage() {
     return (
       <div id="live-collab-card" className={`${card} p-5`}>
         <div className="flex items-start gap-3">
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-cyan-200 bg-cyan-50 shadow-sm">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-violet-200 bg-violet-50 shadow-sm">
             <span className="text-xl">🧑‍🤝‍🧑</span>
           </div>
 
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-black uppercase tracking-[0.16em] text-cyan-700">
-              Collaboration Board
+            <div className="text-sm font-black uppercase tracking-[0.16em] text-violet-700">
+              Collab Board
             </div>
             <div className="mt-1 text-xl font-black tracking-tight text-slate-900">
-              Join with session code
+              JOIN A COLLAB BOARD
             </div>
             <div className="mt-2 text-sm leading-6 text-slate-600">
-              Your teacher will give you a collaboration code. Enter it below to join the live whiteboard.
+              Use the Collaboration code shown on the board.
             </div>
           </div>
         </div>
@@ -631,14 +643,15 @@ export default function StudentClassPage() {
             autoCapitalize="characters"
             autoCorrect="off"
             spellCheck={false}
-            placeholder="Enter collaboration code"
-            className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-base font-black uppercase tracking-[0.12em] text-slate-900 shadow-sm outline-none placeholder:normal-case placeholder:tracking-normal placeholder:font-semibold placeholder:text-slate-400 focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100"
+            placeholder="COLLAB CODE"
+            aria-label="Collab code"
+            className="min-w-0 flex-1 rounded-2xl border border-violet-200 bg-white px-4 py-4 text-base font-black uppercase tracking-[0.12em] text-slate-900 shadow-sm outline-none placeholder:normal-case placeholder:tracking-normal placeholder:font-semibold placeholder:text-slate-400 focus:border-violet-400 focus:ring-4 focus:ring-violet-100"
           />
 
           <button
             type="button"
             onClick={goToCollabJoin}
-            className="rounded-2xl bg-gradient-to-r from-cyan-500 via-sky-500 to-emerald-500 px-5 py-4 text-sm font-black text-white shadow-lg active:scale-[0.99] sm:min-w-[150px]"
+            className="rounded-2xl bg-gradient-to-r from-violet-600 via-purple-500 to-fuchsia-500 px-5 py-4 text-sm font-black text-white shadow-lg active:scale-[0.99] sm:min-w-[150px]"
           >
             Join Board
           </button>
@@ -650,7 +663,7 @@ export default function StudentClassPage() {
           </div>
         ) : null}
 
-        <div className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50/70 px-4 py-3 text-xs leading-5 text-cyan-900">
+        <div className="mt-4 rounded-2xl border border-violet-100 bg-violet-50/70 px-4 py-3 text-xs leading-5 text-violet-900">
           Tip: use the collaboration code from your teacher’s board screen or QR join panel.
         </div>
       </div>

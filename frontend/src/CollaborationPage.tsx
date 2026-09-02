@@ -1686,7 +1686,7 @@ export default function CollaborationPage() {
 
                             <div className="space-y-4">
                                 <JoinChip
-                                    label="Session code"
+                                    label="Collab code"
                                     value={joinCode || "Create session first"}
                                     onCopy={() => joinCode && copyToClipboard(joinCode)}
                                     large
@@ -1695,7 +1695,7 @@ export default function CollaborationPage() {
                                 <JoinChip label="Join link" value={joinUrl || "Create session first"} onCopy={() => joinUrl && copyToClipboard(joinUrl)} />
 
                                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                                    Students can join by QR, direct link, or session code.
+                                    Students can join by QR, direct link, or Collab code.
                                 </div>
                             </div>
                         </div>

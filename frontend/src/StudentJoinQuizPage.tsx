@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { BrainCircuit } from "lucide-react";
 import elumeLogo from "./assets/ELogo2.png";
 
 const API_BASE = "/api";
@@ -441,11 +442,11 @@ export default function StudentJoinQuizPage() {
 
   if (!hasJoined && !loading && !fatalError) {
     return (
-      <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
+      <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-amber-50 via-white to-yellow-50">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <div className="absolute -left-16 top-[-40px] h-72 w-72 rounded-full bg-cyan-300/20 blur-3xl" />
-          <div className="absolute right-[-60px] top-16 h-80 w-80 rounded-full bg-violet-300/20 blur-3xl" />
-          <div className="absolute bottom-[-70px] left-[12%] h-72 w-72 rounded-full bg-emerald-300/20 blur-3xl" />
+          <div className="absolute -left-16 top-[-40px] h-72 w-72 rounded-full bg-amber-300/30 blur-3xl" />
+          <div className="absolute right-[-60px] top-16 h-80 w-80 rounded-full bg-yellow-300/30 blur-3xl" />
+          <div className="absolute bottom-[-70px] left-[12%] h-72 w-72 rounded-full bg-orange-300/20 blur-3xl" />
           <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:34px_34px]" />
         </div>
 
@@ -453,45 +454,41 @@ export default function StudentJoinQuizPage() {
           <div className="w-full max-w-md">
             <div className="rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-7">
               <div className="text-center">
-                <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl border border-white/70 bg-white/90 shadow-xl ring-1 ring-emerald-100">
-                  <img
-                    src={elumeLogo}
-                    alt="Elume"
-                    className="h-14 w-14 object-contain drop-shadow-sm"
-                  />
+                <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl border border-amber-200 bg-amber-100/80 text-amber-800 shadow-xl ring-1 ring-amber-200">
+                  <BrainCircuit aria-hidden="true" size={42} strokeWidth={2.2} />
                 </div>
 
-                <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700 shadow-sm">
-                  Student live quiz
+                <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-amber-200/80 bg-amber-50/90 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-amber-800 shadow-sm">
+                  Live Quiz
                 </div>
 
                 <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
-                  Join the Live Quiz
+                  JOIN A LIVE QUIZ
                 </h1>
 
                 <p className="mt-3 text-sm leading-6 text-slate-600 sm:text-base">
-                  Enter your name to join the session and send your answers live.
+                  Use the Live Quiz code shown by your teacher, then enter your name to join.
                 </p>
               </div>
 
-              <div className="mt-6 rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
+              <div className="mt-6 rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-yellow-50 p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                      Session code
+                      QUIZ CODE
                     </div>
                     <div className="mt-1 text-2xl font-black tracking-[0.08em] text-slate-900">
                       {sessionCode || "—"}
                     </div>
                   </div>
-                  <Pill tone="cyan">Ready to join</Pill>
+                  <Pill tone="amber">Ready to join</Pill>
                 </div>
               </div>
 
               <div className="mt-5">
                 <label className="block text-sm font-black text-slate-800">Your name</label>
                 <input
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white/95 px-4 py-4 text-base font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                  className="mt-2 w-full rounded-2xl border border-amber-200 bg-white/95 px-4 py-4 text-base font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
                   value={nameInput}
                   onChange={(e) => setNameInput(e.target.value)}
                   placeholder="e.g. Aoife"
@@ -507,7 +504,7 @@ export default function StudentJoinQuizPage() {
               ) : null}
 
               <button
-                className="mt-5 w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-4 text-base font-black text-white shadow-lg transition hover:shadow-xl active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-5 w-full rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-400 to-orange-400 px-5 py-4 text-base font-black text-slate-900 shadow-lg transition hover:shadow-xl active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={joinWithName}
                 disabled={nameInput.trim().length < 2}
               >
@@ -655,7 +652,7 @@ export default function StudentJoinQuizPage() {
               </div>
 
               <div className="mt-6 inline-flex rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-black text-slate-800">
-                Session code: {sessionCode}
+                Quiz code: {sessionCode}
               </div>
             </div>
           )}

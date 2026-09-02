@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { UsersRound } from "lucide-react";
 import CollabBoard from "./CollabBoard";
 import elumeLogo from "./assets/ELogo2.png";
 
@@ -227,27 +228,27 @@ export default function StudentCollabRoomPage() {
 
   if (!anonId && !loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 p-4">
+      <div className="min-h-screen bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 p-4">
         <div className="mx-auto max-w-md rounded-[32px] border border-white/70 bg-white/85 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
           <div className="text-center">
-            <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl border border-white/70 bg-white/90 shadow-xl ring-1 ring-emerald-100">
-              <img src={elumeLogo} alt="Elume" className="h-14 w-14 object-contain" />
+            <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl border border-violet-200 bg-violet-100/80 text-violet-800 shadow-xl ring-1 ring-violet-200">
+              <UsersRound aria-hidden="true" size={42} strokeWidth={2.2} />
             </div>
 
-            <div className="mt-4 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
-              Collaboration Join
+            <div className="mt-4 text-[11px] font-black uppercase tracking-[0.18em] text-violet-700">
+              Collab Board
             </div>
             <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">
-              Join Collaboration
+              JOIN A COLLAB BOARD
             </h1>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Enter your name to join your breakout room board.
+              Use the Collaboration code shown on the board, then enter your name to join.
             </p>
           </div>
 
-          <div className="mt-6 rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
+          <div className="mt-6 rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 p-4 shadow-sm">
             <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
-              Session code
+              COLLAB CODE
             </div>
             <div className="mt-2 text-2xl font-black tracking-[0.08em] text-slate-900">
               {sessionCode}
@@ -257,7 +258,7 @@ export default function StudentCollabRoomPage() {
           <div className="mt-5">
             <label className="block text-sm font-black text-slate-800">Your name</label>
             <input
-              className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-base font-semibold text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+              className="mt-2 w-full rounded-2xl border border-violet-200 bg-white px-4 py-4 text-base font-semibold text-slate-900 shadow-sm outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-100"
               value={nameInput}
               onChange={(e) => setNameInput(e.target.value)}
               placeholder="e.g. Aoife"
@@ -273,9 +274,9 @@ export default function StudentCollabRoomPage() {
           <button
             type="button"
             onClick={joinSession}
-            className="mt-5 w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-4 text-base font-black text-white shadow-lg"
+            className="mt-5 w-full rounded-2xl bg-gradient-to-r from-violet-600 via-purple-500 to-fuchsia-500 px-5 py-4 text-base font-black text-white shadow-lg"
           >
-            Join
+            JOIN COLLAB BOARD
           </button>
         </div>
       </div>

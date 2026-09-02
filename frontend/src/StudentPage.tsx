@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { BookOpen, BrainCircuit, UsersRound } from "lucide-react";
 import ELogo2 from "./assets/ELogo2.png";
 import {
     readRememberedStudentClasses,
@@ -38,26 +39,56 @@ const STORAGE_RECENTS_KEY = "elume_student_recents_v1";
 
 const MODE_LABELS: Record<JoinMode, string> = {
     quiz: "Live Quiz",
-    collab: "Collaboration Board",
-    class: "Class",
+    collab: "Collab Board",
+    class: "Your Class",
 };
 
-const MODE_PLACEHOLDERS: Record<JoinMode, string> = {
-    quiz: "Enter quiz code",
-    collab: "Enter collaboration code",
-    class: "Enter class code",
-};
-
-const MODE_DESCRIPTIONS: Record<JoinMode, string> = {
-    quiz: "Join a live quiz from your teacher.",
-    collab: "Open your class collaboration board.",
-    class: "Open your class page with your code and PIN.",
-};
-
-const MODE_ACCENTS: Record<JoinMode, string> = {
-    quiz: "from-violet-500 via-fuchsia-500 to-amber-400",
-    collab: "from-cyan-500 via-teal-500 to-emerald-500",
-    class: "from-amber-400 via-yellow-400 to-violet-500",
+const MODE_CONFIG: Record<JoinMode, {
+    heading: string;
+    codeLabel: string;
+    placeholder: string;
+    description: string;
+    pinDescription?: string;
+    icon: typeof BookOpen;
+    surface: string;
+    badge: string;
+    button: string;
+    focus: string;
+}> = {
+    class: {
+        heading: "JOIN YOUR CLASS",
+        codeLabel: "CLASS CODE",
+        placeholder: "Enter class code",
+        description: "Use the class code your teacher gave you.",
+        pinDescription: "Enter the class PIN your teacher gave you.",
+        icon: BookOpen,
+        surface: "border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-teal-50 shadow-emerald-100/70",
+        badge: "from-emerald-600 via-teal-500 to-cyan-500",
+        button: "from-emerald-600 via-teal-500 to-cyan-500",
+        focus: "focus:border-emerald-500 focus:ring-emerald-100",
+    },
+    quiz: {
+        heading: "JOIN A LIVE QUIZ",
+        codeLabel: "QUIZ CODE",
+        placeholder: "Enter quiz code",
+        description: "Use the Live Quiz code shown by your teacher.",
+        icon: BrainCircuit,
+        surface: "border-amber-200 bg-gradient-to-br from-amber-50 via-white to-yellow-50 shadow-amber-100/70",
+        badge: "from-amber-500 via-yellow-400 to-orange-400",
+        button: "from-amber-500 via-yellow-400 to-orange-400 text-slate-900",
+        focus: "focus:border-amber-500 focus:ring-amber-100",
+    },
+    collab: {
+        heading: "JOIN A COLLAB BOARD",
+        codeLabel: "COLLAB CODE",
+        placeholder: "Enter collab code",
+        description: "Use the Collaboration code shown on the board.",
+        icon: UsersRound,
+        surface: "border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 shadow-violet-100/70",
+        badge: "from-violet-600 via-purple-500 to-fuchsia-500",
+        button: "from-violet-600 via-purple-500 to-fuchsia-500",
+        focus: "focus:border-violet-500 focus:ring-violet-100",
+    },
 };
 
 function cleanCodeInput(value: string) {
@@ -161,33 +192,34 @@ function StudentJoinCard(props: {
     } = props;
 
     const isClass = mode === "class";
+    const config = MODE_CONFIG[mode];
+    const Icon = config.icon;
 
     return (
-        <div className="rounded-[28px] border border-white/60 bg-white/85 shadow-xl shadow-slate-200/70 backdrop-blur-xl">
+        <div className={`rounded-[28px] border shadow-xl backdrop-blur-xl ${config.surface}`}>
             <button
                 type="button"
                 onClick={onOpen}
                 className="w-full text-left"
             >
                 <div className="p-6 sm:p-7">
-                    <div
-                        className={`inline-flex rounded-2xl bg-gradient-to-r ${MODE_ACCENTS[mode]} px-4 py-2 text-sm font-semibold text-white shadow-lg`}
-                    >
-                        {MODE_LABELS[mode]}
+                    <div className={`inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r ${config.badge} px-4 py-2 text-sm font-black tracking-wide text-white shadow-lg`}>
+                        <Icon aria-hidden="true" size={18} strokeWidth={2.5} />
+                        {config.codeLabel}
                     </div>
 
                     <div className="mt-4 flex items-start justify-between gap-4">
                         <div>
-                            <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-[28px]">
-                                {MODE_LABELS[mode]} Code
+                            <h2 className="text-2xl font-black tracking-tight text-slate-900 sm:text-[28px]">
+                                {config.heading}
                             </h2>
                             <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 sm:text-base">
-                                {MODE_DESCRIPTIONS[mode]}
+                                {config.description}
                             </p>
                         </div>
 
                         <div className="hidden rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 sm:block">
-                            Tap to join
+                            {MODE_LABELS[mode]}
                         </div>
                     </div>
                 </div>
@@ -201,7 +233,7 @@ function StudentJoinCard(props: {
                                 htmlFor={`${mode}-code`}
                                 className="mb-2 block text-sm font-semibold text-slate-700"
                             >
-                                {MODE_LABELS[mode]} code
+                                {config.codeLabel}
                             </label>
                             <input
                                 id={`${mode}-code`}
@@ -214,8 +246,8 @@ function StudentJoinCard(props: {
                                 inputMode="text"
                                 autoCapitalize="characters"
                                 spellCheck={false}
-                                placeholder={MODE_PLACEHOLDERS[mode]}
-                                className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-4 text-lg font-semibold uppercase tracking-[0.12em] text-slate-900 outline-none transition focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100"
+                                placeholder={config.placeholder}
+                                className={`w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-4 text-lg font-semibold uppercase tracking-[0.12em] text-slate-900 outline-none transition focus:ring-4 ${config.focus}`}
                                 maxLength={8}
                             />
                         </div>
@@ -226,7 +258,7 @@ function StudentJoinCard(props: {
                                     htmlFor={`${mode}-pin`}
                                     className="mb-2 block text-sm font-semibold text-slate-700"
                                 >
-                                    Class PIN
+                                    CLASS PIN
                                 </label>
                                 <input
                                     id={`${mode}-pin`}
@@ -237,11 +269,11 @@ function StudentJoinCard(props: {
                                     }}
                                     inputMode="numeric"
                                     placeholder="Enter class PIN"
-                                    className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-4 text-lg font-semibold tracking-[0.18em] text-slate-900 outline-none transition focus:border-violet-400 focus:ring-4 focus:ring-violet-100"
+                                    className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-4 text-lg font-semibold tracking-[0.18em] text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
                                     maxLength={6}
                                 />
                                 <p className="mt-2 text-xs leading-5 text-slate-500">
-                                    Your teacher will give you this PIN for class access.
+                                    {config.pinDescription}
                                 </p>
                             </div>
                         ) : null}
@@ -256,7 +288,7 @@ function StudentJoinCard(props: {
                             type="button"
                             onClick={onSubmit}
                             disabled={loading}
-                            className={`inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r ${MODE_ACCENTS[mode]} px-5 py-4 text-base font-semibold text-white shadow-lg transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70`}
+                            className={`inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r ${config.button} px-5 py-4 text-base font-black shadow-lg transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70`}
                         >
                             {loading ? "Joining..." : `Join ${MODE_LABELS[mode]}`}
                         </button>
@@ -278,7 +310,7 @@ export default function StudentPage() {
     const [studentName, setStudentName] = useState("");
     const [editingName, setEditingName] = useState(false);
 
-    const [openMode, setOpenMode] = useState<JoinMode>("quiz");
+    const [openMode, setOpenMode] = useState<JoinMode>("class");
 
     const [quizCode, setQuizCode] = useState("");
     const [collabCode, setCollabCode] = useState("");
@@ -326,6 +358,11 @@ export default function StudentPage() {
             if (validMode === "collab") setCollabCode(cleaned);
             if (validMode === "class") setClassCode(cleaned);
         }
+
+        if (params.get("notice") === "access-refreshed") {
+            setOpenMode("class");
+            setClassError("Your class access has been refreshed. Enter the class PIN again to continue.");
+        }
     }, []);
 
     const nameReady = useMemo(() => studentName.trim().length >= 2, [studentName]);
@@ -367,6 +404,14 @@ export default function StudentPage() {
             return;
         }
         throw new Error("Joined successfully, but no destination was returned.");
+    }
+
+    function accessTokenFromJoinResponse(data: JoinResponse) {
+        const target = data.redirect_url || data.token_url;
+        if (!target || /^https?:\/\//i.test(target)) return "";
+        const pathname = target.startsWith("/") ? target : `/${target}`;
+        const match = pathname.match(/^\/student\/([A-Za-z0-9_-]{16,128})$/);
+        return match?.[1] || "";
     }
 
     async function submitJoin(mode: JoinMode, overrideCode?: string) {
@@ -458,7 +503,8 @@ export default function StudentPage() {
 
             saveRecentJoin(recentJoin);
             setRecentJoins(readRecentJoins());
-            rememberStudentClass({ classCode: code.trim() });
+            const accessToken = accessTokenFromJoinResponse(data);
+            rememberStudentClass({ classCode: code.trim(), accessToken: accessToken || undefined });
             setRememberedClasses(readRememberedStudentClasses());
 
             redirectFromJoinResponse(data);
@@ -488,12 +534,22 @@ export default function StudentPage() {
             return;
         }
 
+        const remembered = readRememberedStudentClasses().find((entry) => entry.classCode === item.code);
+        if (remembered?.accessToken) {
+            window.location.href = `${window.location.origin}/#/student/${remembered.accessToken}`;
+            return;
+        }
+
         setClassCode(item.code);
         setClassError("Please enter your class PIN to continue.");
     }
 
     function openRememberedClass(item: RememberedStudentClass) {
         clearErrors();
+        if (item.accessToken) {
+            window.location.href = `${window.location.origin}/#/student/${item.accessToken}`;
+            return;
+        }
         setClassCode(item.classCode);
         setClassPin("");
         setOpenMode("class");
@@ -524,8 +580,7 @@ export default function StudentPage() {
                                     </h1>
 
                                     <p className="mt-2 max-w-2xl text-sm leading-6 text-white/90 sm:text-base">
-                                        Join your live quiz, collaboration board, or class page. Enter a code from
-                                        your teacher or scan the QR code shown in class.
+                                        Choose what you are joining. Each activity has its own colour, icon and code label.
                                     </p>
                                 </div>
                             </div>
@@ -534,6 +589,24 @@ export default function StudentPage() {
 
                     <div className="grid gap-8 px-6 py-8 sm:px-8 lg:grid-cols-[1.15fr_0.85fr] lg:px-10 lg:py-10">
                         <div className="space-y-5">
+                            <div className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Join something</div>
+                            <StudentJoinCard
+                                mode="class"
+                                open={openMode === "class"}
+                                onOpen={() => {
+                                    clearErrors();
+                                    setOpenMode("class");
+                                }}
+                                code={classCode}
+                                pin={classPin}
+                                onCodeChange={setClassCode}
+                                onPinChange={setClassPin}
+                                loading={classLoading}
+                                error={classError}
+                                onSubmit={() => submitJoin("class")}
+                                autoFocused={openMode === "class"}
+                            />
+
                             <StudentJoinCard
                                 mode="quiz"
                                 open={openMode === "quiz"}
@@ -566,23 +639,6 @@ export default function StudentPage() {
                                 error={collabError}
                                 onSubmit={() => submitJoin("collab")}
                                 autoFocused={openMode === "collab"}
-                            />
-
-                            <StudentJoinCard
-                                mode="class"
-                                open={openMode === "class"}
-                                onOpen={() => {
-                                    clearErrors();
-                                    setOpenMode("class");
-                                }}
-                                code={classCode}
-                                pin={classPin}
-                                onCodeChange={setClassCode}
-                                onPinChange={setClassPin}
-                                loading={classLoading}
-                                error={classError}
-                                onSubmit={() => submitJoin("class")}
-                                autoFocused={openMode === "class"}
                             />
                         </div>
 
