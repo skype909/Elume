@@ -42,6 +42,8 @@ import SchoolResourcesPage from "./SchoolResourcesPage";
 import SchoolInvitationPage from "./SchoolInvitationPage";
 import PlatformAdminSchoolsPage from "./PlatformAdminSchoolsPage";
 import SchoolBrand from "./Components/SchoolBrand";
+import InlineNotice from "./Components/InlineNotice";
+import { userFacingError } from "./userFacingError";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -532,7 +534,7 @@ function Dashboard({
 
       .catch((e: any) => {
         if (cancelled) return;
-        setError(e?.message || "Failed to load classes");
+        setError(userFacingError(e, "We couldn’t load your classes just yet. Give it another try."));
         setClasses([]);
       })
       .finally(() => {
@@ -1114,7 +1116,7 @@ function Dashboard({
 
       setCreateOpen(false);
     } catch (e: any) {
-      setError(e?.message || "Failed to create class");
+      setError(userFacingError(e, "We couldn’t create that class just now. Please try again."));
     } finally {
       setCreating(false);
     }
@@ -1144,7 +1146,7 @@ function Dashboard({
       setManageOpen(false);
       setManageClass(null);
     } catch (e: any) {
-      setManageError(e?.message || "Could not archive class.");
+      setManageError(userFacingError(e, "We couldn’t archive that class just now. Please try again."));
     } finally {
       setManageBusy(false);
     }
@@ -1160,7 +1162,7 @@ function Dashboard({
       setManageOpen(false);
       setManageClass(null);
     } catch (e: any) {
-      setManageError(e?.message || "Could not delete class.");
+      setManageError(userFacingError(e, "We couldn’t delete that class just now. Please try again."));
     } finally {
       setManageBusy(false);
     }
@@ -1195,7 +1197,7 @@ function Dashboard({
       setEditOpen(false);
       setEditingId(null);
     } catch (e: any) {
-      setError(e?.message || "Failed to edit class");
+      setError(userFacingError(e, "We couldn’t save those class changes just now. Please try again."));
     } finally {
       setSavingEdit(false);
     }
@@ -1301,9 +1303,12 @@ function Dashboard({
       {/* Content */}
       <main className="mx-auto max-w-7xl px-4 py-6">
         {error && (
-          <div className="mb-4 rounded-3xl border-2 border-red-200 bg-red-50 p-3 text-sm text-red-800">
-            {error}
-          </div>
+          <InlineNotice
+            variant="error"
+            title="That didn’t quite work"
+            message={error}
+            className="mb-4"
+          />
         )}
 
         <div className="mb-5 w-full">
@@ -2013,9 +2018,12 @@ function Dashboard({
               </div>
 
               {manageError && (
-                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  {manageError}
-                </div>
+                <InlineNotice
+                  variant="error"
+                  title="That didn’t quite work"
+                  message={manageError}
+                  className="mt-4"
+                />
               )}
 
               <div className="mt-6 flex flex-wrap items-center justify-end gap-3">

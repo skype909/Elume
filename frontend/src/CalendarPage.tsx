@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "./api";
 import AiAssistanceNotice from "./Components/AiAssistanceNotice";
+import InlineNotice from "./Components/InlineNotice";
+import { userFacingError } from "./userFacingError";
 
 type ClassItem = { id: number; name: string; subject: string };
 
@@ -179,7 +181,7 @@ export default function CalendarPage() {
       const data = await apiFetch(url);
       setEvents(Array.isArray(data) ? data : []);
     } catch (e: any) {
-      setErr(e?.message || "Failed to load events");
+      setErr(userFacingError(e, "We couldn’t load your calendar just yet. Give it another try."));
       setEvents([]);
     } finally {
       setLoading(false);
@@ -348,7 +350,7 @@ export default function CalendarPage() {
       resetDraft();
       await refresh();
     } catch (e: any) {
-      setErr(e?.message || "Save failed");
+      setErr(userFacingError(e, "We couldn’t save that event just now. Please try again."));
     }
   }
 
@@ -366,7 +368,7 @@ export default function CalendarPage() {
       resetDraft();
       await refresh();
     } catch (e: any) {
-      setErr(e?.message || "Delete failed");
+      setErr(userFacingError(e, "We couldn’t delete that event just now. Please try again."));
     }
   }
 
@@ -385,7 +387,7 @@ export default function CalendarPage() {
 
       await refresh();
     } catch (e: any) {
-      setErr(e?.message || "Delete failed");
+      setErr(userFacingError(e, "We couldn’t delete that event just now. Please try again."));
     }
   }
 
@@ -416,7 +418,7 @@ export default function CalendarPage() {
         .then((usage: { message?: string | null }) => setAiQuotaNotice(usage.message || null))
         .catch(() => undefined);
     } catch (e: any) {
-      setErr(e?.message || "AI parse failed");
+      setErr(userFacingError(e, "Elume couldn’t turn that into a calendar event. Please review the details and try again."));
     } finally {
       setAiBusy(false);
     }
@@ -663,9 +665,12 @@ export default function CalendarPage() {
         </div>
 
         {err && (
-          <div className="mt-4 rounded-[24px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-sm">
-            {err}
-          </div>
+          <InlineNotice
+            variant="error"
+            title="That didn’t quite work"
+            message={err}
+            className="mt-4"
+          />
         )}
 
         {loading && (

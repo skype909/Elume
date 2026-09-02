@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 import { BackToClassButton, ClassPageActionBar } from "./ClassPageActions";
+import InlineNotice from "./Components/InlineNotice";
+import { userFacingError } from "./userFacingError";
 
 const API_BASE = "/api";
 const META_KEY = "elume_class_layout_v1";
@@ -190,7 +192,7 @@ export default function NotesPage() {
       .then((data) => setClassInfo(data ?? null))
       .catch((e: any) => {
         if (e?.name === "AbortError") return;
-        setError(e?.message || "Failed to load class");
+        setError(userFacingError(e, "We couldn’t load your resources just yet. Give it another try."));
         setClassInfo(null);
       })
       .finally(() => setLoadingClass(false));
@@ -205,7 +207,7 @@ export default function NotesPage() {
       const data = await apiFetch(`${API_BASE}/topics/${classId}?kind=notes`);
       setTopics(Array.isArray(data) ? data : []);
     } catch (e: any) {
-      setError(e?.message || "Failed to load categories");
+      setError(userFacingError(e, "We couldn’t load your resources just yet. Give it another try."));
       setTopics([]);
     } finally {
       setLoadingTopics(false);
@@ -219,7 +221,7 @@ export default function NotesPage() {
       const data = await apiFetch(`${API_BASE}/notes/${classId}?kind=notes`);
       setNotes(Array.isArray(data) ? data : []);
     } catch (e: any) {
-      setError(e?.message || "Failed to load files");
+      setError(userFacingError(e, "We couldn’t load your resources just yet. Give it another try."));
       setNotes([]);
     } finally {
       setLoadingNotes(false);
@@ -357,7 +359,7 @@ export default function NotesPage() {
       setPickedFiles([]);
       setConvertOfficeFiles(false);
     } catch (e: any) {
-      setError(e?.message || "Upload failed");
+      setError(userFacingError(e, "We couldn’t upload that file just now. Please try again."));
       if (shouldConvertOfficeFiles && filesToUpload.some(isConvertibleOfficeFile)) {
         setPendingOfficeFiles(filesToUpload);
       }
@@ -384,7 +386,7 @@ export default function NotesPage() {
 
       setNotes((prev) => prev.filter((n) => n.id !== noteId));
     } catch (e: any) {
-      setError(e?.message || "Failed to delete file");
+      setError(userFacingError(e, "We couldn’t delete that resource just now. Please try again."));
     } finally {
       setBusy(false);
     }
@@ -406,7 +408,7 @@ export default function NotesPage() {
       setNotes((prev) => prev.filter((n) => n.topic_id !== topicId));
       if (selectedTopicId === topicId) setSelectedTopicId(null);
     } catch (e: any) {
-      setError(e?.message || "Failed to delete category");
+      setError(userFacingError(e, "We couldn’t delete that category just now. Please try again."));
     } finally {
       setBusy(false);
     }
@@ -435,7 +437,7 @@ export default function NotesPage() {
         window.URL.revokeObjectURL(objectUrl);
       }, 60_000);
     } catch (e: any) {
-      setError(e?.message || "Failed to open file");
+      setError(userFacingError(e, "We couldn’t open that file just now. Please try again."));
     } finally {
       setBusy(false);
     }
@@ -475,7 +477,7 @@ export default function NotesPage() {
       setTopics((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
       setSelectedTopicId(created.id);
     } catch (e: any) {
-      setError(e?.message || "Could not open the Audio library");
+      setError(userFacingError(e, "We couldn’t open the Audio library just now. Please try again."));
     } finally {
       setBusy(false);
     }
@@ -525,9 +527,12 @@ export default function NotesPage() {
         </ClassPageActionBar>
 
         {error && (
-          <div className="mb-4 rounded-3xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-            {error}
-          </div>
+          <InlineNotice
+            variant="error"
+            title="That didn’t quite work"
+            message={error}
+            className="mb-4"
+          />
         )}
 
         <div className="rounded-[1.6rem] border border-slate-200 bg-white/95 px-6 py-5 shadow-sm">
