@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
+import InlineNotice from "./Components/InlineNotice";
+import { userFacingError } from "./userFacingError";
 
 let pdfJsLoaderPromise: Promise<any> | null = null;
 
@@ -76,6 +78,12 @@ type NoteItem = {
     id: number;
     filename: string;
     file_url: string;
+};
+
+type BoardNotice = {
+    variant: "error" | "warning";
+    title?: string;
+    message: string;
 };
 
 type Props = {
@@ -289,6 +297,7 @@ export default function CollabBoard({
     const [importList, setImportList] = useState<Array<{ kind: "notes" | "exam"; item: NoteItem }>>([]);
     const [importLoading, setImportLoading] = useState(false);
     const [importError, setImportError] = useState<string | null>(null);
+    const [boardNotice, setBoardNotice] = useState<BoardNotice | null>(null);
     const [importedPdf, setImportedPdf] = useState<{ kind: "notes" | "exam"; item: NoteItem } | null>(null);
     const [showImportModal, setShowImportModal] = useState(false);
     const [showPdfPanel, setShowPdfPanel] = useState(false);
@@ -775,7 +784,7 @@ export default function CollabBoard({
 
     async function loadImportList() {
         if (!canLoadPdfImports) {
-            setImportError("PDF import is not configured for this board yet.");
+            setImportError(null);
             setImportLoading(false);
             return;
         }
@@ -795,8 +804,8 @@ export default function CollabBoard({
             ];
 
             setImportList(combined);
-        } catch {
-            setImportError("Could not load PDFs.");
+        } catch (error: unknown) {
+            setImportError(userFacingError(error, "We couldn’t load PDFs just now. Please try again."));
         } finally {
             setImportLoading(false);
         }
@@ -962,6 +971,7 @@ export default function CollabBoard({
 
     async function insertPdfPage1() {
         if (!importedPdf) return;
+        setBoardNotice(null);
 
         try {
             const pdfjsLib = await loadPdfJs();
@@ -987,8 +997,12 @@ export default function CollabBoard({
             const wCss = Math.min(maxWidth, viewport.width);
             const hCss = (viewport.height / viewport.width) * wCss;
             insertImageObject(temp.toDataURL("image/png"), 20, 20, wCss, hCss);
-        } catch {
-            alert("Could not insert that PDF page.");
+        } catch (error: unknown) {
+            setBoardNotice({
+                variant: "error",
+                title: "That didn’t quite work",
+                message: userFacingError(error, "We couldn’t add that PDF to the board just now. Please try again."),
+            });
         }
     }
 
@@ -1148,9 +1162,11 @@ export default function CollabBoard({
 
         const min = 12;
         if (clipRect.w < min || clipRect.h < min) {
-            alert("Selection is too small.");
+            setBoardNotice({ variant: "warning", message: "Choose a larger area before snipping." });
             return;
         }
+
+        setBoardNotice(null);
 
         const scaleX = src.width / Math.max(pdfCanvasSize.w || 1, 1);
         const scaleY = src.height / Math.max(pdfCanvasSize.h || 1, 1);
@@ -2067,7 +2083,18 @@ export default function CollabBoard({
     }
 
     return (
-        <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-inner">
+        <div className="relative overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-inner">
+            {boardNotice ? (
+                <div className="absolute inset-x-4 bottom-4 z-30 max-w-xl">
+                    <InlineNotice
+                        variant={boardNotice.variant}
+                        title={boardNotice.title}
+                        message={boardNotice.message}
+                        actionLabel="Dismiss"
+                        onAction={() => setBoardNotice(null)}
+                    />
+                </div>
+            ) : null}
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                 <div className="text-sm font-black text-slate-900">{boardLabel}</div>
 
@@ -2184,9 +2211,14 @@ export default function CollabBoard({
                             </div>
 
                             {importError && (
-                                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-                                    {importError}
-                                </div>
+                                <InlineNotice
+                                    variant="error"
+                                    title="That didn’t quite work"
+                                    message={importError}
+                                    actionLabel="Try again"
+                                    onAction={() => void loadImportList()}
+                                    className="mt-4"
+                                />
                             )}
 
                             {!canLoadPdfImports && !importError && (

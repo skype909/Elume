@@ -5,6 +5,8 @@ import CollabBoard from "./CollabBoard";
 import type { BoardSnapshot } from "./CollabBoard";
 import { apiFetch } from "./api";
 import DepartmentShareModal from "./Components/DepartmentShareModal";
+import InlineNotice from "./Components/InlineNotice";
+import { userFacingError } from "./userFacingError";
 
 const API_BASE = "/api";
 
@@ -84,6 +86,12 @@ type SavedBoard = {
     timer_minutes: number | null;
     created_at: string;
     updated_at: string;
+};
+
+type CollaborationNotice = {
+    variant: "error" | "warning" | "info";
+    title?: string;
+    message: string;
 };
 function uid(prefix = "id") {
     return `${prefix}_${Math.random().toString(36).slice(2, 9)}_${Date.now().toString(36)}`;
@@ -203,6 +211,7 @@ export default function CollaborationPage() {
     const [sessionCode, setSessionCode] = useState<string>("");
     const [status, setStatus] = useState<CollabStatus | null>(null);
     const [statusError, setStatusError] = useState<string | null>(null);
+    const [notice, setNotice] = useState<CollaborationNotice | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [isStartingBreakout, setIsStartingBreakout] = useState(false);
     const [savedBoards, setSavedBoards] = useState<SavedBoard[]>([]);
@@ -250,6 +259,26 @@ export default function CollaborationPage() {
     const [focusedReviewBoard, setFocusedReviewBoard] = useState<string | null>(null);
     const joinCode = sessionCode;
     const hasSession = Boolean(joinCode);
+
+    function showError(error: unknown, fallback: string) {
+        setNotice({
+            variant: "error",
+            title: "That didn’t quite work",
+            message: userFacingError(error, fallback),
+        });
+    }
+
+    function showWarning(message: string) {
+        setNotice({ variant: "warning", message });
+    }
+
+    function showStartBreakoutFailure(error: unknown) {
+        if (error instanceof Error && error.message === "No session code available. Create the session first.") {
+            showWarning("Create a Collaboration session before starting breakout rooms.");
+            return;
+        }
+        showError(error, "We couldn’t start the breakout rooms just now. Please try again.");
+    }
 
     useEffect(() => {
         joinCodeRef.current = joinCode;
@@ -393,8 +422,8 @@ export default function CollaborationPage() {
             // For now: do not force roomCount back on every poll.
             setTimeLeftSeconds(data.time_left_seconds ?? null);
             setStatusError(null);
-        } catch (e: any) {
-            setStatusError(e?.message || "Status unavailable.");
+        } catch (error: unknown) {
+            setStatusError(userFacingError(error, "Live updates couldn’t refresh just now. Check your connection if this continues."));
         }
     }
 
@@ -411,23 +440,25 @@ export default function CollaborationPage() {
                     isOnline: p.is_online,
                 }))
             );
-        } catch (e: any) {
-            setStatusError(e?.message || "Participants unavailable.");
+        } catch (error: unknown) {
+            setStatusError(userFacingError(error, "Live updates couldn’t refresh just now. Check your connection if this continues."));
         }
 
     }
 
     async function fetchSavedBoards() {
+        setNotice(null);
         try {
             const data = await apiFetch(`${API_BASE}/collab/templates`);
             setSavedBoards(Array.isArray(data?.templates) ? data.templates : []);
-        } catch (e: any) {
-            window.alert(e?.message || "Saved boards are unavailable.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t load your saved boards just yet. Give it another try.");
         }
     }
 
     async function launchSavedBoard(template: SavedBoard) {
         if (isUsingSavedBoard) return;
+        setNotice(null);
         setIsUsingSavedBoard(true);
         try {
             const data = (await apiFetch(`${API_BASE}/collab/templates/${template.id}/use`, {
@@ -444,8 +475,8 @@ export default function CollaborationPage() {
             setShowSavedBoardsModal(false);
             await Promise.all([fetchStatus(data.session_code), fetchParticipants(data.session_code)]);
             setShowJoinModal(true);
-        } catch (e: any) {
-            window.alert(e?.message || "Could not use saved board.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t open that saved board just now. Please try again.");
         } finally {
             setIsUsingSavedBoard(false);
         }
@@ -454,24 +485,26 @@ export default function CollaborationPage() {
     async function renameSavedBoard(template: SavedBoard) {
         const title = window.prompt("Rename saved board", template.title)?.trim();
         if (!title || title === template.title) return;
+        setNotice(null);
         try {
             await apiFetch(`${API_BASE}/collab/templates/${template.id}`, {
                 method: "PATCH",
                 body: JSON.stringify({ title }),
             });
             await fetchSavedBoards();
-        } catch (e: any) {
-            window.alert(e?.message || "Could not rename saved board.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t rename that saved board just now. Please try again.");
         }
     }
 
     async function deleteSavedBoard(template: SavedBoard) {
         if (!window.confirm(`Delete saved board "${template.title}"? This will not affect any live session.`)) return;
+        setNotice(null);
         try {
             await apiFetch(`${API_BASE}/collab/templates/${template.id}`, { method: "DELETE" });
             await fetchSavedBoards();
-        } catch (e: any) {
-            window.alert(e?.message || "Could not delete saved board.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t delete that saved board just now. Please try again.");
         }
     }
 
@@ -479,6 +512,7 @@ export default function CollaborationPage() {
         const code = joinCodeRef.current;
         const title = savedBoardTitle.trim();
         if (!code || !title || isSavingBoard) return;
+        setNotice(null);
         setIsSavingBoard(true);
         try {
             await apiFetch(`${API_BASE}/collab/${code}/save-template`, {
@@ -488,8 +522,8 @@ export default function CollaborationPage() {
             setShowSaveBoardModal(false);
             setSavedBoardTitle("");
             await fetchSavedBoards();
-        } catch (e: any) {
-            window.alert(e?.message || "Could not save this board.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t save this board just now. Please try again.");
         } finally {
             setIsSavingBoard(false);
         }
@@ -520,6 +554,7 @@ export default function CollaborationPage() {
 
     async function createSession() {
         if (isCreating) return;
+        setNotice(null);
         setIsCreating(true);
 
         try {
@@ -540,8 +575,8 @@ export default function CollaborationPage() {
             setSessionState("lobby");
             await Promise.all([fetchStatus(data.session_code), fetchParticipants(data.session_code)]);
             setShowJoinModal(true);
-        } catch (e: any) {
-            window.alert(e?.message || "Failed to create collaboration session.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t create this Collaboration session just now. Please try again.");
         } finally {
             setIsCreating(false);
         }
@@ -550,9 +585,11 @@ export default function CollaborationPage() {
     async function assignAndSave(participantId: string, roomNumber: number | null) {
         const code = joinCodeRef.current;
         if (!code) {
-            window.alert("Create a session first.");
+            showWarning("Create a Collaboration session before assigning students to rooms.");
             return;
         }
+
+        setNotice(null);
 
         const nextParticipants = participants.map((p) =>
             p.id === participantId ? { ...p, roomNumber } : p
@@ -564,8 +601,8 @@ export default function CollaborationPage() {
             await syncBreakoutConfig(code);
             await persistAssignments(code, nextParticipants);
             await Promise.all([fetchParticipants(code), fetchStatus(code)]);
-        } catch (e: any) {
-            window.alert(e?.message || "Failed to save assignments.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t save the room assignments just now. Please try again.");
         }
     }
 
@@ -573,16 +610,18 @@ export default function CollaborationPage() {
     async function saveAssignments() {
         const code = joinCodeRef.current;
         if (!code) {
-            window.alert("Create a session first.");
+            showWarning("Create a Collaboration session before saving room assignments.");
             return;
         }
+
+        setNotice(null);
 
         try {
             await syncBreakoutConfig(code);
             await persistAssignments(code, participants);
             await Promise.all([fetchParticipants(code), fetchStatus(code)]);
-        } catch (e: any) {
-            window.alert(e?.message || "Failed to save assignments.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t save the room assignments just now. Please try again.");
         }
     }
 
@@ -612,6 +651,7 @@ export default function CollaborationPage() {
         }
 
         if (isStartingBreakout) return;
+        setNotice(null);
         setIsStartingBreakout(true);
 
         try {
@@ -645,10 +685,11 @@ export default function CollaborationPage() {
     async function endBreakout() {
         const code = joinCodeRef.current;
         if (!code) {
-            window.alert("No active session.");
+            showWarning("Start a Collaboration session before ending breakout rooms.");
             return;
         }
 
+        setNotice(null);
         try {
             await apiFetch(`${API_BASE}/collab/${code}/end`, {
                 method: "POST",
@@ -658,48 +699,51 @@ export default function CollaborationPage() {
             setIsPreparingNextRound(false);
             setSessionState("review");
             setTimeLeftSeconds(null);
-        } catch (e: any) {
-            window.alert(e?.message || "Failed to end breakout.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t end the breakout rooms just now. Please try again.");
         }
     }
 
     async function downloadTeacherPng() {
         if (!teacherBoardExportRef.current) {
-            window.alert("Teacher board export is not ready yet.");
+            showWarning("The teacher board is getting ready to export. Please try again in a moment.");
             return;
         }
 
+        setNotice(null);
         try {
             await teacherBoardExportRef.current();
-        } catch {
-            window.alert("Could not download teacher board.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t export this board just now. Please try again.");
         }
     }
 
     async function downloadReviewBoardPng(boardKey: string) {
         const fn = reviewBoardExportRefs.current[boardKey];
         if (!fn) {
-            window.alert("Board export is not ready yet.");
+            showWarning("This board is getting ready to export. Please try again in a moment.");
             return;
         }
 
+        setNotice(null);
         try {
             await fn();
-        } catch {
-            window.alert("Could not download board.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t export this board just now. Please try again.");
         }
     }
 
     async function downloadFocusedReviewBoardPng() {
         if (!focusedReviewBoardExportRef.current) {
-            window.alert("Board export is not ready yet.");
+            showWarning("This board is getting ready to export. Please try again in a moment.");
             return;
         }
 
+        setNotice(null);
         try {
             await focusedReviewBoardExportRef.current();
-        } catch {
-            window.alert("Could not download board.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t export this board just now. Please try again.");
         }
     }
 
@@ -757,6 +801,7 @@ export default function CollaborationPage() {
     async function resetCurrentBoardRound() {
         const code = joinCodeRef.current;
         if (!code || isPreparingNextRound) return;
+        setNotice(null);
         setIsPreparingNextRound(true);
         try {
             const data = await apiFetch(`${API_BASE}/collab/${code}/new-board`, { method: "POST" });
@@ -765,8 +810,8 @@ export default function CollaborationPage() {
             setFocusedReviewBoard(null);
             setTimeLeftSeconds(null);
             await fetchStatus(code);
-        } catch (e: any) {
-            window.alert(e?.message || "Could not prepare a new board.");
+        } catch (error: unknown) {
+            showError(error, "We couldn’t prepare a new board just now. Please try again.");
         } finally {
             setIsPreparingNextRound(false);
         }
@@ -787,6 +832,17 @@ export default function CollaborationPage() {
 
             <div className="relative z-10 p-4 md:p-6">
                 <div className="mx-auto max-w-[1700px]">
+                    {notice ? (
+                        <div className="fixed inset-x-3 bottom-4 z-[80] mx-auto max-w-xl md:inset-x-auto md:right-6 md:w-[30rem]">
+                            <InlineNotice
+                                variant={notice.variant}
+                                title={notice.title}
+                                message={notice.message}
+                                actionLabel="Dismiss"
+                                onAction={() => setNotice(null)}
+                            />
+                        </div>
+                    ) : null}
                     <div className="mb-3 rounded-[22px] border border-white/70 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-xl md:px-5">
                         <div className="flex flex-col gap-2">
                             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -958,9 +1014,11 @@ export default function CollaborationPage() {
                                     </div>
 
                                     {statusError ? (
-                                        <div className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
-                                            {statusError}
-                                        </div>
+                                        <InlineNotice
+                                            variant="warning"
+                                            message={statusError}
+                                            className="max-w-sm px-3 py-2 text-xs"
+                                        />
                                     ) : null}
                                 </div>
                             </div>
@@ -1739,8 +1797,8 @@ export default function CollaborationPage() {
                                             onClick={async () => {
                                                 try {
                                                     await startBreakoutAndPersist();
-                                                } catch (e: any) {
-                                                    window.alert(e?.message || "Failed to start breakout session.");
+                                                } catch (error: unknown) {
+                                                    showStartBreakoutFailure(error);
                                                 }
                                             }}
                                             disabled={!hasSession || isStartingBreakout}
@@ -1815,8 +1873,8 @@ export default function CollaborationPage() {
                                     onClick={async () => {
                                         try {
                                             await startBreakoutAndPersist();
-                                        } catch (e: any) {
-                                            window.alert(e?.message || "Failed to start breakout session.");
+                                        } catch (error: unknown) {
+                                            showStartBreakoutFailure(error);
                                         }
                                     }}
                                     disabled={!hasSession || isStartingBreakout}
