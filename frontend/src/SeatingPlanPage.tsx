@@ -169,7 +169,7 @@ function generateAssignment(
 }
 
 export default function SeatingPlanPage() {
-    const { t } = useUiLanguage();
+    const { t, language } = useUiLanguage();
     const { id } = useParams();
     const classId = Number(id);
     const navigate = useNavigate();
@@ -886,7 +886,7 @@ export default function SeatingPlanPage() {
                                     <div className="text-xs text-slate-600">
                                         Last updated:{" "}
                                         <span className="font-semibold text-slate-800">
-                                            {new Date(state.updatedAt).toLocaleString()}
+                                            {new Date(state.updatedAt).toLocaleString(language === "ga" ? "ga-IE" : "en-IE")}
                                         </span>
                                     </div>
                                     <div className="text-right"></div>

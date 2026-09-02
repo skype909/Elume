@@ -1122,7 +1122,7 @@ export default function LiveQuizPage() {
                 <div className="rounded-2xl border border-white/70 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 px-4 py-3 text-sm shadow-sm">
                   <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Current mode</div>
                   <div className="mt-1 font-black text-slate-900">
-                    {mode === "saved" ? "Saved Quizzes" : mode === "starred" ? "Main Quiz Collection" : "Quick Custom"}
+                    {mode === "saved" ? t("liveQuiz.savedQuizzes") : mode === "starred" ? t("liveQuiz.mainCollection") : t("liveQuiz.quickCustom")}
                   </div>
                 </div>
 
@@ -1531,9 +1531,9 @@ export default function LiveQuizPage() {
 
                     <div className="rounded-[28px] border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-violet-50 p-5 shadow-sm">
                       <div className="text-sm font-black uppercase tracking-[0.18em] text-emerald-700">
-                        Teacher controls
+                        {t("liveQuiz.teacherControls")}
                       </div>
-                      <div className="mt-1 text-lg font-black text-slate-900">Run the session live</div>
+                      <div className="mt-1 text-lg font-black text-slate-900">{t("liveQuiz.runSession")}</div>
 
                       {statusError && (
                         <InlineNotice
@@ -1660,8 +1660,8 @@ export default function LiveQuizPage() {
               <div className="rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <div className="text-xl font-black tracking-tight text-slate-900">Results & History</div>
-                    <div className="mt-1 text-sm text-slate-600">Reports are saved locally on this device.</div>
+                    <div className="text-xl font-black tracking-tight text-slate-900">{t("liveQuiz.resultsHistory")}</div>
+                    <div className="mt-1 text-sm text-slate-600">{t("liveQuiz.reportsLocal")}</div>
                   </div>
 
                   {session?.code ? (
@@ -1691,7 +1691,7 @@ export default function LiveQuizPage() {
                     </div>
 
                     <div className="mt-5">
-                      <div className="text-sm font-black text-slate-900">Top 3</div>
+                      <div className="text-sm font-black text-slate-900">{t("liveQuiz.topThree")}</div>
                       <div className="mt-3 grid gap-3 sm:grid-cols-3">
                         {(activeReport.top3 || []).map((p, i) => (
                           <div
@@ -1715,7 +1715,7 @@ export default function LiveQuizPage() {
                     </div>
 
                     <div className="mt-5">
-                      <div className="text-sm font-black text-slate-900">Leaderboard</div>
+                      <div className="text-sm font-black text-slate-900">{t("liveQuiz.leaderboard")}</div>
                       <div className="mt-3 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
                         {(activeReport.leaderboard || []).slice(0, 25).map((r, idx) => (
                           <div
@@ -1735,15 +1735,15 @@ export default function LiveQuizPage() {
                   </div>
                 ) : (
                   <div className="mt-5 rounded-[28px] border border-dashed border-slate-200 bg-gradient-to-br from-slate-50 to-white p-10 text-center">
-                    <div className="text-base font-black text-slate-900">No report selected</div>
+                    <div className="text-base font-black text-slate-900">{t("liveQuiz.noReport")}</div>
                     <div className="mt-2 text-sm text-slate-600">
-                      End a session to generate a report automatically.
+                      {t("liveQuiz.noReportHelp")}
                     </div>
                   </div>
                 )}
 
                 <div className="mt-6">
-                  <div className="text-sm font-black text-slate-900">History</div>
+                  <div className="text-sm font-black text-slate-900">{t("liveQuiz.history")}</div>
                   <div className="mt-3 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
                     {history.length ? (
                       history.map((h, idx) => (
@@ -1758,7 +1758,7 @@ export default function LiveQuizPage() {
                           >
                             <div className="text-sm font-black text-slate-900">{h.title}</div>
                             <div className="text-xs text-slate-600">
-                              {new Date(h.saved_at).toLocaleString()} • {h.anonymous ? "Anonymous" : "Named"} • Avg{" "}
+                              {new Date(h.saved_at).toLocaleString(language === "ga" ? "ga-IE" : "en-IE")} • {h.anonymous ? t("liveQuiz.anonymous") : t("liveQuiz.named")} • {t("liveQuiz.average")}{" "}
                               {h.summary.avg_percent}%
                             </div>
                           </button>
@@ -1778,7 +1778,7 @@ export default function LiveQuizPage() {
                         </div>
                       ))
                     ) : (
-                      <div className="px-4 py-5 text-sm text-slate-600">No history yet.</div>
+                      <div className="px-4 py-5 text-sm text-slate-600">{t("liveQuiz.noHistory")}</div>
                     )}
                   </div>
                 </div>
@@ -1787,8 +1787,8 @@ export default function LiveQuizPage() {
               <div className="rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <div className="text-xl font-black tracking-tight text-slate-900">Class insights</div>
-                    <div className="mt-1 text-sm text-slate-600">Recent live quiz attempts for this class, grouped by student.</div>
+                    <div className="text-xl font-black tracking-tight text-slate-900">{t("liveQuiz.classInsights")}</div>
+                    <div className="mt-1 text-sm text-slate-600">{t("liveQuiz.insightsHelp")}</div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
@@ -1825,7 +1825,7 @@ export default function LiveQuizPage() {
 
                 {insightsLoading ? (
                   <div className="mt-5 rounded-[28px] border border-dashed border-slate-200 bg-gradient-to-br from-slate-50 to-white p-8 text-center text-sm text-slate-600">
-                    Loading class insights...
+                    {t("liveQuiz.loadingInsights")}
                   </div>
                 ) : filteredInsightStudents.length ? (
                   <div className="mt-5 space-y-4">
@@ -1866,7 +1866,7 @@ export default function LiveQuizPage() {
                                         : "Incomplete"}
                                   </div>
                                   <div className="mt-1 text-xs text-slate-600">
-                                    {attempt.total_questions ? `${attempt.score}/${attempt.total_questions}` : "No question count"} | {attempt.finished_at ? new Date(attempt.finished_at).toLocaleString() : "Not finished"}
+                                    {attempt.total_questions ? `${attempt.score}/${attempt.total_questions}` : "No question count"} | {attempt.finished_at ? new Date(attempt.finished_at).toLocaleString(language === "ga" ? "ga-IE" : "en-IE") : "Not finished"}
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">

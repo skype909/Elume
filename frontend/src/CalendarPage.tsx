@@ -90,13 +90,12 @@ function eventTypeMeta(t: string) {
   }
 }
 
-function formatEventTypeLabel(t: string) {
-  if (!t) return "General";
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
-
 export default function CalendarPage() {
   const { t, language } = useUiLanguage();
+  const eventTypeLabel = (value: string) => {
+    const key = String(value || "general").toLowerCase();
+    return key === "test" ? t("calendar.test") : key === "homework" ? t("calendar.homework") : key === "trip" ? t("calendar.trip") : t("calendar.general");
+  };
   const { id } = useParams();
   const routeClassId = useMemo(() => Number(id), [id]);
   const hasRouteClass = Number.isFinite(routeClassId) && routeClassId > 0;
@@ -430,11 +429,11 @@ export default function CalendarPage() {
   const pageTitle = hasRouteClass ? t("calendar.classTitle") : t("calendar.title");
 
   const subTitle = hasRouteClass
-    ? "Keep class events tidy, visible, and easy to update."
+    ? t("calendar.routeHelp")
     : filterMode === "all"
-      ? "See everything at a glance across classes and school-wide events."
+      ? t("calendar.allHelp")
       : filterMode === "global"
-        ? "Showing school-wide events only."
+        ? t("calendar.globalHelp")
         : `Showing events for ${classLabel(filterClassId) || `Class ${filterClassId}`}.`;
 
   return (
@@ -466,7 +465,7 @@ export default function CalendarPage() {
                   {totalVisibleMonthEvents} event{totalVisibleMonthEvents === 1 ? "" : "s"} this month
                 </div>
                 <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-sm font-medium text-sky-800">
-                  AI-assisted planning
+                  {t("calendar.aiPlanning")}
                 </div>
                 {hasRouteClass && (
                   <div className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800">
@@ -494,14 +493,14 @@ export default function CalendarPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
-                    View
+                    {t("calendar.view")}
                   </div>
                   <div className="mt-1 text-lg font-black tracking-tight text-slate-900">
                     {t("calendar.filterEvents")}
                   </div>
                 </div>
                 <div className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                  Quick switch
+                  {t("calendar.quickSwitch")}
                 </div>
               </div>
 
@@ -539,7 +538,7 @@ export default function CalendarPage() {
                   type="button"
                   onClick={() => setFilterMode("class")}
                 >
-                  Class
+                  {t("calendar.class")}
                 </button>
               </div>
 
@@ -581,10 +580,10 @@ export default function CalendarPage() {
                     {t("calendar.classTitle")}
                   </div>
                   <div className="mt-3 text-lg font-black tracking-tight text-slate-900">
-                    Focused class view
+                    {t("calendar.focusedView")}
                   </div>
                   <div className="mt-1 text-sm text-slate-600">
-                    Events here are linked directly to this class.
+                    {t("calendar.focusedViewHelp")}
                   </div>
 
                   <button
@@ -612,10 +611,10 @@ export default function CalendarPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="inline-flex items-center rounded-full border border-emerald-200 bg-white/80 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800">
-                  AI Calendar Assistant
+                  {t("calendar.aiAssistant")}
                 </div>
                 <div className="mt-3 text-xl font-black tracking-tight text-slate-950">
-                  Turn a quick thought into a proper event
+                  {t("calendar.aiAssistantHelp")}
                 </div>
                 <div className="mt-1 text-sm text-slate-600">
                   Try something like <span className="font-semibold">“6th year maths test next Friday at 9:30”</span>
@@ -649,7 +648,7 @@ export default function CalendarPage() {
                 <AiAssistanceNotice variant="output" className="mb-3" />
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-black text-slate-900">AI suggestion ready</div>
+                    <div className="text-sm font-black text-slate-900">{t("calendar.aiSuggestionReady")}</div>
                     <div className="mt-1 text-sm text-slate-600">
                       We’ve opened it in the event modal so you can review and adjust it.
                     </div>
@@ -659,7 +658,7 @@ export default function CalendarPage() {
                     onClick={() => setShowModal(true)}
                     className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-100"
                   >
-                    Reopen review
+                    {t("calendar.reopenReview")}
                   </button>
                 </div>
               </div>
@@ -692,7 +691,7 @@ export default function CalendarPage() {
                 {monthLabel}
               </div>
               <div className="mt-1 text-sm text-slate-500">
-                Tap a day to add something quickly.
+                {t("calendar.tapDay")}
               </div>
             </div>
 
@@ -812,7 +811,7 @@ export default function CalendarPage() {
                               {e.title}
                             </div>
                             <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${meta.chip}`}>
-                              {formatEventTypeLabel(e.event_type)}
+                              {eventTypeLabel(e.event_type)}
                             </span>
                           </div>
                           <div className="mt-1 text-[11px] text-slate-600">
@@ -850,7 +849,7 @@ export default function CalendarPage() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="text-xl font-black tracking-tight text-slate-950">
-                      {editingEventId ? t("calendar.editEvent") : aiPreview ? "Review AI event" : t("calendar.createEvent")}
+                      {editingEventId ? t("calendar.editEvent") : aiPreview ? t("calendar.reviewAiEvent") : t("calendar.createEvent")}
                     </div>
 
                     {!editingEventId && aiPreview && (
@@ -886,7 +885,7 @@ export default function CalendarPage() {
                             <span
                               className={`rounded-full border px-3 py-1 text-xs font-semibold ${eventTypeMeta(draftType).chip}`}
                             >
-                              {formatEventTypeLabel(draftType)}
+                              {eventTypeLabel(draftType)}
                             </span>
 
                             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
@@ -989,10 +988,10 @@ export default function CalendarPage() {
                           value={draftType}
                           onChange={(e) => setDraftType(e.target.value)}
                         >
-                          <option value="general">General</option>
-                          <option value="test">Test</option>
-                          <option value="homework">Homework</option>
-                          <option value="trip">Trip</option>
+                          <option value="general">{t("calendar.general")}</option>
+                          <option value="test">{t("calendar.test")}</option>
+                          <option value="homework">{t("calendar.homework")}</option>
+                          <option value="trip">{t("calendar.trip")}</option>
                         </select>
                       </div>
                     </div>
@@ -1041,7 +1040,7 @@ export default function CalendarPage() {
                 <div className="space-y-4">
                   <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
-                      Visibility
+                      {t("calendar.visibility")}
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -1055,7 +1054,7 @@ export default function CalendarPage() {
                             : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                         } ${hasRouteClass ? "cursor-not-allowed opacity-50" : ""}`}
                       >
-                        Global
+                        {t("calendar.global")}
                       </button>
                       <button
                         type="button"

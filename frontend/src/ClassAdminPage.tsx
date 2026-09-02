@@ -94,7 +94,7 @@ const REPORT_INDICATORS = [
 ];
 
 export default function ClassAdminPage() {
-    const { t } = useUiLanguage();
+    const { t, language } = useUiLanguage();
     const { id } = useParams<{ id: string }>();
     const classId = useMemo(() => Number(id), [id]);
     const validClassId = Number.isFinite(classId) && classId > 0;
@@ -794,7 +794,7 @@ export default function ClassAdminPage() {
             if (point.date) {
                 const date = new Date(`${point.date}T00:00:00`);
                 if (!Number.isNaN(date.getTime())) {
-                    return date.toLocaleDateString("en-IE", { day: "numeric", month: "short" });
+                    return date.toLocaleDateString(language === "ga" ? "ga-IE" : "en-IE", { day: "numeric", month: "short" });
                 }
             }
             return `Assessment ${index + 1}`;

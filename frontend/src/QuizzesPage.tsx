@@ -109,9 +109,9 @@ function shuffle<T>(arr: T[]) {
   return a;
 }
 
-function formatDate(ts: number) {
+function formatDate(ts: number, locale: string) {
   try {
-    return new Date(ts).toLocaleDateString(undefined, {
+    return new Date(ts).toLocaleDateString(locale, {
       day: "numeric",
       month: "short",
       year: "numeric",
@@ -256,7 +256,8 @@ function CheckCircleIcon({ className = "h-5 w-5" }: { className?: string }) {
 
 /** ---------------- Page ---------------- */
 export default function QuizzesPage() {
-  const { t } = useUiLanguage();
+  const { t, language } = useUiLanguage();
+  const locale = language === "ga" ? "ga-IE" : "en-IE";
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const classId = Number(id);
@@ -816,7 +817,7 @@ export default function QuizzesPage() {
             <span className="grid h-9 w-9 place-items-center rounded-full bg-sky-100 text-sky-700">
               <ArrowLeftIcon />
             </span>
-            Back to Class
+            {t("quizzes.backToClass")}
           </button>
         </div>
 
@@ -850,45 +851,42 @@ export default function QuizzesPage() {
                         {t("quizzes.title")}
                       </h1>
                       <p className="mt-3 max-w-3xl text-lg leading-8 text-slate-600">
-                        Build a quiz in minutes from a class PDF, tidy it up if needed, then deliver it through{" "}
-                        <span className="font-bold text-slate-900">Live Quiz</span> with clear teacher control.
+                        {t("quizzes.heroHelp")}
                       </p>
                     </div>
                   </div>
 
                   <div className="mt-6 grid gap-3 md:grid-cols-3">
                     <div className="rounded-[24px] border-2 border-amber-200 bg-amber-50 p-4">
-                      <div className={labelCls}>Step 1</div>
+                      <div className={labelCls}>{t("quizzes.step")} 1</div>
                       <div className="mt-2 flex items-center gap-2 text-base font-extrabold text-slate-900">
                         <FolderIcon className="h-5 w-5 text-amber-700" />
-                        Pick a class PDF
+                        {t("quizzes.pickPdf")}
                       </div>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Use a PDF that already exists in <span className="font-semibold">Notes</span> or{" "}
-                        <span className="font-semibold">Exam Papers</span>.
+                        {t("quizzes.pickPdfHelp")}
                       </p>
                     </div>
 
                     <div className="rounded-[24px] border-2 border-violet-200 bg-violet-50 p-4">
-                      <div className={labelCls}>Step 2</div>
+                      <div className={labelCls}>{t("quizzes.step")} 2</div>
                       <div className="mt-2 flex items-center gap-2 text-base font-extrabold text-slate-900">
                         <SparkIcon className="h-5 w-5 text-violet-700" />
-                        Generate with AI
+                        {t("quizzes.generateWithAi")}
                       </div>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Choose how many questions you want, then let Elume create a quiz automatically.
+                        {t("quizzes.generateHelp")}
                       </p>
                     </div>
 
                     <div className="rounded-[24px] border-2 border-cyan-200 bg-cyan-50 p-4">
-                      <div className={labelCls}>Step 3</div>
+                      <div className={labelCls}>{t("quizzes.step")} 3</div>
                       <div className="mt-2 flex items-center gap-2 text-base font-extrabold text-slate-900">
                         <RocketIcon className="h-5 w-5 text-cyan-700" />
-                        Deliver it live
+                        {t("quizzes.deliverLive")}
                       </div>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Once a quiz is ready, run it from the class{" "}
-                        <span className="font-semibold">Live Quiz</span> page.
+                        {t("quizzes.deliverHelp")}
                       </p>
                     </div>
                   </div>
@@ -920,7 +918,7 @@ export default function QuizzesPage() {
 
                 <div className="grid gap-4">
                   <div className="rounded-[28px] border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-emerald-50 p-5">
-                    <div className={labelCls}>This class</div>
+                    <div className={labelCls}>{t("quizzes.thisClass")}</div>
                     <div className="mt-4 grid grid-cols-2 gap-3">
                       <div className="rounded-[22px] border-2 border-slate-200 bg-white p-4">
                         <div className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
@@ -947,11 +945,10 @@ export default function QuizzesPage() {
                         </div>
                         <div>
                           <div className="text-sm font-extrabold text-slate-900">
-                            Fastest way to get started
+                            {t("quizzes.fastestStart")}
                           </div>
                           <p className="mt-1 text-sm leading-6 text-slate-600">
-                            Upload or reuse a class PDF, generate a quiz here, then launch the session from{" "}
-                            <span className="font-semibold">Live Quiz</span>.
+                            {t("quizzes.fastestStartHelp")}
                           </p>
                         </div>
                       </div>
@@ -959,19 +956,19 @@ export default function QuizzesPage() {
                   </div>
 
                   <div className="rounded-[28px] border-2 border-slate-200 bg-slate-50 p-5">
-                    <div className={labelCls}>Teacher note</div>
+                    <div className={labelCls}>{t("quizzes.teacherNote")}</div>
                     <div className="mt-2 text-lg font-extrabold text-slate-950">
-                      AI generation uses PDFs already stored for this class.
+                      {t("quizzes.aiPdfNote")}
                     </div>
                     <p className="mt-2 text-sm leading-6 text-slate-600">
-                      That keeps quiz creation tidy and predictable. No extra upload step is needed inside the quiz tool.
+                      {t("quizzes.aiPdfHelp")}
                     </p>
                     <div className="mt-4 flex flex-wrap gap-2">
                       <button className={pill} type="button" onClick={() => navigate(`/class/${classId}/notes`)}>
-                        Open Notes
+                        {t("quizzes.openNotes")}
                       </button>
                       <button className={pill} type="button" onClick={() => navigate(`/class/${classId}/exam-papers`)}>
-                        Open Exam Papers
+                        {t("quizzes.openExamPapers")}
                       </button>
                     </div>
                   </div>
@@ -986,14 +983,13 @@ export default function QuizzesPage() {
                   <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
                     <div>
                       <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.24em] text-slate-600">
-                        Ready to create
+                        {t("quizzes.readyToCreate")}
                       </div>
                       <h2 className="mt-4 text-3xl font-extrabold tracking-tight text-slate-950">
                         {t("quizzes.empty")}
                       </h2>
                       <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
-                        Start with <span className="font-semibold text-slate-900">Generate from PDF</span> for the quickest route.
-                        Elume will use a PDF already stored in this class and build a quiz you can refine before delivery.
+                        {t("quizzes.emptyHelp")}
                       </p>
 
                       <div className="mt-6 flex flex-wrap gap-3">
@@ -1011,22 +1007,22 @@ export default function QuizzesPage() {
 
                     <div className="grid gap-3">
                       <div className="rounded-[24px] border-2 border-slate-200 bg-white p-4">
-                        <div className={labelCls}>Good sources</div>
+                        <div className={labelCls}>{t("quizzes.goodSources")}</div>
                         <div className="mt-2 text-base font-extrabold text-slate-900">
-                          Notes, revision sheets, worked examples, exam papers
+                          {t("quizzes.goodSourcesList")}
                         </div>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          The clearer the PDF, the better the question generation.
+                          {t("quizzes.goodSourcesHelp")}
                         </p>
                       </div>
 
                       <div className="rounded-[24px] border-2 border-slate-200 bg-white p-4">
-                        <div className={labelCls}>After generation</div>
+                        <div className={labelCls}>{t("quizzes.afterGeneration")}</div>
                         <div className="mt-2 text-base font-extrabold text-slate-900">
-                          Edit if needed, then move to Live Quiz
+                          {t("quizzes.afterGenerationTitle")}
                         </div>
                         <p className="mt-2 text-sm leading-6 text-slate-600">
-                          This page is for building the quiz. Live delivery happens through the class Live Quiz tool.
+                          {t("quizzes.afterGenerationHelp")}
                         </p>
                       </div>
                     </div>
@@ -1041,7 +1037,7 @@ export default function QuizzesPage() {
                           {t("quizzes.library")}
                         </div>
                         <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-slate-950">
-                          Built quizzes for this class
+                          {t("quizzes.builtForClass")}
                         </h2>
                         <p className="mt-2 max-w-3xl text-base leading-7 text-slate-600">
                           Create from PDF, tidy up the questions, then launch from{" "}
@@ -1074,7 +1070,7 @@ export default function QuizzesPage() {
                     <section key={category} className={`${card} p-5 md:p-6`}>
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <div className={labelCls}>Category</div>
+                          <div className={labelCls}>{t("quizzes.categoryLabel")}</div>
                           <h3 className="mt-2 text-2xl font-extrabold tracking-tight text-slate-950">
                             {category}
                           </h3>
@@ -1098,7 +1094,7 @@ export default function QuizzesPage() {
                                   </p>
                                 ) : (
                                   <p className="mt-2 text-sm leading-6 text-slate-500">
-                                    No description yet.
+                                    {t("quizzes.noDescription")}
                                   </p>
                                 )}
                               </div>
@@ -1118,14 +1114,14 @@ export default function QuizzesPage() {
                                 className={`rounded-full border-2 px-4 py-2 text-sm font-semibold ${q.is_starred ? "border-amber-300 bg-amber-50 text-amber-900" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
                                 onClick={() => toggleQuizStar(q.id, !q.is_starred)}
                               >
-                                {q.is_starred ? "In Main Quiz Collection" : "Save to Main Quiz Collection"}
+                                {q.is_starred ? t("quizzes.inMainCollection") : t("quizzes.saveToMainCollection")}
                               </button>
                             </div>
 
                             <div className="mt-4 grid gap-3 sm:grid-cols-3">
                               <div className="rounded-[20px] border-2 border-slate-200 bg-white p-3">
                                 <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                                  Questions
+                                  {t("quizzes.questions")}
                                 </div>
                                 <div className="mt-2 text-2xl font-extrabold text-slate-950">
                                   {q.questions.length}
@@ -1134,19 +1130,19 @@ export default function QuizzesPage() {
 
                               <div className="rounded-[20px] border-2 border-slate-200 bg-white p-3">
                                 <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                                  Created
+                                  {t("quizzes.created")}
                                 </div>
                                 <div className="mt-2 text-base font-bold text-slate-900">
-                                  {formatDate(q.createdAt)}
+                                  {formatDate(q.createdAt, locale)}
                                 </div>
                               </div>
 
                               <div className="rounded-[20px] border-2 border-slate-200 bg-emerald-50 p-3">
                                 <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-700">
-                                  Next step
+                                  {t("quizzes.nextStep")}
                                 </div>
                                 <div className="mt-2 text-base font-bold text-slate-900">
-                                  Deliver via Live Quiz
+                                  {t("quizzes.deliverViaLiveQuiz")}
                                 </div>
                               </div>
                             </div>
@@ -1155,12 +1151,12 @@ export default function QuizzesPage() {
                               <button className={btnDark} type="button" onClick={() => navigate(`/class/${classId}/live-quiz`)}>
                                 <span className="inline-flex items-center gap-2">
                                   <PlayIcon />
-                                  Deliver live
+                                  {t("quizzes.deliverLiveAction")}
                                 </span>
                               </button>
 
                               <button className={pill} type="button" onClick={() => setEditingQuizId(q.id)}>
-                                Edit questions
+                                {t("quizzes.editQuestions")}
                               </button>
                               <button className={pill} type="button" onClick={() => openEditQuiz(q.id)}>
                                 Edit details
@@ -1191,7 +1187,7 @@ export default function QuizzesPage() {
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0">
                       <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.24em] text-violet-800">
-                        Quiz editor
+                        {t("quizzes.editor")}
                       </div>
                       <div className="mt-3 text-2xl font-extrabold tracking-tight text-slate-950">
                         Editing: {editingQuiz.title}
@@ -1597,10 +1593,10 @@ export default function QuizzesPage() {
               <div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.24em] text-violet-800">
                   <SparkIcon className="h-4 w-4" />
-                  Generate from PDF
+                  {t("quizzes.generateFromPdf")}
                 </div>
                 <div className="mt-3 text-2xl font-extrabold tracking-tight text-slate-950">
-                  Build a quiz from an existing class PDF
+                  {t("quizzes.buildFromPdf")}
                 </div>
                 <div className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
                   Choose a PDF from <span className="font-semibold">Notes</span> or{" "}
@@ -1620,7 +1616,7 @@ export default function QuizzesPage() {
                   setGenLoading(false);
                 }}
               >
-                Close
+                {t("common.close")}
               </button>
             </div>
 
@@ -1639,7 +1635,7 @@ export default function QuizzesPage() {
                       fetchNotes("notes");
                     }}
                   >
-                    Notes
+                    {t("notes.title")}
                   </button>
 
                   <button
@@ -1654,11 +1650,11 @@ export default function QuizzesPage() {
                       fetchNotes("exam");
                     }}
                   >
-                    Exam Papers
+                    {t("class.examPapers")}
                   </button>
 
                   <div className="ml-auto flex items-center gap-2">
-                    <div className="text-sm font-semibold text-slate-700">Questions</div>
+                    <div className="text-sm font-semibold text-slate-700">{t("quizzes.questions")}</div>
                     <select
                       className="rounded-[16px] border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                       value={genNum}
@@ -1675,7 +1671,7 @@ export default function QuizzesPage() {
 
                 <div className="mt-4 flex min-h-0 flex-1 flex-col rounded-[22px] border-2 border-slate-200 bg-white p-3">
                   <div className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                    Select PDF {genLoading ? "• loading..." : ""}
+                    {t("quizzes.pickPdf")} {genLoading ? `• ${t("common.loading")}` : ""}
                   </div>
 
                   {hasNonPdfChoices && (
@@ -1686,7 +1682,7 @@ export default function QuizzesPage() {
 
                   <div className="mt-3 min-h-0 flex-1 space-y-4 overflow-auto pr-1">
                     {genLoading ? (
-                      <div className="text-sm text-slate-600">Loading PDFsâ€¦</div>
+                      <div className="text-sm text-slate-600">{t("common.loading")}</div>
                     ) : selectablePdfCount === 0 ? (
                       <div className="rounded-[18px] border-2 border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                         No PDFs found in this section yet.
@@ -1736,7 +1732,7 @@ export default function QuizzesPage() {
                   <div>
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                       <label className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                        Quiz title
+                        {t("quizzes.quizTitle")}
                       </label>
                       <div className="text-[11px] text-slate-500">
                         {selectedNote
@@ -1754,7 +1750,7 @@ export default function QuizzesPage() {
 
                   <div className="flex min-h-0 flex-col">
                     <div className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                      Preview
+                      {t("quizzes.preview")}
                     </div>
                     {selectedNote && isPdfFilename(selectedNote.filename) ? (
                       <div className="mt-3 rounded-[22px] border-2 border-slate-200 overflow-hidden">
@@ -1766,7 +1762,7 @@ export default function QuizzesPage() {
                           />
                         ) : (
                           <div className="grid h-[400px] place-items-center bg-slate-50 text-sm text-slate-600 lg:h-[440px]">
-                            Loading preview...
+                            {t("common.loading")}
                           </div>
                         )}
                       </div>
@@ -1794,7 +1790,7 @@ export default function QuizzesPage() {
                       onClick={runGenerate}
                       disabled={genBusy || genLoading || !genNoteId}
                     >
-                      {genBusy ? "Generating..." : "Generate quiz"}
+                      {genBusy ? t("quizzes.generating") : t("quizzes.generateFromPdf")}
                     </button>
                   </div>
 

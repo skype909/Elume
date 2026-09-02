@@ -1678,7 +1678,7 @@ function Dashboard({
             <div className="max-h-[78vh] overflow-auto px-4 py-4">
               {ttLoading && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                  Loading timetable…
+                  {t("class.timetableLoading")}
                 </div>
               )}
 
@@ -1690,7 +1690,7 @@ function Dashboard({
 
               {!ttLoading && !ttError && !ttState && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                  No timetable found yet. Set it up in Admin first.
+                  {t("class.noTimetable")}
                 </div>
               )}
 
@@ -1753,7 +1753,7 @@ function Dashboard({
             <div className="max-h-[82vh] overflow-auto px-5 py-4">
               {ttLoading && (
                 <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
-                  Loading timetable…
+                  {t("class.timetableLoading")}
                 </div>
               )}
 
@@ -1765,7 +1765,7 @@ function Dashboard({
 
               {!ttLoading && !ttError && !ttState && (
                 <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
-                  No timetable found yet. Set it up in Admin first.
+                  {t("class.noTimetable")}
                 </div>
               )}
 
@@ -2000,10 +2000,9 @@ function Dashboard({
             <div className="p-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xl font-extrabold tracking-tight">Manage class</div>
+                  <div className="text-xl font-extrabold tracking-tight">{t("dashboard.manageClass")}</div>
                   <div className="mt-1 text-sm text-slate-600">
-                    You can archive this class to remove it from your active dashboard, or permanently delete it.
-                    You can keep up to 20 archived classes.
+                    {t("dashboard.manageClassHelp")}
                   </div>
                 </div>
                 <button
@@ -2016,7 +2015,7 @@ function Dashboard({
                     setManageError(null);
                   }}
                 >
-                  Close
+                  {t("common.close")}
                 </button>
               </div>
 
@@ -2045,10 +2044,10 @@ function Dashboard({
                     setManageError(null);
                   }}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
                 <button className={btnPrimary} type="button" onClick={archiveSelectedClass} disabled={manageBusy}>
-                  {manageBusy ? "Working..." : "Archive Class"}
+                  {manageBusy ? t("common.loading") : t("dashboard.archiveClass")}
                 </button>
                 <button
                   className="rounded-2xl border-2 border-rose-600 bg-white px-6 py-3 text-base font-semibold text-rose-700 shadow-sm hover:bg-rose-50 active:translate-y-[1px] disabled:opacity-50"
@@ -2056,7 +2055,7 @@ function Dashboard({
                   onClick={deleteSelectedClassPermanently}
                   disabled={manageBusy}
                 >
-                  Delete Permanently
+                  {t("dashboard.deletePermanently")}
                 </button>
               </div>
             </div>

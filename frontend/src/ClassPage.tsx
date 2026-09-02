@@ -375,7 +375,7 @@ function PostComposer({
 }
 
 export default function ClassPage() {
-  const { t } = useUiLanguage();
+  const { t, language } = useUiLanguage();
   const { id } = useParams<{ id: string }>();
   const classId = useMemo(() => Number(id), [id]);
   const validClassId = Number.isFinite(classId) && classId > 0;
@@ -963,10 +963,11 @@ export default function ClassPage() {
     return () => window.clearInterval(t);
   }, []);
 
-  const dayName = now.toLocaleDateString("en-IE", { weekday: "long" });
+  const locale = language === "ga" ? "ga-IE" : "en-IE";
+  const dayName = now.toLocaleDateString(locale, { weekday: "long" });
   const dayNumber = now.getDate();
-  const monthName = now.toLocaleDateString("en-IE", { month: "long" });
-  const timeNow = now.toLocaleTimeString("en-IE", {
+  const monthName = now.toLocaleDateString(locale, { month: "long" });
+  const timeNow = now.toLocaleTimeString(locale, {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
@@ -1258,7 +1259,7 @@ export default function ClassPage() {
             </div>
 
             <div className="mt-4 text-center text-[11px] leading-5 text-slate-500">
-              Students use this with the class PIN in Student Hub.
+              {t("class.studentHubHelp")}
             </div>
           </div>
         </div>
@@ -1919,7 +1920,7 @@ export default function ClassPage() {
                         }}
                         className="rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 flex items-center gap-2"
                         disabled={clampInt(timerMinutes, 0, 180) * 60 + clampInt(timerSeconds, 0, 59) <= 0}
-                        title="Start timer"
+                        title={t("tools.startTimer")}
                       >
                         <Play size={16} />
                         {t("tools.start")}
