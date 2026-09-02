@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "./api";
 import AiAssistanceNotice from "./Components/AiAssistanceNotice";
+import InlineNotice from "./Components/InlineNotice";
+import { userFacingError } from "./userFacingError";
 
 const API_BASE = "/api";
 
@@ -276,8 +278,8 @@ export default function ClassAdminPage() {
 
             setStudents(Array.isArray(sdata) ? sdata : []);
             setTests(Array.isArray(tdata) ? tdata : []);
-        } catch (e: any) {
-            setError(e?.message || "Failed to load admin data");
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t load this class just yet. Give it another try."));
             setStudents([]);
             setTests([]);
         } finally {
@@ -305,8 +307,8 @@ export default function ClassAdminPage() {
             setStudents((prev) => [...prev, created]);
             setFirstName("");
             setNotes("");
-        } catch (e: any) {
-            setError(e?.message || "Failed to add student");
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t add that student just now. Please try again."));
         }
     }
 
@@ -330,8 +332,8 @@ export default function ClassAdminPage() {
                 setStudents((prev) => [...prev, ...created]);
             }
             setBulkNames("");
-        } catch (e: any) {
-            setError(e?.message || "Failed to add students");
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t add those students just now. Please try again."));
         }
     }
 
@@ -343,8 +345,8 @@ export default function ClassAdminPage() {
                 body: JSON.stringify({ active }),
             });
             setStudents((prev) => prev.map((s) => (s.id === studentId ? updated : s)));
-        } catch (e: any) {
-            setError(e?.message || "Failed to update student");
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t update that student just now. Please try again."));
         }
     }
 
@@ -380,8 +382,8 @@ export default function ClassAdminPage() {
             if (tab === "insights" || tab === "reports") {
                 void loadInsights();
             }
-        } catch (e: any) {
-            setError(e?.message || "Failed to delete student");
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t remove that student just now. Please try again."));
         } finally {
             setDeleteBusy(false);
         }
@@ -407,8 +409,8 @@ export default function ClassAdminPage() {
             setNewTestTitle("");
             setNewTestDate("");
             setShowCreateTest(false);
-        } catch (e: any) {
-            setError(e?.message || "Failed to create test");
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t create that assessment just now. Please try again."));
         }
     }
 
@@ -447,11 +449,8 @@ export default function ClassAdminPage() {
             setEditingTest(null);
             setEditTestTitle("");
             setEditTestDate("");
-        } catch (e: any) {
-            setError(
-                e?.message ||
-                "Failed to update test. You may need to add PUT /assessments/{id} on the backend."
-            );
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t update that assessment just now. Please try again."));
         } finally {
             setSavingEditTest(false);
         }
@@ -481,11 +480,8 @@ export default function ClassAdminPage() {
             if (tab === "insights") {
                 loadInsights();
             }
-        } catch (e: any) {
-            setError(
-                e?.message ||
-                "Failed to delete test. You may need to add DELETE /assessments/{id} on the backend."
-            );
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t delete that assessment just now. Please try again."));
         }
     }
 
@@ -497,8 +493,8 @@ export default function ClassAdminPage() {
             setSelectedAssessment(data.assessment);
             setResultRows(Array.isArray(data.results) ? data.results : []);
             setShowResults(true);
-        } catch (e: any) {
-            setError(e?.message || "Failed to load results");
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t load those results just yet. Give it another try."));
         }
     }
 
@@ -513,8 +509,8 @@ export default function ClassAdminPage() {
                 `${API_BASE}/classes/${classId}/insights`
             )) as InsightsPayload;
             setInsights(data);
-        } catch (e: any) {
-            setInsightsError(e?.message || "Failed to load insights");
+        } catch (error: unknown) {
+            setInsightsError(userFacingError(error, "We couldn’t load the class insights just yet. Give it another try."));
             setInsights(null);
         } finally {
             setInsightsLoading(false);
@@ -601,8 +597,8 @@ export default function ClassAdminPage() {
             if (tab === "insights") {
                 loadInsights();
             }
-        } catch (e: any) {
-            setError(e?.message || "Failed to save results");
+        } catch (error: unknown) {
+            setError(userFacingError(error, "We couldn’t save those results just now. Please try again."));
         } finally {
             setSavingResults(false);
         }
@@ -685,8 +681,8 @@ export default function ClassAdminPage() {
             void apiFetch("/ai/usage/report_comment")
                 .then((usage: { message?: string | null }) => setReportQuotaNotice(usage.message || null))
                 .catch(() => undefined);
-        } catch (e: any) {
-            setReportError(e?.message || "Failed to generate report comment");
+        } catch (error: unknown) {
+            setReportError(userFacingError(error, "We couldn’t create that report comment just now. Please try again."));
         } finally {
             setGeneratingReportFor(null);
         }
@@ -883,9 +879,12 @@ export default function ClassAdminPage() {
                     </div>
 
                     {error && (
-                        <div className="mt-4 rounded-2xl border-2 border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                            {error}
-                        </div>
+                        <InlineNotice
+                            variant="error"
+                            title="That didn’t quite work"
+                            message={error}
+                            className="mt-4"
+                        />
                     )}
 
                     <div className="mt-4">
@@ -1191,9 +1190,14 @@ export default function ClassAdminPage() {
                         </div>
 
                         {insightsError && (
-                            <div className="mt-4 rounded-2xl border-2 border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-                                {insightsError}
-                            </div>
+                            <InlineNotice
+                                variant="error"
+                                title="That didn’t quite work"
+                                message={insightsError}
+                                actionLabel="Try again"
+                                onAction={() => void loadInsights()}
+                                className="mt-4"
+                            />
                         )}
 
                         <div className="mt-5 grid gap-4 md:grid-cols-3">
@@ -1357,9 +1361,12 @@ export default function ClassAdminPage() {
                         <AiAssistanceNotice variant="input" className="mt-4" />
 
                         {reportError && (
-                            <div className="mt-4 rounded-2xl border-2 border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-                                {reportError}
-                            </div>
+                            <InlineNotice
+                                variant="error"
+                                title="That didn’t quite work"
+                                message={reportError}
+                                className="mt-4"
+                            />
                         )}
 
                         {reportQuotaNotice && (

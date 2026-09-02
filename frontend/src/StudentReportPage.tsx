@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import ELogo2 from "./assets/ELogo2.png";
 import { apiFetch } from "./api";
+import InlineNotice from "./Components/InlineNotice";
+import { userFacingError } from "./userFacingError";
 
 const API_BASE = "/api";
 
@@ -32,6 +34,7 @@ export default function StudentReportPage() {
     const [data, setData] = useState<StudentReportData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [retryKey, setRetryKey] = useState(0);
 
     useEffect(() => {
         let cancelled = false;
@@ -43,8 +46,10 @@ export default function StudentReportPage() {
 
                 const json = await apiFetch(`${API_BASE}/classes/${id}/students/${studentId}/report-data`);
                 if (!cancelled) setData(json);
-            } catch (e: any) {
-                if (!cancelled) setError(e?.message || "Failed to load student report");
+            } catch (error: unknown) {
+                if (!cancelled) {
+                    setError(userFacingError(error, "We couldn’t load this student report just yet. Give it another try."));
+                }
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -54,14 +59,26 @@ export default function StudentReportPage() {
         return () => {
             cancelled = true;
         };
-    }, [id, studentId]);
+    }, [id, studentId, retryKey]);
 
     if (loading) {
         return <div className="min-h-screen bg-white p-8 text-slate-700">Loading report…</div>;
     }
 
     if (error || !data) {
-        return <div className="min-h-screen bg-white p-8 text-rose-700">{error || "Report unavailable"}</div>;
+        return (
+            <div className="min-h-screen bg-emerald-50 p-6 text-slate-900 md:p-8">
+                <div className="mx-auto max-w-3xl pt-12">
+                    <InlineNotice
+                        variant="error"
+                        title="That didn’t quite work"
+                        message={error || "We couldn’t load this student report just yet. Give it another try."}
+                        actionLabel="Try again"
+                        onAction={() => setRetryKey((value) => value + 1)}
+                    />
+                </div>
+            </div>
+        );
     }
 
     return (
