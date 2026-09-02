@@ -12,6 +12,7 @@ import ELogo2 from "./assets/ELogo2.png";
 import { Settings, Timer, Bell, Play, Pause, RotateCcw } from "lucide-react";
 import { apiFetch, openProtectedFileInNewTab } from "./api";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
+import UiText from "./Components/UiText";
 
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
@@ -1220,8 +1221,8 @@ export default function ClassPage() {
         </nav>
 
         <div className="mt-4 rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
-          <div className="text-sm font-extrabold tracking-tight">{t("class.studentAccess")}</div>
-          <div className="mt-1 text-xs text-slate-500">{t("class.studentAccessHelp")}</div>
+          <div className="text-sm font-extrabold tracking-tight"><UiText translationKey="class.studentAccess" /></div>
+          <div className="mt-1 text-xs text-slate-500"><UiText translationKey="class.studentAccessHelp" /></div>
 
           <div className="mt-3 flex flex-col items-center">
             <div className="rounded-xl border border-slate-200 bg-white p-2">
@@ -1284,16 +1285,16 @@ export default function ClassPage() {
 
             <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-700">
               <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2">
-                <span className="font-extrabold">{t("class.teacher")}</span> {teacherName}
+                <span className="font-extrabold"><UiText translationKey="class.teacher" /></span> {teacherName}
               </div>
 
               <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2">
-                <span className="font-extrabold">{t("class.group")}</span> {groupLabel}
+                <span className="font-extrabold"><UiText translationKey="class.group" /></span> {groupLabel}
               </div>
 
               <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2 flex items-center gap-2">
                 <span>
-                  <span className="font-extrabold">{t("class.room")}</span> {roomLabel}
+                  <span className="font-extrabold"><UiText translationKey="class.room" /></span> {roomLabel}
                 </span>
               </div>
             </div>
@@ -1331,10 +1332,10 @@ export default function ClassPage() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800">
-            {t("class.liveTeachingTools")}
+            <UiText translationKey="class.liveTeachingTools" />
           </div>
           <div className="mt-2 text-sm text-slate-600">
-            {t("class.liveTeachingHelp")}
+            <UiText translationKey="class.liveTeachingHelp" />
           </div>
         </div>
       </div>
@@ -1391,7 +1392,7 @@ export default function ClassPage() {
     <aside className="col-span-12 md:col-span-3 lg:col-span-3">
       <div className={`${card} ${cardPad}`}>
         <div className="flex items-center justify-between">
-          <div className="text-lg font-extrabold tracking-tight">{t("class.resources")}</div>
+          <div className="text-lg font-extrabold tracking-tight"><UiText translationKey="class.resources" /></div>
           <div className="grid h-10 w-10 place-items-center rounded-2xl border-2 border-slate-200 bg-slate-50">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
           </div>
@@ -1443,8 +1444,8 @@ export default function ClassPage() {
               🎯
             </span>
             <div>
-              <div className="text-lg font-extrabold tracking-tight">{t("class.quickTools")}</div>
-              <div className="text-xs text-slate-500">{t("class.quickToolsSubtitle")}</div>
+              <div className="text-lg font-extrabold tracking-tight"><UiText translationKey="class.quickTools" /></div>
+              <div className="text-xs text-slate-500"><UiText translationKey="class.quickToolsSubtitle" /></div>
             </div>
           </div>
 
@@ -1515,7 +1516,7 @@ export default function ClassPage() {
             <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
               <Icon name="spark" />
             </span>
-            <div className="text-lg font-extrabold tracking-tight">{t("class.externalResources")}</div>
+            <div className="text-lg font-extrabold tracking-tight"><UiText translationKey="class.externalResources" /></div>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">

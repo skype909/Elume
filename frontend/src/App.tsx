@@ -45,6 +45,7 @@ import SchoolBrand from "./Components/SchoolBrand";
 import InlineNotice from "./Components/InlineNotice";
 import { userFacingError } from "./userFacingError";
 import LanguageSwitch from "./Components/LanguageSwitch";
+import UiText from "./Components/UiText";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 
@@ -423,7 +424,7 @@ function Dashboard({
   installedApp: boolean;
   onInstallPromptConsumed: () => void;
 }) {
-  const { t } = useUiLanguage();
+  const { t, language } = useUiLanguage();
   const loadedMetaRef = useRef<{ meta: MetaStore; legacyColors: LegacyColorStore } | null>(null);
   if (!loadedMetaRef.current) {
     loadedMetaRef.current = loadMeta();
@@ -631,16 +632,20 @@ function Dashboard({
     return copy;
   }, [classes, meta]);
 
-  const headerDay = now.toLocaleDateString("en-IE", { weekday: "long" });
-  const headerDate = now.toLocaleDateString("en-IE", {
+  const headerLocale = language === "ga" ? "ga-IE" : "en-IE";
+  const headerDay = now.toLocaleDateString(headerLocale, { weekday: "long" });
+  const headerDate = now.toLocaleDateString(headerLocale, {
     day: "2-digit",
     month: "long",
     year: "numeric",
   });
-  const headerTime = now.toLocaleTimeString("en-IE", {
+  const headerTime = now.toLocaleTimeString(headerLocale, {
     hour: "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
   });
+  const plannerTeacherName = welcome ? welcome.replace(/^Welcome\s*/i, "") : "";
+  const plannerGreeting = plannerTeacherName ? `${t("planner.welcome")}, ${plannerTeacherName}` : t("planner.welcome");
 
   async function loadTimetableReference(preferredMode: "day" | "week") {
     setTtDay(currentSchoolDay());
@@ -1345,11 +1350,11 @@ function Dashboard({
                 </div>
 
                 <div className="truncate text-lg font-extrabold tracking-tight text-slate-800">
-                  {welcome ? welcome.replace(/^Welcome\s*/i, "Welcome, ") : "Welcome"}
+                  {plannerGreeting}
                 </div>
 
                 <div className="text-[11px] text-slate-600">
-                  Tasks • Week view
+                  {t("planner.tasksWeekView")}
                   <span className="ml-1 text-emerald-600 opacity-70 group-hover:opacity-100">→</span>
                 </div>
               </div>
@@ -1357,7 +1362,7 @@ function Dashboard({
           </div>
 
           <div className="mt-3 text-base font-semibold text-slate-700 md:hidden">
-            {t("dashboard.dragToArrange")}
+            <UiText translationKey="dashboard.dragToArrange" />
           </div>
 
           {/* Desktop layout */}
@@ -1372,7 +1377,7 @@ function Dashboard({
             </button>
 
             <div className="text-base font-semibold text-slate-700">
-              {t("dashboard.dragToArrange")}
+              <UiText translationKey="dashboard.dragToArrange" />
             </div>
 
             <div className="ml-auto flex min-w-0 items-center gap-4">
@@ -1415,11 +1420,11 @@ function Dashboard({
                   </div>
 
                   <div className="truncate text-lg font-extrabold tracking-tight text-slate-800">
-                    {welcome ? welcome.replace(/^Welcome\s*/i, "Welcome, ") : "Welcome"}
+                    {plannerGreeting}
                   </div>
 
                   <div className="text-[11px] text-slate-600">
-                    Tasks • Week view
+                    {t("planner.tasksWeekView")}
                     <span className="ml-1 text-emerald-600 opacity-70 group-hover:opacity-100">→</span>
                   </div>
                 </div>
@@ -1800,9 +1805,9 @@ function Dashboard({
             <div className="p-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xl font-extrabold tracking-tight">{t("createClass.title")}</div>
+                  <div className="text-xl font-extrabold tracking-tight"><UiText translationKey="createClass.title" /></div>
                   <div className="mt-1 text-sm text-slate-600">
-                    {t("createClass.help")}
+                    <UiText translationKey="createClass.help" />
                   </div>
                 </div>
                 <button className={pill} type="button" onClick={() => setCreateOpen(false)}>

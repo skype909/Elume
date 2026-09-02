@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { apiFetch } from "../api";
 import { translate, type UiLanguage } from "./translations";
 
 type UiLanguageContextValue = {
@@ -6,6 +7,8 @@ type UiLanguageContextValue = {
   setLanguage: (language: UiLanguage) => void;
   t: (key: string) => string;
   refreshAccount: () => void;
+  isGaeilgeReviewer: boolean;
+  saveGaeilgeOverride: (translationKey: string, value: string, baseValue: string) => Promise<void>;
 };
 
 const UiLanguageContext = createContext<UiLanguageContextValue | null>(null);
@@ -37,9 +40,16 @@ function storedLanguage(accountKey: string): UiLanguage {
 export function UiLanguageProvider({ children }: { children: React.ReactNode }) {
   const [accountKey, setAccountKey] = useState(currentAccountKey);
   const [preference, setPreference] = useState(() => ({ accountKey, language: storedLanguage(accountKey) }));
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [isGaeilgeReviewer, setIsGaeilgeReviewer] = useState(false);
+  const activeAccountKeyRef = useRef(accountKey);
 
   const refreshAccount = useCallback(() => {
-    setAccountKey(currentAccountKey());
+    const nextAccountKey = currentAccountKey();
+    activeAccountKeyRef.current = nextAccountKey;
+    setOverrides({});
+    setIsGaeilgeReviewer(false);
+    setAccountKey(nextAccountKey);
   }, []);
 
   useEffect(() => {
@@ -57,12 +67,42 @@ export function UiLanguageProvider({ children }: { children: React.ReactNode }) 
     }
   }, [accountKey, preference]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const requestAccountKey = accountKey;
+    setOverrides({});
+    setIsGaeilgeReviewer(false);
+
+    if (preference.language !== "ga" || accountKey === "anonymous") return () => { cancelled = true; };
+
+    void apiFetch("/ui-translations/ga")
+      .then((payload) => {
+        if (cancelled || activeAccountKeyRef.current !== requestAccountKey) return;
+        setOverrides(payload?.overrides && typeof payload.overrides === "object" ? payload.overrides : {});
+        setIsGaeilgeReviewer(payload?.is_gaeilge_reviewer === true);
+      })
+      .catch(() => {
+        // Shared corrections are optional enhancement data; static Gaeilge remains available.
+      });
+
+    return () => { cancelled = true; };
+  }, [accountKey, preference.language]);
+
   const value = useMemo<UiLanguageContextValue>(() => ({
     language: preference.language,
     setLanguage: (language) => setPreference({ accountKey, language }),
-    t: (key) => translate(preference.language, key),
+    t: (key) => preference.language === "ga" ? overrides[key] ?? translate("ga", key) : translate("en", key),
     refreshAccount,
-  }), [accountKey, preference.language, refreshAccount]);
+    isGaeilgeReviewer,
+    saveGaeilgeOverride: async (translationKey, value, baseValue) => {
+      const saved = await apiFetch(`/ui-translations/ga/${encodeURIComponent(translationKey)}`, {
+        method: "PUT",
+        body: { value, base_value: baseValue },
+      });
+      if (typeof saved?.value !== "string") throw new Error("Could not save the Gaeilge translation.");
+      setOverrides((current) => ({ ...current, [translationKey]: saved.value }));
+    },
+  }), [accountKey, isGaeilgeReviewer, overrides, preference.language, refreshAccount]);
 
   return <UiLanguageContext.Provider value={value}>{children}</UiLanguageContext.Provider>;
 }

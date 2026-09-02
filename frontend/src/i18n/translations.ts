@@ -38,6 +38,8 @@ const english: Record<string, string> = {
   "dashboard.archiveClass": "Archive class",
   "dashboard.install": "Install Elume",
   "dashboard.maybeLater": "Maybe later",
+  "planner.welcome": "Welcome",
+  "planner.tasksWeekView": "Tasks • Week view",
   "createClass.title": "Create Class",
   "createClass.help": "Choose stream/year/level and a tile colour.",
   "createClass.stream": "Stream",
@@ -124,6 +126,8 @@ const gaeilge: Partial<Record<keyof typeof english, string>> = {
   "dashboard.archiveClass": "Cuir rang sa chartlann",
   "dashboard.install": "Suiteáil Elume",
   "dashboard.maybeLater": "B’fhéidir níos déanaí",
+  "planner.welcome": "Fáilte",
+  "planner.tasksWeekView": "Tascanna • Amharc seachtaine",
   "createClass.title": "Cruthaigh Rang",
   "createClass.help": "Roghnaigh sraith, bliain, leibhéal agus dath tíle.",
   "createClass.stream": "Sraith",
@@ -179,4 +183,12 @@ export const translations: Record<UiLanguage, Partial<Record<string, string>>> =
 
 export function translate(language: UiLanguage, key: string): string {
   return translations[language][key] ?? translations.en[key] ?? key;
+}
+
+export function translationSource(key: string) {
+  const englishValue = english[key] ?? key;
+  return {
+    english: englishValue,
+    gaeilge: gaeilge[key] ?? englishValue,
+  };
 }

@@ -11,6 +11,14 @@ ROLE_PLATFORM_ADMIN = "platform_admin"
 
 _LEGACY_PLATFORM_ADMIN_EMAIL = "admin@elume.ie"
 
+# Private Gaeilge-review pilot. Add the three approved Irish-teacher reviewers here
+# once their exact account addresses have been confirmed.
+GAEILGE_REVIEWER_EMAILS = {
+    "admin@elume.ie",
+    "peter@elume.ie",
+    "pfitzgerald@preskilkenny.ie",
+}
+
 
 def _user_role(user: Any) -> str:
     return (getattr(user, "role", None) or ROLE_TEACHER).strip().lower()
@@ -24,6 +32,11 @@ def is_platform_admin(user: Any) -> bool:
 
 def is_school_admin(user: Any) -> bool:
     return _user_role(user) == ROLE_SCHOOL_ADMIN
+
+
+def is_gaeilge_reviewer(user: Any) -> bool:
+    email = (getattr(user, "email", None) or "").strip().lower()
+    return email in GAEILGE_REVIEWER_EMAILS
 
 
 def require_platform_admin(user: Any) -> None:
