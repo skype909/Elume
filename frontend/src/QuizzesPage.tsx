@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 import DepartmentShareModal from "./Components/DepartmentShareModal";
 import AiAssistanceNotice from "./Components/AiAssistanceNotice";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 /** ---------------- Types ---------------- */
 type MCQQuestion = {
@@ -255,6 +256,7 @@ function CheckCircleIcon({ className = "h-5 w-5" }: { className?: string }) {
 
 /** ---------------- Page ---------------- */
 export default function QuizzesPage() {
+  const { t } = useUiLanguage();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const classId = Number(id);
@@ -836,7 +838,7 @@ export default function QuizzesPage() {
                 <div>
                   <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.24em] text-emerald-800">
                     <SparkIcon className="h-4 w-4" />
-                    AI Quiz Builder
+                    {t("quizzes.aiBuilder")}
                   </div>
 
                   <div className="flex items-start gap-4">
@@ -845,7 +847,7 @@ export default function QuizzesPage() {
                     </div>
                     <div className="min-w-0">
                       <h1 className="text-4xl font-extrabold tracking-tight text-slate-950 md:text-5xl">
-                        Quizzes
+                        {t("quizzes.title")}
                       </h1>
                       <p className="mt-3 max-w-3xl text-lg leading-8 text-slate-600">
                         Build a quiz in minutes from a class PDF, tidy it up if needed, then deliver it through{" "}
@@ -895,12 +897,12 @@ export default function QuizzesPage() {
                     <button className={btnPrimary} type="button" onClick={openGenerateModal}>
                       <span className="inline-flex items-center gap-2">
                         <SparkIcon />
-                        Generate from PDF
+                        {t("quizzes.generateFromPdf")}
                       </span>
                     </button>
 
                     <button className={btnGhost} type="button" onClick={openNewQuiz}>
-                      + New Manual Quiz
+                      {t("quizzes.newManual")}
                     </button>
 
                     <button
@@ -910,7 +912,7 @@ export default function QuizzesPage() {
                     >
                       <span className="inline-flex items-center gap-2">
                         <PlayIcon />
-                        Go to Live Quiz
+                        {t("quizzes.openLiveQuiz")}
                       </span>
                     </button>
                   </div>
@@ -922,7 +924,7 @@ export default function QuizzesPage() {
                     <div className="mt-4 grid grid-cols-2 gap-3">
                       <div className="rounded-[22px] border-2 border-slate-200 bg-white p-4">
                         <div className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                          Quizzes
+                          {t("quizzes.title")}
                         </div>
                         <div className="mt-2 text-4xl font-extrabold tracking-tight text-slate-950">
                           {quizzes.length}
@@ -930,7 +932,7 @@ export default function QuizzesPage() {
                       </div>
                       <div className="rounded-[22px] border-2 border-slate-200 bg-white p-4">
                         <div className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                          Questions
+                          {t("quizzes.questions")}
                         </div>
                         <div className="mt-2 text-4xl font-extrabold tracking-tight text-slate-950">
                           {totalQuestions}
@@ -987,7 +989,7 @@ export default function QuizzesPage() {
                         Ready to create
                       </div>
                       <h2 className="mt-4 text-3xl font-extrabold tracking-tight text-slate-950">
-                        No quizzes yet
+                        {t("quizzes.empty")}
                       </h2>
                       <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
                         Start with <span className="font-semibold text-slate-900">Generate from PDF</span> for the quickest route.
@@ -998,11 +1000,11 @@ export default function QuizzesPage() {
                         <button className={btnPrimary} type="button" onClick={openGenerateModal}>
                           <span className="inline-flex items-center gap-2">
                             <SparkIcon />
-                            Generate from PDF
+                            {t("quizzes.generateFromPdf")}
                           </span>
                         </button>
                         <button className={btnGhost} type="button" onClick={openNewQuiz}>
-                          Create Manually
+                          {t("quizzes.createManually")}
                         </button>
                       </div>
                     </div>
@@ -1036,7 +1038,7 @@ export default function QuizzesPage() {
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div>
                         <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.24em] text-cyan-800">
-                          Quiz library
+                          {t("quizzes.library")}
                         </div>
                         <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-slate-950">
                           Built quizzes for this class
@@ -1051,7 +1053,7 @@ export default function QuizzesPage() {
                         <button className={btnPrimary} type="button" onClick={openGenerateModal}>
                           <span className="inline-flex items-center gap-2">
                             <SparkIcon />
-                            Generate another quiz
+                            {t("quizzes.generateFromPdf")}
                           </span>
                         </button>
                         <button
@@ -1061,7 +1063,7 @@ export default function QuizzesPage() {
                         >
                           <span className="inline-flex items-center gap-2">
                             <PlayIcon />
-                            Open Live Quiz
+                            {t("quizzes.openLiveQuiz")}
                           </span>
                         </button>
                       </div>
@@ -1106,7 +1108,7 @@ export default function QuizzesPage() {
                                 className="shrink-0 rounded-full border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                                 onClick={() => startPlay(q.id, true)}
                               >
-                                Preview
+                                {t("quizzes.preview")}
                               </button>
                             </div>
 
@@ -1438,7 +1440,7 @@ export default function QuizzesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
           <div className="w-full max-w-xl rounded-[28px] border-2 border-slate-200 bg-white p-5 shadow-2xl">
             <div className="text-2xl font-extrabold tracking-tight text-slate-950">
-              {editingQuizId ? "Edit quiz" : "New quiz"}
+              {editingQuizId ? t("quizzes.editQuiz") : t("quizzes.newQuiz")}
             </div>
             <div className="mt-1 text-sm leading-6 text-slate-600">
               Give it a clear title and category so it is easy to find later.
@@ -1453,7 +1455,7 @@ export default function QuizzesPage() {
             <div className="mt-4 grid gap-3">
               <input
                 className="w-full rounded-[18px] border-2 border-slate-200 bg-white px-3 py-3 text-sm"
-                placeholder="Quiz title"
+                placeholder={t("quizzes.quizTitle")}
                 value={quizTitle}
                 onChange={(e) => setQuizTitle(e.target.value)}
                 autoFocus
@@ -1461,14 +1463,14 @@ export default function QuizzesPage() {
 
               <input
                 className="w-full rounded-[18px] border-2 border-slate-200 bg-white px-3 py-3 text-sm"
-                placeholder="Category"
+                placeholder={t("quizzes.category")}
                 value={quizCategory}
                 onChange={(e) => setQuizCategory(e.target.value)}
               />
 
               <textarea
                 className="w-full rounded-[18px] border-2 border-slate-200 bg-white px-3 py-3 text-sm"
-                placeholder="Short description (optional)"
+                placeholder={t("quizzes.descriptionOptional")}
                 value={quizDescription}
                 onChange={(e) => setQuizDescription(e.target.value)}
                 rows={3}
@@ -1484,10 +1486,10 @@ export default function QuizzesPage() {
                     if (!editingQuizId) resetQuizDraft();
                   }}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
                 <button className={btnPrimary} type="button" onClick={saveQuizMeta}>
-                  Save
+                  {t("common.save")}
                 </button>
               </div>
             </div>
@@ -1501,7 +1503,7 @@ export default function QuizzesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
           <div className="w-full max-w-2xl rounded-[28px] border-2 border-slate-200 bg-white p-5 shadow-2xl">
             <div className="text-2xl font-extrabold tracking-tight text-slate-950">
-              {editingQuestionId ? "Edit question" : "Add question"}
+              {editingQuestionId ? t("quizzes.editQuestion") : t("quizzes.addQuestion")}
             </div>
             <div className="mt-1 text-sm leading-6 text-slate-600">
               Enter the question and 4 choices, then pick the correct answer.
@@ -1516,7 +1518,7 @@ export default function QuizzesPage() {
             <div className="mt-4 grid gap-3">
               <textarea
                 className="w-full rounded-[18px] border-2 border-slate-200 bg-white px-3 py-3 text-sm"
-                placeholder="Question text"
+                placeholder={t("quizzes.questionText")}
                 value={qPrompt}
                 onChange={(e) => setQPrompt(e.target.value)}
                 rows={3}
@@ -1532,7 +1534,7 @@ export default function QuizzesPage() {
 
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-[22px] border-2 border-slate-200 bg-slate-50 p-3">
-                  <div className="text-sm font-semibold text-slate-700">Correct answer</div>
+                  <div className="text-sm font-semibold text-slate-700">{t("quizzes.correctAnswer")}</div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {(["A", "B", "C", "D"] as const).map((label, idx) => {
                       const i = idx as 0 | 1 | 2 | 3;
