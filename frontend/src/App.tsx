@@ -486,6 +486,9 @@ function Dashboard({
   const [year, setYear] = useState<YearOption>("1st Year");
   const [level, setLevel] = useState<LevelOption>("Common Level");
   const [subject, setSubject] = useState("Maths");
+  const [customClassMode, setCustomClassMode] = useState(false);
+  const [customClassName, setCustomClassName] = useState("");
+  const [customClassSubject, setCustomClassSubject] = useState("");
   const [pickedColour, setPickedColour] = useState(DEFAULT_BG);
   const [creating, setCreating] = useState(false);
 
@@ -1073,22 +1076,29 @@ function Dashboard({
     setYear("1st Year");
     setLevel("Common Level");
     setSubject("Maths");
+    setCustomClassMode(false);
+    setCustomClassName("");
+    setCustomClassSubject("");
     setPickedColour(DEFAULT_BG);
     setCreateOpen(true);
   }
 
   async function createClass() {
-    const name = year.trim();
-    const subj = subject.trim() || "Subject";
+    const name = customClassMode ? customClassName.trim() : year.trim();
+    const subj = customClassMode ? customClassSubject.trim() : subject.trim() || "Subject";
     if (!name) return;
+    if (customClassMode && !subj) return;
 
     setCreating(true);
     setError(null);
 
     try {
+      const payload = customClassMode
+        ? { name, subject: subj, color: pickedColour }
+        : { name, subject: subj, stream, color: pickedColour };
       const created = (await apiFetch("/classes", {
         method: "POST",
-        body: JSON.stringify({ name, subject: subj, stream, color: pickedColour }),
+        body: JSON.stringify(payload),
       })) as ClassItem;
 
       console.log("CREATE /classes response:", created);
@@ -1816,6 +1826,37 @@ function Dashboard({
               </div>
 
               <div className="mt-5 grid gap-4 md:grid-cols-2">
+                {customClassMode ? (
+                  <>
+                    <div>
+                      <label className="mb-1 block text-sm font-bold text-slate-700" htmlFor="custom-class-line-one">
+                        {t("createClass.customLineOne")}
+                      </label>
+                      <input
+                        id="custom-class-line-one"
+                        className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                        value={customClassName}
+                        onChange={(e) => setCustomClassName(e.target.value)}
+                        placeholder={t("createClass.customLineOnePlaceholder")}
+                        maxLength={80}
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-bold text-slate-700" htmlFor="custom-class-line-two">
+                        {t("createClass.customLineTwo")}
+                      </label>
+                      <input
+                        id="custom-class-line-two"
+                        className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
+                        value={customClassSubject}
+                        onChange={(e) => setCustomClassSubject(e.target.value)}
+                        placeholder={t("createClass.customLineTwoPlaceholder")}
+                        maxLength={80}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
                 <div>
                   <div className="mb-1 text-sm font-bold text-slate-700">{t("createClass.stream")}</div>
                   <select
@@ -1885,6 +1926,8 @@ function Dashboard({
                     placeholder="e.g. Maths, Physics, English"
                   />
                 </div>
+                  </>
+                )}
 
                 <div className="md:col-span-2">
                   <div className="mb-2 text-sm font-bold text-slate-700">{t("createClass.tileColour")}</div>
@@ -1906,13 +1949,27 @@ function Dashboard({
                 </div>
               </div>
 
-              <div className="mt-6 flex items-center justify-end gap-3">
+              <div className="mt-6 flex items-center justify-between gap-3">
+                <button
+                  className="text-sm font-semibold text-emerald-800 underline decoration-emerald-300 underline-offset-4 hover:text-emerald-950"
+                  type="button"
+                  onClick={() => setCustomClassMode((current) => !current)}
+                >
+                  {customClassMode ? t("createClass.standardClass") : t("createClass.customClass")}
+                </button>
+                <div className="flex items-center gap-3">
                 <button className={pill} type="button" onClick={() => setCreateOpen(false)}>
                   {t("common.cancel")}
                 </button>
-                <button className={btnPrimary} type="button" onClick={createClass} disabled={creating}>
+                <button
+                  className={btnPrimary}
+                  type="button"
+                  onClick={createClass}
+                  disabled={creating || (customClassMode && (!customClassName.trim() || !customClassSubject.trim()))}
+                >
                   {creating ? t("dashboard.creatingClass") : t("dashboard.createClass")}
                 </button>
+                </div>
               </div>
             </div>
           </div>
