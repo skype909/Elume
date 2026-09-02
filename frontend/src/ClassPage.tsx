@@ -11,6 +11,7 @@ import QRCode from "react-qr-code";
 import ELogo2 from "./assets/ELogo2.png";
 import { Settings, Timer, Bell, Play, Pause, RotateCcw } from "lucide-react";
 import { apiFetch, openProtectedFileInNewTab } from "./api";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
@@ -373,6 +374,7 @@ function PostComposer({
 }
 
 export default function ClassPage() {
+  const { t } = useUiLanguage();
   const { id } = useParams<{ id: string }>();
   const classId = useMemo(() => Number(id), [id]);
   const validClassId = Number.isFinite(classId) && classId > 0;
@@ -1154,7 +1156,7 @@ export default function ClassPage() {
                 if (e.key === "Enter" || e.key === " ") navigate("/");
               }}
               className="cursor-pointer rounded-2xl focus:outline-none shrink-0"
-              title="Back to Dashboard"
+              title={t("class.backToDashboard")}
             >
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-sm overflow-hidden">
                 <img src={ELogo2} alt="ELume Logo" className="h-14 w-14 object-contain" />
@@ -1171,14 +1173,14 @@ export default function ClassPage() {
 
         <nav className="space-y-2">
           {[
-            { label: "Dashboard", to: `/`, variant: "default" },
-            { label: "Whiteboard", to: `/whiteboard/${classId}`, variant: "feature", external: true },
-            { label: "Collaboration", to: `/class/${classId}/collaboration`, variant: "feature" },
-            { label: "Live Quiz", to: `/class/${classId}/live-quiz`, variant: "feature" },
-            { label: "Class Admin 📈", to: `/class/${classId}/admin`, variant: "default" },
+            { id: "dashboard", labelKey: "nav.dashboard", to: `/`, variant: "default" },
+            { id: "whiteboard", labelKey: "class.whiteboard", to: `/whiteboard/${classId}`, variant: "feature", external: true },
+            { id: "collaboration", labelKey: "class.collaboration", to: `/class/${classId}/collaboration`, variant: "feature" },
+            { id: "live-quiz", labelKey: "class.liveQuiz", to: `/class/${classId}/live-quiz`, variant: "feature" },
+            { id: "class-admin", labelKey: "class.classAdmin", to: `/class/${classId}/admin`, variant: "default" },
           ].map((item) => {
             const className =
-              item.label === "Dashboard"
+              item.id === "dashboard"
                 ? "block w-full rounded-2xl border-2 border-emerald-600 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100"
                 : item.variant === "feature"
                 ? "block w-full rounded-2xl border border-slate-200 bg-[linear-gradient(135deg,rgba(255,255,255,1),rgba(240,253,250,1))] px-4 py-3 text-left text-sm font-semibold text-slate-900 shadow-sm hover:-translate-y-[1px] hover:shadow-md"
@@ -1187,20 +1189,20 @@ export default function ClassPage() {
             if (item.external) {
               return (
                 <a
-                  key={item.label}
+                  key={item.id}
                   href={`${window.location.origin}/#${item.to}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className={className}
                 >
-                  {item.label}
+                  {t(item.labelKey)}
                 </a>
               );
             }
 
             return (
               <button
-                key={item.label}
+                key={item.id}
                 type="button"
                 onClick={() => {
                   if (item.to === `/class/${classId}/admin`) {
@@ -1211,15 +1213,15 @@ export default function ClassPage() {
                 }}
                 className={className}
               >
-                {item.label}
+                {t(item.labelKey)}
               </button>
             );
           })}
         </nav>
 
         <div className="mt-4 rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
-          <div className="text-sm font-extrabold tracking-tight">Student access</div>
-          <div className="mt-1 text-xs text-slate-500">Scan to open read-only view.</div>
+          <div className="text-sm font-extrabold tracking-tight">{t("class.studentAccess")}</div>
+          <div className="mt-1 text-xs text-slate-500">{t("class.studentAccessHelp")}</div>
 
           <div className="mt-3 flex flex-col items-center">
             <div className="rounded-xl border border-slate-200 bg-white p-2">
@@ -1238,7 +1240,7 @@ export default function ClassPage() {
                 onClick={() => copyText(studentUrl, "Student link copied")}
                 className="mt-3 w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
               >
-                Copy link
+                {t("class.copyLink")}
               </button>
             )}
           </div>
@@ -1246,7 +1248,7 @@ export default function ClassPage() {
           <div className="mt-3 rounded-2xl border border-slate-200 bg-white/90 p-3">
             <div className="text-center">
               <div className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">
-                Class code
+                {t("class.classCode")}
               </div>
 
               <div className="mt-3 text-2xl font-black tracking-[0.02em] text-slate-900">
@@ -1282,16 +1284,16 @@ export default function ClassPage() {
 
             <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-700">
               <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2">
-                <span className="font-extrabold">Teacher:</span> {teacherName}
+                <span className="font-extrabold">{t("class.teacher")}</span> {teacherName}
               </div>
 
               <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2">
-                <span className="font-extrabold">Group:</span> {groupLabel}
+                <span className="font-extrabold">{t("class.group")}</span> {groupLabel}
               </div>
 
               <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-3 py-2 flex items-center gap-2">
                 <span>
-                  <span className="font-extrabold">Room:</span> {roomLabel}
+                  <span className="font-extrabold">{t("class.room")}</span> {roomLabel}
                 </span>
               </div>
             </div>
@@ -1302,7 +1304,7 @@ export default function ClassPage() {
               type="button"
               onClick={() => setShowClassSettings(true)}
               className="grid h-10 w-10 place-items-center rounded-2xl border-2 border-slate-200 bg-white/85 text-slate-700 shadow-sm backdrop-blur hover:bg-white"
-              title="Class settings"
+              title={t("class.classSettings")}
             >
               <Settings size={16} />
             </button>
@@ -1329,10 +1331,10 @@ export default function ClassPage() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800">
-            Live Teaching Tools
+            {t("class.liveTeachingTools")}
           </div>
           <div className="mt-2 text-sm text-slate-600">
-            Jump into your main lesson modes quickly.
+            {t("class.liveTeachingHelp")}
           </div>
         </div>
       </div>
@@ -1340,24 +1342,24 @@ export default function ClassPage() {
       <div className="mt-4 grid gap-3 md:grid-cols-3">
         {[
           {
-            title: "Whiteboard",
-            subtitle: "Open full teaching board",
+            titleKey: "class.whiteboard",
+            subtitleKey: "class.whiteboardSubtitle",
             icon: "🖍️",
             className:
               "border-cyan-200 bg-[linear-gradient(135deg,rgba(239,246,255,1),rgba(236,254,255,1))]",
             onClick: () => window.open(`${window.location.origin}/#/whiteboard/${classId}`, "_blank", "noopener,noreferrer"),
           },
           {
-            title: "Collaboration",
-            subtitle: "Live student breakout board",
+            titleKey: "class.collaboration",
+            subtitleKey: "class.collaborationSubtitle",
             icon: "🤝",
             className:
               "border-violet-200 bg-[linear-gradient(135deg,rgba(245,243,255,1),rgba(237,233,254,0.95))]",
             onClick: () => navigate(`/class/${classId}/collaboration`),
           },
           {
-            title: "Live Quiz",
-            subtitle: "Run saved quiz or poll",
+            titleKey: "class.liveQuiz",
+            subtitleKey: "class.liveQuizSubtitle",
             icon: "🧠",
             className:
               "border-amber-200 bg-[linear-gradient(135deg,rgba(255,251,235,1),rgba(254,249,195,0.7))]",
@@ -1365,15 +1367,15 @@ export default function ClassPage() {
           },
         ].map((item) => (
           <button
-            key={item.title}
+            key={item.titleKey}
             type="button"
             onClick={item.onClick}
             className={`rounded-[26px] border p-4 text-left shadow-sm transition hover:-translate-y-[2px] hover:shadow-md ${item.className}`}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-lg font-extrabold text-slate-900">{item.title}</div>
-                <div className="mt-1 text-sm text-slate-600">{item.subtitle}</div>
+                <div className="text-lg font-extrabold text-slate-900">{t(item.titleKey)}</div>
+                <div className="mt-1 text-sm text-slate-600">{t(item.subtitleKey)}</div>
               </div>
               <div className="grid h-11 w-11 place-items-center rounded-2xl border border-white/80 bg-white/80 text-xl shadow-sm">
                 {item.icon}
@@ -1389,7 +1391,7 @@ export default function ClassPage() {
     <aside className="col-span-12 md:col-span-3 lg:col-span-3">
       <div className={`${card} ${cardPad}`}>
         <div className="flex items-center justify-between">
-          <div className="text-lg font-extrabold tracking-tight">Resources</div>
+          <div className="text-lg font-extrabold tracking-tight">{t("class.resources")}</div>
           <div className="grid h-10 w-10 place-items-center rounded-2xl border-2 border-slate-200 bg-slate-50">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
           </div>
@@ -1397,35 +1399,41 @@ export default function ClassPage() {
 
         <div className="mt-4 grid grid-cols-2 gap-3">
           {[
-            { name: "Notes", colour: "bg-blue-500 border-blue-600 text-white" },
-            { name: "Tests", colour: "bg-red-500 border-red-600 text-white" },
-            { name: "Quizzes", colour: "bg-yellow-400 border-yellow-500 text-black" },
-            { name: "Exam Papers", colour: "bg-green-500 border-green-600 text-white" },
-            { name: "Videos", colour: "bg-orange-500 border-orange-600 text-white" },
+            { id: "notes", labelKey: "class.notes", colour: "bg-blue-500 border-blue-600 text-white" },
+            { id: "tests", labelKey: "class.tests", colour: "bg-red-500 border-red-600 text-white" },
+            { id: "quizzes", labelKey: "class.quizzes", colour: "bg-yellow-400 border-yellow-500 text-black" },
+            { id: "exam-papers", labelKey: "class.examPapers", colour: "bg-green-500 border-green-600 text-white" },
+            { id: "videos", labelKey: "class.videos", colour: "bg-orange-500 border-orange-600 text-white" },
             {
-              name: "Resources",
+              id: "resources",
+              labelKey: "class.resources",
               colour:
                 "border-emerald-600 bg-[linear-gradient(135deg,#059669,#0d9488,#0891b2)] text-white shadow-[0_8px_18px_rgba(13,148,136,0.28)] hover:brightness-105 hover:shadow-[0_12px_22px_rgba(6,182,212,0.34)]",
-              ariaLabel: "Resources: Worksheets, files and teaching materials",
+              ariaLabelKey: "class.links",
             },
           ].map((x) => (
-            <button
-              key={x.name}
-              className={`rounded-2xl border-2 px-4 py-3 text-sm font-semibold shadow-sm hover:brightness-110 active:translate-y-[1px] ${x.colour}`}
-              type="button"
-              aria-label={"ariaLabel" in x ? x.ariaLabel : x.name}
-              title={"ariaLabel" in x ? x.ariaLabel : x.name}
-              onClick={() => {
-                if (x.name === "Notes") navigate(`/class/${classId}/notes`);
-                else if (x.name === "Tests") navigate(`/class/${classId}/tests`);
-                else if (x.name === "Quizzes") navigate(`/class/${classId}/quizzes`);
-                else if (x.name === "Exam Papers") navigate(`/class/${classId}/exam-papers`);
-                else if (x.name === "Videos") navigate(`/class/${classId}/videos`);
-                else if (x.name === "Resources") navigate(`/class/${classId}/links`);
-              }}
-            >
-              {x.name}
-            </button>
+            (() => {
+              const accessibleKey = "ariaLabelKey" in x ? x.ariaLabelKey ?? x.labelKey : x.labelKey;
+              return (
+                <button
+                  key={x.id}
+                  className={`rounded-2xl border-2 px-4 py-3 text-sm font-semibold shadow-sm hover:brightness-110 active:translate-y-[1px] ${x.colour}`}
+                  type="button"
+                  aria-label={t(accessibleKey)}
+                  title={t(accessibleKey)}
+                  onClick={() => {
+                    if (x.id === "notes") navigate(`/class/${classId}/notes`);
+                    else if (x.id === "tests") navigate(`/class/${classId}/tests`);
+                    else if (x.id === "quizzes") navigate(`/class/${classId}/quizzes`);
+                    else if (x.id === "exam-papers") navigate(`/class/${classId}/exam-papers`);
+                    else if (x.id === "videos") navigate(`/class/${classId}/videos`);
+                    else if (x.id === "resources") navigate(`/class/${classId}/links`);
+                  }}
+                >
+                  {t(x.labelKey)}
+                </button>
+              );
+            })()
           ))}
         </div>
 
@@ -1435,8 +1443,8 @@ export default function ClassPage() {
               🎯
             </span>
             <div>
-              <div className="text-lg font-extrabold tracking-tight">Quick Classroom Tools</div>
-              <div className="text-xs text-slate-500">Fast in-lesson helpers</div>
+              <div className="text-lg font-extrabold tracking-tight">{t("class.quickTools")}</div>
+              <div className="text-xs text-slate-500">{t("class.quickToolsSubtitle")}</div>
             </div>
           </div>
 
@@ -1455,11 +1463,7 @@ export default function ClassPage() {
                     onClick={() => setNameGenOpen(true)}
                   >
                     <div className={toolIcon}>🙋</div>
-                    <div className={toolLabel}>
-                      Random
-                      <br />
-                      Name
-                    </div>
+                    <div className={toolLabel}>{t("class.randomName")}</div>
                   </button>
 
                   <button
@@ -1468,11 +1472,7 @@ export default function ClassPage() {
                     onClick={() => navigate(`/class/${classId}/seating-plan`)}
                   >
                     <div className={toolIcon}>🪑</div>
-                    <div className={toolLabel}>
-                      Seating
-                      <br />
-                      Plan
-                    </div>
+                    <div className={toolLabel}>{t("class.seatingPlan")}</div>
                   </button>
 
                   <button
@@ -1488,7 +1488,7 @@ export default function ClassPage() {
                     <div className={toolIcon}>
                       <Timer size={22} />
                     </div>
-                    <div className={toolLabel}>Timer</div>
+                    <div className={toolLabel}>{t("class.timer")}</div>
                   </button>
 
                   <button
@@ -1502,11 +1502,7 @@ export default function ClassPage() {
                     }}
                   >
                     <div className={toolIcon}>👥</div>
-                    <div className={toolLabel}>
-                      Team
-                      <br />
-                      Generator
-                    </div>
+                    <div className={toolLabel}>{t("class.teamGenerator")}</div>
                   </button>
                 </>
               );
@@ -1519,7 +1515,7 @@ export default function ClassPage() {
             <span className="grid h-9 w-9 place-items-center rounded-2xl border-2 border-slate-200 bg-white">
               <Icon name="spark" />
             </span>
-            <div className="text-lg font-extrabold tracking-tight">External Resources</div>
+            <div className="text-lg font-extrabold tracking-tight">{t("class.externalResources")}</div>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
@@ -1576,7 +1572,7 @@ export default function ClassPage() {
                   }
                   type="button"
                 >
-                  New Announcement
+                  {t("class.newAnnouncement")}
                 </button>
 
                 <button
@@ -1584,7 +1580,7 @@ export default function ClassPage() {
                   onClick={() => navigate(`/class/${classId}/calendar`)}
                   className="rounded-full border-2 border-slate-200 bg-white px-5 py-2 text-sm hover:bg-slate-50"
                 >
-                  Calendar
+                  {t("nav.calendar")}
                 </button>
               </div>
 
@@ -1597,7 +1593,7 @@ export default function ClassPage() {
                   type="button"
                   onClick={() => navigate(`/class/${classId}/calendar`)}
                   className={`relative grid h-10 w-10 place-items-center rounded-2xl border-2 border-slate-200 bg-white hover:bg-slate-50 ${bellColor}`}
-                  title="Calendar alerts"
+                  title={t("class.calendarAlerts")}
                 >
                   <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none">
                     <path

@@ -44,6 +44,8 @@ import PlatformAdminSchoolsPage from "./PlatformAdminSchoolsPage";
 import SchoolBrand from "./Components/SchoolBrand";
 import InlineNotice from "./Components/InlineNotice";
 import { userFacingError } from "./userFacingError";
+import LanguageSwitch from "./Components/LanguageSwitch";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -421,6 +423,7 @@ function Dashboard({
   installedApp: boolean;
   onInstallPromptConsumed: () => void;
 }) {
+  const { t } = useUiLanguage();
   const loadedMetaRef = useRef<{ meta: MetaStore; legacyColors: LegacyColorStore } | null>(null);
   if (!loadedMetaRef.current) {
     loadedMetaRef.current = loadMeta();
@@ -1235,7 +1238,7 @@ function Dashboard({
                 type="button"
                 onClick={openTimetableQuickView}
               >
-                Timetable
+                {t("dashboard.timetable")}
               </button>
 
               <button
@@ -1243,7 +1246,7 @@ function Dashboard({
                 type="button"
                 onClick={() => navigate("/admin")}
               >
-                Admin
+                {t("nav.admin")}
               </button>
 
               <button
@@ -1251,7 +1254,7 @@ function Dashboard({
                 type="button"
                 onClick={() => navigate("/calendar")}
               >
-                Calendar
+                {t("nav.calendar")}
               </button>
             </div>
 
@@ -1320,7 +1323,7 @@ function Dashboard({
               className="shrink-0 rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-5 py-2.5 text-xl font-extrabold text-white shadow-md hover:bg-emerald-700 active:translate-y-[1px]"
               style={{ textShadow: "0 2px 4px rgba(0,0,0,0.35)" }}
             >
-              + Create Class
+              + {t("dashboard.createClass")}
             </button>
             <button
               type="button"
@@ -1354,7 +1357,7 @@ function Dashboard({
           </div>
 
           <div className="mt-3 text-base font-semibold text-slate-700 md:hidden">
-            Drag tiles to arrange.
+            {t("dashboard.dragToArrange")}
           </div>
 
           {/* Desktop layout */}
@@ -1365,11 +1368,11 @@ function Dashboard({
               className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-6 py-2.5 text-xl font-extrabold text-white shadow-md hover:bg-emerald-700 active:translate-y-[1px]"
               style={{ textShadow: "0 2px 4px rgba(0,0,0,0.35)" }}
             >
-              + Create Class
+              + {t("dashboard.createClass")}
             </button>
 
             <div className="text-base font-semibold text-slate-700">
-              Drag tiles to arrange.
+              {t("dashboard.dragToArrange")}
             </div>
 
             <div className="ml-auto flex min-w-0 items-center gap-4">
@@ -1378,7 +1381,7 @@ function Dashboard({
                 onClick={openDesktopTimetableQuickView}
                 className="rounded-3xl border border-emerald-200 bg-gradient-to-r from-white via-emerald-50 to-cyan-50 px-5 py-3 text-sm font-semibold text-slate-800 shadow-[0_4px_14px_rgba(16,185,129,0.10)] transition-all hover:border-emerald-300 hover:shadow-md hover:-translate-y-[1px]"
               >
-                View Timetable
+                {t("dashboard.viewTimetable")}
               </button>
 
               <button
@@ -1432,7 +1435,7 @@ function Dashboard({
                 <img src={ELogo2} alt="Elume" className="h-8 w-8 object-contain" />
               </div>
               <div className="min-w-[220px] flex-1">
-                <div className="text-base font-black tracking-tight text-slate-900">Install Elume</div>
+                <div className="text-base font-black tracking-tight text-slate-900">{t("dashboard.install")}</div>
                 <div className="mt-1 text-sm leading-5 text-slate-600">Keep Elume one tap away during lessons. Install it on this device and open it just like an app.</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1441,14 +1444,14 @@ function Dashboard({
                   onClick={installPromptEvent ? () => void requestNativeInstall() : () => setShowInstallInstructions(true)}
                   className="min-h-11 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 px-4 py-2.5 text-sm font-black text-white shadow-md transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-200"
                 >
-                  Install Elume
+                  {t("dashboard.install")}
                 </button>
                 <button
                   type="button"
                   onClick={dismissInstallPrompt}
                   className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-200"
                 >
-                  Maybe later
+                  {t("dashboard.maybeLater")}
                 </button>
               </div>
             </div>
@@ -1462,7 +1465,7 @@ function Dashboard({
               onClick={showInstallPromptAgain}
               className="rounded-xl px-3 py-2 text-sm font-bold text-emerald-800 underline decoration-emerald-300 underline-offset-4 transition hover:text-emerald-950 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-200"
             >
-              Install Elume
+              {t("dashboard.install")}
             </button>
           </div>
         ) : null}
@@ -1470,13 +1473,13 @@ function Dashboard({
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           {loading && (
             <div className={`${card} p-4 text-sm text-slate-600 md:col-span-4`}>
-              Loading classes…
+              {t("dashboard.loadingClasses")}
             </div>
           )}
 
           {!loading && sortedClasses.length === 0 && (
             <div className={`${card} p-4 text-sm text-slate-600 md:col-span-4`}>
-              No classes yet — click <span className="font-semibold">Create Class</span> to start.
+              {t("dashboard.noClasses")}
             </div>
           )}
 
@@ -1505,7 +1508,7 @@ function Dashboard({
                     hover:ring-4 hover:ring-white/60
                     active:translate-y-[1px] active:scale-[0.98]
                     flex items-center justify-center p-4`}
-                  title="Open class"
+                  title={t("dashboard.openClass")}
                 >
                   <button
                     type="button"
@@ -1514,7 +1517,7 @@ function Dashboard({
                       openEdit(c);
                     }}
                     className="absolute bottom-2 left-2 grid h-5 w-5 place-items-center rounded-lg border border-white/70 bg-white/90 text-[10px] shadow-sm opacity-80 transition hover:opacity-100 hover:bg-white"
-                    title="Edit class"
+                    title={t("dashboard.editClass")}
                     aria-label={`Edit ${c.name}`}
                   >
                     ✏️
@@ -1526,10 +1529,10 @@ function Dashboard({
                       openManageClass(c);
                     }}
                     className="absolute bottom-2 right-2 rounded-lg border border-white/70 bg-white/90 px-2 py-1 text-[10px] font-semibold text-slate-700 shadow-sm opacity-80 transition hover:opacity-100 hover:bg-white"
-                    title="Manage class"
-                    aria-label={`Manage ${c.name}`}
+                    title={t("dashboard.manageClass")}
+                    aria-label={`${t("dashboard.manageClass")}: ${c.name}`}
                   >
-                    Manage
+                    {t("dashboard.manageClass")}
                   </button>
 
                   <div className="text-center">
@@ -1547,7 +1550,7 @@ function Dashboard({
                       {c.subject}
                     </div>
                     <div className="mt-3 inline-flex items-center justify-center rounded-full bg-white/20 px-4 py-1.5 text-xs font-semibold opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                      Click to open • Drag to arrange
+                      {t("dashboard.openClass")} • {t("dashboard.dragToArrange")}
                     </div>
                   </div>
                 </button>
@@ -1561,7 +1564,7 @@ function Dashboard({
             onClick={() => navigate("/archived-classes")}
             className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:shadow-md"
           >
-            Archived Classes
+            {t("dashboard.archivedClasses")}
           </button>
         </div>
       </main>
@@ -1797,19 +1800,19 @@ function Dashboard({
             <div className="p-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xl font-extrabold tracking-tight">Create a new class</div>
+                  <div className="text-xl font-extrabold tracking-tight">{t("createClass.title")}</div>
                   <div className="mt-1 text-sm text-slate-600">
-                    Choose stream/year/level and a tile colour.
+                    {t("createClass.help")}
                   </div>
                 </div>
                 <button className={pill} type="button" onClick={() => setCreateOpen(false)}>
-                  Close
+                  {t("common.close")}
                 </button>
               </div>
 
               <div className="mt-5 grid gap-4 md:grid-cols-2">
                 <div>
-                  <div className="mb-1 text-sm font-bold text-slate-700">Stream</div>
+                  <div className="mb-1 text-sm font-bold text-slate-700">{t("createClass.stream")}</div>
                   <select
                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                     value={stream}
@@ -1823,18 +1826,18 @@ function Dashboard({
                       setLevel(lvls[0]);
                     }}
                   >
-                    <option>Junior Cycle</option>
-                    <option>Senior Cycle</option>
-                    <option>Transition Year (TY)</option>
+                    <option value="Junior Cycle">{t("createClass.juniorCycle")}</option>
+                    <option value="Senior Cycle">{t("createClass.seniorCycle")}</option>
+                    <option value="Transition Year (TY)">{t("createClass.transitionYear")}</option>
                     <option>LCA</option>
                     <option>LCVP</option>
-                    <option>SEN</option>
+                    <option value="SEN">{t("createClass.sen")}</option>
                     <option>Clubs</option>
                   </select>
                 </div>
 
                 <div>
-                  <div className="mb-1 text-sm font-bold text-slate-700">Year</div>
+                  <div className="mb-1 text-sm font-bold text-slate-700">{t("createClass.year")}</div>
                   <select
                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                     value={year}
@@ -1854,7 +1857,7 @@ function Dashboard({
                 </div>
 
                 <div>
-                  <div className="mb-1 text-sm font-bold text-slate-700">Level</div>
+                  <div className="mb-1 text-sm font-bold text-slate-700">{t("createClass.level")}</div>
                   <select
                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                     value={level}
@@ -1869,7 +1872,7 @@ function Dashboard({
                 </div>
 
                 <div>
-                  <div className="mb-1 text-sm font-bold text-slate-700">Subject</div>
+                  <div className="mb-1 text-sm font-bold text-slate-700">{t("createClass.subject")}</div>
                   <input
                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                     value={subject}
@@ -1879,7 +1882,7 @@ function Dashboard({
                 </div>
 
                 <div className="md:col-span-2">
-                  <div className="mb-2 text-sm font-bold text-slate-700">Tile colour</div>
+                  <div className="mb-2 text-sm font-bold text-slate-700">{t("createClass.tileColour")}</div>
                   <div className="grid grid-cols-6 gap-2 md:grid-cols-12">
                     {COLOURS.map((c) => {
                       const selected = pickedColour === c.bg;
@@ -1900,10 +1903,10 @@ function Dashboard({
 
               <div className="mt-6 flex items-center justify-end gap-3">
                 <button className={pill} type="button" onClick={() => setCreateOpen(false)}>
-                  Cancel
+                  {t("common.cancel")}
                 </button>
                 <button className={btnPrimary} type="button" onClick={createClass} disabled={creating}>
-                  {creating ? "Creating…" : "Create Class"}
+                  {creating ? t("dashboard.creatingClass") : t("dashboard.createClass")}
                 </button>
               </div>
             </div>
@@ -1918,19 +1921,19 @@ function Dashboard({
             <div className="p-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xl font-extrabold tracking-tight">Edit class</div>
+                  <div className="text-xl font-extrabold tracking-tight">{t("dashboard.editClass")}</div>
                   <div className="mt-1 text-sm text-slate-600">
                     Update name/subject and choose a tile colour.
                   </div>
                 </div>
                 <button className={pill} type="button" onClick={() => setEditOpen(false)}>
-                  Close
+                  {t("common.close")}
                 </button>
               </div>
 
               <div className="mt-5 grid gap-4 md:grid-cols-2">
                 <div>
-                  <div className="mb-1 text-sm font-bold text-slate-700">Class name</div>
+                  <div className="mb-1 text-sm font-bold text-slate-700">{t("createClass.className")}</div>
                   <input
                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                     value={editName}
@@ -1940,7 +1943,7 @@ function Dashboard({
                 </div>
 
                 <div>
-                  <div className="mb-1 text-sm font-bold text-slate-700">Subject</div>
+                  <div className="mb-1 text-sm font-bold text-slate-700">{t("createClass.subject")}</div>
                   <input
                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2 text-sm"
                     value={editSubject}
@@ -1950,7 +1953,7 @@ function Dashboard({
                 </div>
 
                 <div className="md:col-span-2">
-                  <div className="mb-2 text-sm font-bold text-slate-700">Tile colour</div>
+                  <div className="mb-2 text-sm font-bold text-slate-700">{t("createClass.tileColour")}</div>
                   <div className="grid grid-cols-6 gap-2 md:grid-cols-12">
                     {COLOURS.map((c) => {
                       const selected = editColour === c.bg;
@@ -1971,10 +1974,10 @@ function Dashboard({
 
               <div className="mt-6 flex items-center justify-end gap-3">
                 <button className={pill} type="button" onClick={() => setEditOpen(false)}>
-                  Cancel
+                  {t("common.cancel")}
                 </button>
                 <button className={btnPrimary} type="button" onClick={saveEdit} disabled={savingEdit}>
-                  {savingEdit ? "Saving…" : "Save changes"}
+                  {savingEdit ? t("common.saving") : t("common.saveChanges")}
                 </button>
               </div>
 
@@ -2060,6 +2063,7 @@ function Dashboard({
 }
 
 export default function App() {
+  const { t, refreshAccount } = useUiLanguage();
   const isLocalhost =
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1";
@@ -2073,6 +2077,9 @@ export default function App() {
   const userLabel = userEmail ?? "";
   const pilotUsers = new Set(["admin@elume.ie", "rob@elume.ie", "emma@elume.ie", "gillian@elume.ie"]);
   const isPilotUser = userEmail ? pilotUsers.has(userEmail.toLowerCase()) : false;
+  // Temporary UI-preview gate only. Add the remaining approved Gaeilge reviewers here.
+  const gaeilgePreviewEmails = new Set(["peter@elume.ie", "pfitzgerald@preskilkenny.ie", "admin@elume.ie"]);
+  const isGaeilgePreviewUser = userEmail ? gaeilgePreviewEmails.has(userEmail.toLowerCase()) : false;
   const location = useLocation();
   const navigate = useNavigate();
   // Dashboard is the root route in App.tsx
@@ -2081,6 +2088,10 @@ export default function App() {
     location.pathname === "/onboarding/billing" ||
     location.pathname === "/billing/success" ||
     location.pathname === "/billing/cancel";
+
+  useEffect(() => {
+    refreshAccount();
+  }, [isAuthed, refreshAccount]);
 
   useEffect(() => {
     const onBeforeInstallPrompt = (event: Event) => {
@@ -2191,15 +2202,16 @@ export default function App() {
             type="button"
             onClick={() => navigate("/")}
             className="rounded-xl p-1 hover:bg-slate-100"
-            title="Back to Dashboard"
+            title={t("class.backToDashboard")}
           >
             <img src={ELogo2} alt="Elume" className="h-9 w-9 object-contain" />
           </button>
           <div className="flex items-center gap-2">
-            {currentRole === "platform_admin" && <button onClick={() => navigate("/platform-admin/schools")} className="rounded-xl border-2 border-violet-200 bg-violet-50 px-3 py-1 text-sm font-semibold text-violet-800 hover:bg-violet-100">Platform Admin</button>}
-            {currentRole === "school_admin" && <button onClick={() => navigate("/school-admin")} className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">School Admin</button>}
-            {(currentRole === "teacher" || currentRole === "school_admin") && <button onClick={() => navigate("/school-resources")} className="rounded-xl border-2 border-cyan-200 bg-cyan-50 px-3 py-1 text-sm font-semibold text-cyan-800 hover:bg-cyan-100">School Resources</button>}
-            <button onClick={logout} className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100">Logout</button>
+            {currentRole === "platform_admin" && <button onClick={() => navigate("/platform-admin/schools")} className="rounded-xl border-2 border-violet-200 bg-violet-50 px-3 py-1 text-sm font-semibold text-violet-800 hover:bg-violet-100">{t("nav.platformAdmin")}</button>}
+            {currentRole === "school_admin" && <button onClick={() => navigate("/school-admin")} className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">{t("nav.schoolAdmin")}</button>}
+            {(currentRole === "teacher" || currentRole === "school_admin") && <button onClick={() => navigate("/school-resources")} className="rounded-xl border-2 border-cyan-200 bg-cyan-50 px-3 py-1 text-sm font-semibold text-cyan-800 hover:bg-cyan-100">{t("nav.schoolResources")}</button>}
+            {isGaeilgePreviewUser && <LanguageSwitch />}
+            <button onClick={logout} className="rounded-xl border-2 border-slate-200 px-4 py-1 font-semibold hover:bg-slate-100">{t("nav.logout")}</button>
           </div>
         </div>
       )}
