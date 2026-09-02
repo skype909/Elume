@@ -3,8 +3,18 @@ import { useNavigate, useParams } from "react-router-dom";
 import elumeLogo from "./assets/ELogo2.png";
 import quizLoopMp3 from "./assets/live-quiz/quiz-loop.mp3";
 import { apiFetch } from "./api";
+import InlineNotice from "./Components/InlineNotice";
+import { userFacingError } from "./userFacingError";
 
 const API_BASE = "/api";
+
+function liveQuizError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "No questions") return "Add at least one question before starting the quiz.";
+  if (message === "Session is not live") return "This quiz is no longer live. Refresh the session before continuing.";
+  if (message === "Session not found") return "This quiz session is no longer available. Return to setup and create a new session.";
+  return userFacingError(error, fallback);
+}
 
 type ClassItem = { id: number; name: string; subject?: string };
 
@@ -436,7 +446,7 @@ export default function LiveQuizPage() {
 
   useEffect(() => {
     if (!classId || Number.isNaN(classId)) {
-      setLoadError("Invalid class id.");
+      setLoadError("This Live Quiz link is not valid.");
       setLoading(false);
       return;
     }
@@ -447,7 +457,7 @@ export default function LiveQuizPage() {
 
     apiFetch(`${API_BASE}/classes/${classId}`, { signal: controller.signal })
       .then((cls) => setClassInfo(cls))
-      .catch((e: any) => setLoadError(e?.message || "Failed to load class."))
+      .catch((e: unknown) => setLoadError(userFacingError(e, "We couldn’t load this Live Quiz just yet. Give it another try.")))
       .finally(() => setLoading(false));
 
     return () => controller.abort();
@@ -695,8 +705,8 @@ export default function LiveQuizPage() {
       setStatus(null);
       setActiveReport(null);
       resultsSavedForSessionRef.current = null;
-    } catch (e: any) {
-      setCreateError(e?.message || "Failed to create session.");
+    } catch (e: unknown) {
+      setCreateError(liveQuizError(e, "We couldn’t create the quiz session just now. Please try again."));
     } finally {
       setCreating(false);
     }
@@ -707,8 +717,8 @@ export default function LiveQuizPage() {
       const data = (await apiFetch(`${API_BASE}/livequiz/${code}/status`)) as LiveStatus;
       setStatus(data);
       setStatusError(null);
-    } catch (e: any) {
-      setStatusError(e?.message || "Status unavailable.");
+    } catch (e: unknown) {
+      setStatusError(liveQuizError(e, "We couldn’t update the quiz just now. Check your connection and try again."));
     }
   }
 
@@ -719,8 +729,8 @@ export default function LiveQuizPage() {
     try {
       const data = (await apiFetch(`${API_BASE}/classes/${classId}/livequiz/insights`)) as LiveQuizInsightsResponse;
       setInsights(data);
-    } catch (e: any) {
-      setInsightsError(e?.message || "Could not load live quiz insights.");
+    } catch (e: unknown) {
+      setInsightsError(userFacingError(e, "We couldn’t load the quiz results just yet. Give it another try."));
     } finally {
       setInsightsLoading(false);
     }
@@ -826,8 +836,8 @@ export default function LiveQuizPage() {
         totalAnswers,
         sourceLabel,
       });
-    } catch (e: any) {
-      setPollResultsError(e?.message || "Could not load poll results.");
+    } catch (e: unknown) {
+      setPollResultsError(userFacingError(e, "We couldn’t load these poll results just yet. Give it another try."));
     } finally {
       setPollResultsBusy(false);
     }
@@ -868,27 +878,31 @@ export default function LiveQuizPage() {
   }, [classId]);
 
   async function fetchResultsAndSave(code: string) {
-    const results = (await apiFetch(`${API_BASE}/livequiz/${code}/results`)) as LiveQuizResults;
+    try {
+      const results = (await apiFetch(`${API_BASE}/livequiz/${code}/results`)) as LiveQuizResults;
 
-    const item: LiveQuizHistoryItem = {
-      saved_at: new Date().toISOString(),
-      session_code: results.session_code,
-      title: results.title,
-      anonymous: results.anonymous,
-      summary: results.summary,
-      top3: results.top3 || [],
-      leaderboard: results.leaderboard || [],
-    };
+      const item: LiveQuizHistoryItem = {
+        saved_at: new Date().toISOString(),
+        session_code: results.session_code,
+        title: results.title,
+        anonymous: results.anonymous,
+        summary: results.summary,
+        top3: results.top3 || [],
+        leaderboard: results.leaderboard || [],
+      };
 
-    setHistory((prev) => {
-      const next = [item, ...prev].slice(0, 30);
-      localStorage.setItem(liveHistoryKey, JSON.stringify(next));
-      return next;
-    });
+      setHistory((prev) => {
+        const next = [item, ...prev].slice(0, 30);
+        localStorage.setItem(liveHistoryKey, JSON.stringify(next));
+        return next;
+      });
 
-    setActiveReport(item);
-    resultsSavedForSessionRef.current = code;
-    void loadInsights();
+      setActiveReport(item);
+      resultsSavedForSessionRef.current = code;
+      void loadInsights();
+    } catch (e: unknown) {
+      setStatusError(userFacingError(e, "We couldn’t load the quiz results just yet. Give it another try."));
+    }
   }
 
   async function updateAttemptExcluded(attemptId: number, excluded: boolean) {
@@ -927,8 +941,8 @@ export default function LiveQuizPage() {
           students,
         };
       });
-    } catch (e: any) {
-      setInsightsError(e?.message || "Could not update attempt.");
+    } catch (e: unknown) {
+      setInsightsError(userFacingError(e, "We couldn’t update that attempt just now. Please try again."));
     } finally {
       setUpdatingAttemptId(null);
     }
@@ -942,8 +956,8 @@ export default function LiveQuizPage() {
     try {
       const data = (await apiFetch(`${API_BASE}/livequiz/attempts/${attemptId}/review`)) as LiveQuizAttemptReview;
       setAttemptReview(data);
-    } catch (e: any) {
-      setAttemptReviewError(e?.message || "Could not load this review.");
+    } catch (e: unknown) {
+      setAttemptReviewError(userFacingError(e, "We couldn’t load this review just yet. Give it another try."));
     } finally {
       setAttemptReviewLoading(false);
     }
@@ -997,8 +1011,14 @@ export default function LiveQuizPage() {
         }
         await fetchResultsAndSave(session.code);
       }
-    } catch (e: any) {
-      setStatusError(e?.message || "Control action failed.");
+    } catch (e: unknown) {
+      const fallbacks = {
+        start: "We couldn’t start the quiz just now. Please try again.",
+        next: "We couldn’t move the quiz on just now. Check your connection and try again.",
+        "end-question": "We couldn’t close that question just now. Please try again.",
+        "end-session": "We couldn’t end the quiz just now. Please try again.",
+      };
+      setStatusError(liveQuizError(e, fallbacks[action]));
     }
   }
 
@@ -1029,14 +1049,13 @@ export default function LiveQuizPage() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-rose-50 p-6">
         <div className="mx-auto max-w-3xl rounded-[32px] border border-rose-200 bg-white/90 p-8 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
-          <div className="text-2xl font-black tracking-tight text-rose-700">Could not load</div>
-          <div className="mt-2 text-sm text-slate-700">{loadError}</div>
-          <button
-            className="mt-5 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-black text-white shadow-md hover:opacity-95"
-            onClick={() => navigate(`/class/${classId}`)}
-          >
-            Back to class
-          </button>
+          <InlineNotice
+            variant="error"
+            title="That didn’t quite work"
+            message={loadError}
+            actionLabel="Back to class"
+            onAction={() => navigate(`/class/${classId}`)}
+          />
         </div>
       </div>
     );
@@ -1307,9 +1326,12 @@ export default function LiveQuizPage() {
                 </div>
 
                 {createError && (
-                  <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-                    {createError}
-                  </div>
+                  <InlineNotice
+                    variant="error"
+                    title="That didn’t quite work"
+                    message={createError}
+                    className="mt-4"
+                  />
                 )}
 
                 <button
@@ -1512,9 +1534,12 @@ export default function LiveQuizPage() {
                       <div className="mt-1 text-lg font-black text-slate-900">Run the session live</div>
 
                       {statusError && (
-                        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-                          {statusError}
-                        </div>
+                        <InlineNotice
+                          variant="error"
+                          title="That didn’t quite work"
+                          message={statusError}
+                          className="mt-4 text-xs"
+                        />
                       )}
 
                       <div className="mt-4 grid grid-cols-2 gap-3">
@@ -1779,9 +1804,14 @@ export default function LiveQuizPage() {
                 </div>
 
                 {insightsError ? (
-                  <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                    {insightsError}
-                  </div>
+                  <InlineNotice
+                    variant="error"
+                    title="That didn’t quite work"
+                    message={insightsError}
+                    actionLabel="Try again"
+                    onAction={() => void loadInsights()}
+                    className="mt-5"
+                  />
                 ) : null}
 
                 <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -2006,9 +2036,12 @@ export default function LiveQuizPage() {
             </div>
 
             {pollResultsError ? (
-              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                {pollResultsError}
-              </div>
+              <InlineNotice
+                variant="error"
+                title="That didn’t quite work"
+                message={pollResultsError}
+                className="mt-5"
+              />
             ) : null}
           </div>
         </div>
@@ -2045,9 +2078,12 @@ export default function LiveQuizPage() {
                 Loading review...
               </div>
             ) : attemptReviewError ? (
-              <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                {attemptReviewError}
-              </div>
+              <InlineNotice
+                variant="error"
+                title="That didn’t quite work"
+                message={attemptReviewError}
+                className="mt-6"
+              />
             ) : attemptReview ? (
               <div className="mt-6 space-y-4">
                 {attemptReview.questions.map((question, index) => (

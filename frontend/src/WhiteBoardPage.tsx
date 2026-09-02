@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
+import InlineNotice from "./Components/InlineNotice";
 import {
   EXAM_LIBRARY_CYCLES,
   EXAM_LIBRARY_SUBJECTS,
@@ -10,6 +11,7 @@ import {
   examLibrarySubjectOptions,
   normalizeExamLibrarySubject,
 } from "./examLibrary";
+import { userFacingError } from "./userFacingError";
 
 const API_BASE = "/api";
 const AUDIO_TOPIC_NAME = "audio";
@@ -85,6 +87,11 @@ function formatMediaTime(seconds: number): string {
 }
 
 type Tool = "pen" | "eraser" | "line" | "hand";
+type BoardNotice = {
+  variant: "error" | "warning";
+  message: string;
+  title?: string;
+};
 
 type NoteItem = {
   id: number;
@@ -1012,6 +1019,7 @@ export default function WhiteBoardPage() {
 
   const [saving, setSaving] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [boardNotice, setBoardNotice] = useState<BoardNotice | null>(null);
 
   // Import list
   const [showImportModal, setShowImportModal] = useState(false);
@@ -1426,9 +1434,9 @@ export default function WhiteBoardPage() {
       const data = await apiFetch(`${API_BASE}/classes/${classId}/whiteboards?limit=5`);
       const items = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
       setRecentWhiteboards(items);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setRecentWhiteboards([]);
-      setRecentError(e?.message || "Recent editable whiteboards are not available yet.");
+      setRecentError(userFacingError(e, "We couldn’t load recent whiteboards just yet. Give it another try."));
     } finally {
       setRecentLoading(false);
     }
@@ -1451,8 +1459,8 @@ export default function WhiteBoardPage() {
       }
       setShowTitleModal(false);
       setEntryMode("menu");
-    } catch (e: any) {
-      setRecentError(e?.message || "Could not open that whiteboard yet.");
+    } catch (e: unknown) {
+      setRecentError(userFacingError(e, "We couldn’t open that whiteboard just now. Please try again."));
     } finally {
       setOpeningRecentId(null);
     }
@@ -2852,6 +2860,7 @@ export default function WhiteBoardPage() {
     if (!bg || !ink || !container) return;
 
     setSaving(true);
+    setBoardNotice(null);
 
     try {
       const out = document.createElement("canvas");
@@ -3067,8 +3076,12 @@ export default function WhiteBoardPage() {
       clearDraftFromLocalStorage();
       markClean();
       navigate(`/class/${classId}`);
-    } catch (e: any) {
-      alert(e?.message || "Save failed");
+    } catch (e: unknown) {
+      setBoardNotice({
+        variant: "error",
+        title: "That didn’t quite work",
+        message: userFacingError(e, "We couldn’t save the whiteboard just now. Please try again."),
+      });
     } finally {
       setSaving(false);
     }
@@ -3128,9 +3141,9 @@ export default function WhiteBoardPage() {
       setAudioLibraryFiles(
         (Array.isArray(notes) ? notes : []).filter((note) => audioTopicIds.has(note.topic_id))
       );
-    } catch (e: any) {
+    } catch (e: unknown) {
       setAudioLibraryFiles([]);
-      setAudioLibraryError(e?.message || "Could not load the Audio library.");
+      setAudioLibraryError(userFacingError(e, "We couldn’t load the Audio library just yet. Give it another try."));
     } finally {
       setAudioLibraryLoading(false);
     }
@@ -3153,8 +3166,8 @@ export default function WhiteBoardPage() {
       const blob = await apiFetchBlob(resolveFileUrl(note.file_url), { method: "GET" });
       setAudioPlayerSource(URL.createObjectURL(blob), note.filename);
       setShowAudioLibrary(false);
-    } catch (e: any) {
-      setAudioLibraryError(e?.message || "Could not load that audio file.");
+    } catch (e: unknown) {
+      setAudioLibraryError(userFacingError(e, "We couldn’t open that audio file just now. Please try again."));
     } finally {
       setAudioSelectingId(null);
     }
@@ -3189,8 +3202,8 @@ export default function WhiteBoardPage() {
       await apiFetch(`${API_BASE}/notes/upload`, { method: "POST", body: form });
       setAudioUploadFile(null);
       await loadAudioLibrary();
-    } catch (e: any) {
-      setAudioLibraryError(e?.message || "Could not upload that audio file.");
+    } catch (e: unknown) {
+      setAudioLibraryError(userFacingError(e, "We couldn’t upload that audio file just now. Please try again."));
     } finally {
       setAudioUploadBusy(false);
     }
@@ -3257,8 +3270,8 @@ export default function WhiteBoardPage() {
 
 
       setImportList(combined);
-    } catch (e: any) {
-      setImportError(e?.message ?? "Could not load PDFs");
+    } catch (e: unknown) {
+      setImportError(userFacingError(e, "We couldn’t load your PDFs just yet. Give it another try."));
     } finally {
       setImportLoading(false);
     }
@@ -3276,8 +3289,8 @@ export default function WhiteBoardPage() {
 
       const items = (await apiFetch(`${API_BASE}/exam-library/items?${params.toString()}`)) as ExamLibraryItem[];
       setExamLibraryItems(Array.isArray(items) ? items : []);
-    } catch (e: any) {
-      setExamLibraryError(e?.message ?? "Could not load exam library");
+    } catch (e: unknown) {
+      setExamLibraryError(userFacingError(e, "We couldn’t load the exam library just yet. Give it another try."));
     } finally {
       setExamLibraryLoading(false);
     }
@@ -3377,6 +3390,7 @@ export default function WhiteBoardPage() {
     if (!bgCtx || !container) return;
 
     try {
+      setBoardNotice(null);
       setLastInsertInfo(null);
       pushBgUndo();
       lockBoardWidthIfNeeded();
@@ -3433,9 +3447,13 @@ export default function WhiteBoardPage() {
 
       const needed = y + tmp.height + 60;
       if (needed > canvasHeight) setCanvasHeight((h) => Math.min(Math.max(h, needed + 500), 30000));
-    } catch (e: any) {
+    } catch (e: unknown) {
       popBgUndo();
-      alert(e?.message || "Could not insert PDF onto board");
+      setBoardNotice({
+        variant: "error",
+        title: "That didn’t quite work",
+        message: userFacingError(e, "We couldn’t add that PDF to the whiteboard just now. Please try again."),
+      });
     }
   }
 
@@ -3737,7 +3755,7 @@ export default function WhiteBoardPage() {
 
     const min = 12;
     if (clipRect.w < min || clipRect.h < min) {
-      alert("Drag a bigger selection box.");
+      setBoardNotice({ variant: "warning", message: "Choose a larger area before snipping." });
       return;
     }
 
@@ -3978,11 +3996,11 @@ export default function WhiteBoardPage() {
     if (!ctx || !container) return;
 
     if (domMax <= domMin || rngMax <= rngMin) {
-      alert("Domain/Range max must be greater than min.");
+      setBoardNotice({ variant: "warning", message: "Set the Domain and Range maximums higher than their minimums." });
       return;
     }
     if (domStep <= 0 || rngStep <= 0) {
-      alert("Increments must be > 0");
+      setBoardNotice({ variant: "warning", message: "Set positive increments before applying the axes." });
       return;
     }
 
@@ -4097,6 +4115,17 @@ export default function WhiteBoardPage() {
 
   return (
     <div ref={fsRootRef} className="min-h-screen bg-[#dff3df]">
+      {boardNotice && (
+        <div className="fixed inset-x-3 bottom-4 z-[120] mx-auto max-w-xl">
+          <InlineNotice
+            variant={boardNotice.variant}
+            title={boardNotice.title}
+            message={boardNotice.message}
+            actionLabel="Dismiss"
+            onAction={() => setBoardNotice(null)}
+          />
+        </div>
+      )}
       <div className="mx-auto max-w-9xl px-3 pt-1">
         {/* Top bar */}
         <div className="flex items-start justify-between gap-3">
@@ -4817,7 +4846,16 @@ export default function WhiteBoardPage() {
                   </button>
                 </div>
 
-                {audioLibraryError && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{audioLibraryError}</div>}
+                {audioLibraryError && (
+                  <InlineNotice
+                    variant="error"
+                    title="That didn’t quite work"
+                    message={audioLibraryError}
+                    actionLabel="Try again"
+                    onAction={() => void loadAudioLibrary()}
+                    className="mt-3"
+                  />
+                )}
 
                 <div className="mt-4 max-h-[46vh] overflow-y-auto rounded-2xl border-2 border-slate-200 bg-slate-50">
                   {audioLibraryLoading ? (
@@ -4974,7 +5012,15 @@ export default function WhiteBoardPage() {
                         <div className="p-4 text-sm text-slate-600">Loading recent whiteboards…</div>
                       ) : recentWhiteboards.length === 0 ? (
                         <div className="p-4 text-sm text-slate-600">
-                          {recentError || "No recent editable whiteboards are available for this class yet."}
+                          {recentError ? (
+                            <InlineNotice
+                              variant="error"
+                              title="That didn’t quite work"
+                              message={recentError}
+                              actionLabel="Try again"
+                              onAction={() => void loadRecentWhiteboards()}
+                            />
+                          ) : "No recent editable whiteboards are available for this class yet."}
                         </div>
                       ) : (
                         <div className="divide-y divide-slate-200">
@@ -4998,7 +5044,14 @@ export default function WhiteBoardPage() {
                       )}
                     </div>
                     {recentError && recentWhiteboards.length > 0 && (
-                      <div className="mt-3 text-sm text-amber-700">{recentError}</div>
+                      <InlineNotice
+                        variant="error"
+                        title="That didn’t quite work"
+                        message={recentError}
+                        actionLabel="Try again"
+                        onAction={() => void loadRecentWhiteboards()}
+                        className="mt-3"
+                      />
                     )}
                     <div className="mt-5 flex justify-between gap-2">
                       <button className={pill} type="button" onClick={() => setEntryMode("menu")}>
@@ -5127,7 +5180,16 @@ export default function WhiteBoardPage() {
                       </button>
                     </div>
 
-                    {importError && <div className="mt-3 rounded-xl border-2 border-red-200 bg-white p-3 text-sm text-red-700">{importError}</div>}
+                    {importError && (
+                      <InlineNotice
+                        variant="error"
+                        title="That didn’t quite work"
+                        message={importError}
+                        actionLabel="Try again"
+                        onAction={() => void loadImportList()}
+                        className="mt-3"
+                      />
+                    )}
 
                     <div className="mt-4 max-h-[50vh] overflow-y-auto rounded-2xl border-2 border-slate-200">
                       {importLoading ? (
@@ -5218,7 +5280,16 @@ export default function WhiteBoardPage() {
                       </button>
                     </div>
 
-                    {examLibraryError && <div className="mt-3 rounded-xl border-2 border-red-200 bg-white p-3 text-sm text-red-700">{examLibraryError}</div>}
+                    {examLibraryError && (
+                      <InlineNotice
+                        variant="error"
+                        title="That didn’t quite work"
+                        message={examLibraryError}
+                        actionLabel="Try again"
+                        onAction={() => void loadExamLibraryList()}
+                        className="mt-3"
+                      />
+                    )}
 
                     <div className="mt-4 max-h-[50vh] overflow-y-auto rounded-2xl border-2 border-slate-200">
                       {examLibraryLoading ? (
