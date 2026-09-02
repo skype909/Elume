@@ -4,6 +4,7 @@ import elumeLogo from "./assets/ELogo2.png";
 import quizLoopMp3 from "./assets/live-quiz/quiz-loop.mp3";
 import { apiFetch } from "./api";
 import InlineNotice from "./Components/InlineNotice";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 import { userFacingError } from "./userFacingError";
 
 const API_BASE = "/api";
@@ -379,6 +380,7 @@ function StatCard({
 }
 
 export default function LiveQuizPage() {
+  const { t, language } = useUiLanguage();
   const { id } = useParams();
   const classId = Number(id);
   const navigate = useNavigate();
@@ -1102,7 +1104,7 @@ export default function LiveQuizPage() {
 
                 <div>
                   <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-emerald-700 shadow-sm">
-                    Live teaching tools
+                    {t("class.liveTeachingTools")}
                   </div>
 
                   <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-900 md:text-4xl">
@@ -1120,7 +1122,7 @@ export default function LiveQuizPage() {
                 <div className="rounded-2xl border border-white/70 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 px-4 py-3 text-sm shadow-sm">
                   <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Current mode</div>
                   <div className="mt-1 font-black text-slate-900">
-                    {mode === "saved" ? "Saved Quizzes" : mode === "starred" ? "Main Quiz Collection" : "Quick Custom"}
+                    {mode === "saved" ? t("liveQuiz.savedQuizzes") : mode === "starred" ? t("liveQuiz.mainCollection") : t("liveQuiz.quickCustom")}
                   </div>
                 </div>
 
@@ -1135,11 +1137,11 @@ export default function LiveQuizPage() {
             </div>
 
             <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-              <StatCard label="Questions" value={effectiveQuestions.length} tone="violet" />
+              <StatCard label={t("liveQuiz.questions")} value={effectiveQuestions.length} tone="violet" />
               <StatCard label="Session" value={session?.code || "—"} tone="cyan" />
               <StatCard label="Joined" value={status?.joined_count ?? "—"} tone="emerald" />
               <StatCard
-                label="State"
+                label={t("liveQuiz.state")}
                 value={status?.state ? status.state.toUpperCase() : "NOT LIVE"}
                 tone={status?.state === "live" ? "emerald" : status?.state === "ended" ? "violet" : "slate"}
               />
@@ -1151,7 +1153,7 @@ export default function LiveQuizPage() {
               <div className="rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="text-xl font-black tracking-tight text-slate-900">Quiz setup</div>
+                    <div className="text-xl font-black tracking-tight text-slate-900">{t("liveQuiz.setup")}</div>
                     <div className="mt-1 text-sm text-slate-600">
                       Choose a saved quiz or build a quick live poll.
                     </div>
@@ -1171,7 +1173,7 @@ export default function LiveQuizPage() {
                       }`}
                     onClick={() => setMode("saved")}
                   >
-                    Class Quizzes
+                    {t("liveQuiz.classQuizzes")}
                   </button>
 
 
@@ -1183,7 +1185,7 @@ export default function LiveQuizPage() {
                       }`}
                     onClick={() => setMode("starred")}
                   >
-                    Main Quiz Collection
+                    {t("liveQuiz.mainCollection")}
                   </button>
 
                   <button
@@ -1194,13 +1196,13 @@ export default function LiveQuizPage() {
                       }`}
                     onClick={() => setMode("custom")}
                   >
-                    Quick Custom
+                    {t("liveQuiz.quickCustom")}
                   </button>
                 </div>
 
                 {mode === "saved" ? (
                   <div className="mt-5">
-                    <div className="text-sm font-bold text-slate-700">Choose a saved quiz</div>
+                    <div className="text-sm font-bold text-slate-700">{t("liveQuiz.chooseSavedQuiz")}</div>
                     <div className="mt-2">
                       {savedQuizzes.length ? (
                         <select
@@ -1251,7 +1253,7 @@ export default function LiveQuizPage() {
                   </div>
                 ) : (
                   <div className="mt-5">
-                    <div className="text-sm font-bold text-slate-700">Session title</div>
+                    <div className="text-sm font-bold text-slate-700">{t("liveQuiz.sessionTitle")}</div>
                     <input
                       className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                       value={customTitle}
@@ -1261,16 +1263,16 @@ export default function LiveQuizPage() {
                   </div>
                 )}
                 <div className="mt-5 rounded-[28px] border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
-                  <div className="text-sm font-black text-slate-900">Session options</div>
+                  <div className="text-sm font-black text-slate-900">{t("liveQuiz.sessionOptions")}</div>
 
                   <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                     <label className="flex items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm">
-                      <span className="text-sm font-semibold text-slate-800">Auto-play</span>
+                      <span className="text-sm font-semibold text-slate-800">{t("liveQuiz.autoPlay")}</span>
                       <input type="checkbox" checked={autoPlay} onChange={(e) => setAutoPlay(e.target.checked)} />
                     </label>
 
                     <label className="flex items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm">
-                      <span className="text-sm font-semibold text-slate-800">Shuffle questions</span>
+                      <span className="text-sm font-semibold text-slate-800">{t("liveQuiz.shuffleQuestions")}</span>
                       <input
                         type="checkbox"
                         checked={shuffleQuestions}
@@ -1279,12 +1281,12 @@ export default function LiveQuizPage() {
                     </label>
 
                     <label className="flex items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm">
-                      <span className="text-sm font-semibold text-slate-800">Use timer</span>
+                      <span className="text-sm font-semibold text-slate-800">{t("liveQuiz.useTimer")}</span>
                       <input type="checkbox" checked={useTimer} onChange={(e) => setUseTimer(e.target.checked)} />
                     </label>
 
                     <label className="flex items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm">
-                      <span className="text-sm font-semibold text-slate-800">Auto-end when all answered</span>
+                      <span className="text-sm font-semibold text-slate-800">{t("liveQuiz.autoEnd")}</span>
                       <input
                         type="checkbox"
                         checked={autoEndWhenAllAnswered}
@@ -1296,7 +1298,7 @@ export default function LiveQuizPage() {
                   <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                     <label className="rounded-2xl border border-white/80 bg-white/90 p-4 shadow-sm">
                       <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-                        Seconds per question
+                        {t("liveQuiz.secondsPerQuestion")}
                       </div>
                       <input
                         type="number"
@@ -1311,7 +1313,7 @@ export default function LiveQuizPage() {
 
                     <div className="rounded-2xl border border-white/80 bg-white/90 p-4 shadow-sm">
                       <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-                        Questions loaded
+                        {t("liveQuiz.questionsLoaded")}
                       </div>
                       <div className="mt-2 text-4xl font-black tracking-tight text-slate-900">
                         {effectiveQuestions.length}
@@ -1347,7 +1349,7 @@ export default function LiveQuizPage() {
                 <div className="rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xl font-black tracking-tight text-slate-900">Custom questions</div>
+                      <div className="text-xl font-black tracking-tight text-slate-900">{t("liveQuiz.customQuestions")}</div>
                       <div className="mt-1 text-sm text-slate-600">Build a fast poll or quiz on the fly.</div>
                     </div>
 
@@ -1355,7 +1357,7 @@ export default function LiveQuizPage() {
                       className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
                       onClick={addCustomQuestion}
                     >
-                      + Add question
+                      {t("liveQuiz.addQuestion")}
                     </button>
                   </div>
 
@@ -1366,19 +1368,19 @@ export default function LiveQuizPage() {
                         className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm"
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm font-black text-slate-900">Question {idx + 1}</div>
+                          <div className="text-sm font-black text-slate-900">{t("liveQuiz.question")} {idx + 1}</div>
                           {customQuestions.length > 1 && (
                             <button
                               className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-black text-rose-700 hover:bg-rose-100"
                               onClick={() => removeCustomQuestion(q.id)}
                             >
-                              Remove
+                              {t("liveQuiz.remove")}
                             </button>
                           )}
                         </div>
 
                         <label className="mt-3 block text-sm font-bold text-slate-700">
-                          Prompt
+                          {t("liveQuiz.prompt")}
                           <textarea
                             className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                             value={q.prompt}
@@ -1402,7 +1404,7 @@ export default function LiveQuizPage() {
 
                         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div className="text-xs text-slate-600">
-                            Optional: mark a correct answer. Leave blank for poll mode.
+                            {t("liveQuiz.correctAnswerOptional")}
                           </div>
                           <select
                             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 shadow-sm outline-none focus:border-emerald-400"
@@ -1529,9 +1531,9 @@ export default function LiveQuizPage() {
 
                     <div className="rounded-[28px] border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-violet-50 p-5 shadow-sm">
                       <div className="text-sm font-black uppercase tracking-[0.18em] text-emerald-700">
-                        Teacher controls
+                        {t("liveQuiz.teacherControls")}
                       </div>
-                      <div className="mt-1 text-lg font-black text-slate-900">Run the session live</div>
+                      <div className="mt-1 text-lg font-black text-slate-900">{t("liveQuiz.runSession")}</div>
 
                       {statusError && (
                         <InlineNotice
@@ -1621,14 +1623,14 @@ export default function LiveQuizPage() {
                           className="rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-4 py-3 text-sm font-black text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl"
                           onClick={() => postControl("start")}
                         >
-                          Start
+                          {t("liveQuiz.start")}
                         </button>
 
                         <button
                           className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
                           onClick={() => postControl("next")}
                         >
-                          Next
+                          {t("liveQuiz.nextQuestion")}
                         </button>
 
                         <button
@@ -1642,7 +1644,7 @@ export default function LiveQuizPage() {
                           className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-black text-rose-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-rose-100"
                           onClick={() => postControl("end-session")}
                         >
-                          End session
+                          {t("liveQuiz.endSession")}
                         </button>
                       </div>
 
@@ -1658,8 +1660,8 @@ export default function LiveQuizPage() {
               <div className="rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <div className="text-xl font-black tracking-tight text-slate-900">Results & History</div>
-                    <div className="mt-1 text-sm text-slate-600">Reports are saved locally on this device.</div>
+                    <div className="text-xl font-black tracking-tight text-slate-900">{t("liveQuiz.resultsHistory")}</div>
+                    <div className="mt-1 text-sm text-slate-600">{t("liveQuiz.reportsLocal")}</div>
                   </div>
 
                   {session?.code ? (
@@ -1667,7 +1669,7 @@ export default function LiveQuizPage() {
                       className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
                       onClick={() => fetchResultsAndSave(session.code)}
                     >
-                      Refresh results
+                      {t("liveQuiz.refreshResults")}
                     </button>
                   ) : null}
                 </div>
@@ -1677,7 +1679,7 @@ export default function LiveQuizPage() {
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div className="text-lg font-black text-slate-900">{activeReport.title}</div>
                       <div className="text-xs font-semibold text-slate-500">
-                        {new Date(activeReport.saved_at).toLocaleString()}
+                        {new Date(activeReport.saved_at).toLocaleString(language === "ga" ? "ga-IE" : "en-IE")}
                       </div>
                     </div>
 
@@ -1689,7 +1691,7 @@ export default function LiveQuizPage() {
                     </div>
 
                     <div className="mt-5">
-                      <div className="text-sm font-black text-slate-900">Top 3</div>
+                      <div className="text-sm font-black text-slate-900">{t("liveQuiz.topThree")}</div>
                       <div className="mt-3 grid gap-3 sm:grid-cols-3">
                         {(activeReport.top3 || []).map((p, i) => (
                           <div
@@ -1713,7 +1715,7 @@ export default function LiveQuizPage() {
                     </div>
 
                     <div className="mt-5">
-                      <div className="text-sm font-black text-slate-900">Leaderboard</div>
+                      <div className="text-sm font-black text-slate-900">{t("liveQuiz.leaderboard")}</div>
                       <div className="mt-3 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
                         {(activeReport.leaderboard || []).slice(0, 25).map((r, idx) => (
                           <div
@@ -1733,15 +1735,15 @@ export default function LiveQuizPage() {
                   </div>
                 ) : (
                   <div className="mt-5 rounded-[28px] border border-dashed border-slate-200 bg-gradient-to-br from-slate-50 to-white p-10 text-center">
-                    <div className="text-base font-black text-slate-900">No report selected</div>
+                    <div className="text-base font-black text-slate-900">{t("liveQuiz.noReport")}</div>
                     <div className="mt-2 text-sm text-slate-600">
-                      End a session to generate a report automatically.
+                      {t("liveQuiz.noReportHelp")}
                     </div>
                   </div>
                 )}
 
                 <div className="mt-6">
-                  <div className="text-sm font-black text-slate-900">History</div>
+                  <div className="text-sm font-black text-slate-900">{t("liveQuiz.history")}</div>
                   <div className="mt-3 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
                     {history.length ? (
                       history.map((h, idx) => (
@@ -1756,7 +1758,7 @@ export default function LiveQuizPage() {
                           >
                             <div className="text-sm font-black text-slate-900">{h.title}</div>
                             <div className="text-xs text-slate-600">
-                              {new Date(h.saved_at).toLocaleString()} • {h.anonymous ? "Anonymous" : "Named"} • Avg{" "}
+                              {new Date(h.saved_at).toLocaleString(language === "ga" ? "ga-IE" : "en-IE")} • {h.anonymous ? t("liveQuiz.anonymous") : t("liveQuiz.named")} • {t("liveQuiz.average")}{" "}
                               {h.summary.avg_percent}%
                             </div>
                           </button>
@@ -1776,7 +1778,7 @@ export default function LiveQuizPage() {
                         </div>
                       ))
                     ) : (
-                      <div className="px-4 py-5 text-sm text-slate-600">No history yet.</div>
+                      <div className="px-4 py-5 text-sm text-slate-600">{t("liveQuiz.noHistory")}</div>
                     )}
                   </div>
                 </div>
@@ -1785,8 +1787,8 @@ export default function LiveQuizPage() {
               <div className="rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <div className="text-xl font-black tracking-tight text-slate-900">Class insights</div>
-                    <div className="mt-1 text-sm text-slate-600">Recent live quiz attempts for this class, grouped by student.</div>
+                    <div className="text-xl font-black tracking-tight text-slate-900">{t("liveQuiz.classInsights")}</div>
+                    <div className="mt-1 text-sm text-slate-600">{t("liveQuiz.insightsHelp")}</div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
@@ -1823,7 +1825,7 @@ export default function LiveQuizPage() {
 
                 {insightsLoading ? (
                   <div className="mt-5 rounded-[28px] border border-dashed border-slate-200 bg-gradient-to-br from-slate-50 to-white p-8 text-center text-sm text-slate-600">
-                    Loading class insights...
+                    {t("liveQuiz.loadingInsights")}
                   </div>
                 ) : filteredInsightStudents.length ? (
                   <div className="mt-5 space-y-4">
@@ -1864,7 +1866,7 @@ export default function LiveQuizPage() {
                                         : "Incomplete"}
                                   </div>
                                   <div className="mt-1 text-xs text-slate-600">
-                                    {attempt.total_questions ? `${attempt.score}/${attempt.total_questions}` : "No question count"} | {attempt.finished_at ? new Date(attempt.finished_at).toLocaleString() : "Not finished"}
+                                    {attempt.total_questions ? `${attempt.score}/${attempt.total_questions}` : "No question count"} | {attempt.finished_at ? new Date(attempt.finished_at).toLocaleString(language === "ga" ? "ga-IE" : "en-IE") : "Not finished"}
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">

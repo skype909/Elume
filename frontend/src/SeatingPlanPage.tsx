@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
 import { apiFetch } from "./api";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 const API_BASE = "/api";
 
@@ -168,6 +169,7 @@ function generateAssignment(
 }
 
 export default function SeatingPlanPage() {
+    const { t, language } = useUiLanguage();
     const { id } = useParams();
     const classId = Number(id);
     const navigate = useNavigate();
@@ -541,7 +543,7 @@ export default function SeatingPlanPage() {
                         className="mt-4 rounded-2xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
                         onClick={() => navigate(`/class/${classId}`)}
                     >
-                        Back to class
+                        {t("seatingPlan.backToClass")}
                     </button>
                 </div>
             </div>
@@ -550,12 +552,14 @@ export default function SeatingPlanPage() {
 
     const title = `${classInfo?.name || `Class ${classId}`} — Seating Plan`;
 
+    void title;
+
     return (
         <div className="min-h-screen bg-slate-50 p-4 md:p-6">
             {/* Header */}
             <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                    <div className="text-2xl font-extrabold tracking-tight text-slate-900">{title}</div>
+                    <div className="text-2xl font-extrabold tracking-tight text-slate-900">{classInfo?.name || `Class ${classId}`} â€” {t("seatingPlan.title")}</div>
                     <div className="mt-1 text-sm text-slate-600">
                         Regenerate every 6 weeks • Roster is editable here without affecting Class Admin
                     </div>
@@ -576,7 +580,7 @@ export default function SeatingPlanPage() {
                                 onClick={exportSeatingImage}
                                 title="Download a PNG snapshot"
                             >
-                                Export Image
+                                {t("seatingPlan.exportImage")}
                             </button>
 
                             <button
@@ -584,7 +588,7 @@ export default function SeatingPlanPage() {
                                 onClick={exportSeatingPdf}
                                 title="Download an A4 landscape PDF"
                             >
-                                Print Seating Plan
+                                {t("seatingPlan.print")}
                             </button>
 
                             <button
@@ -603,7 +607,7 @@ export default function SeatingPlanPage() {
                 {/* Left: controls */}
                 <div className="lg:col-span-4">
                     <div className="rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-sm">
-                        <div className="text-lg font-bold text-slate-900">Setup & Roster</div>
+                        <div className="text-lg font-bold text-slate-900">{t("seatingPlan.setupRoster")}</div>
 
                         {!state.layout ? (
                             <>
@@ -613,7 +617,7 @@ export default function SeatingPlanPage() {
 
                                 <div className="mt-4 grid grid-cols-2 gap-3">
                                     <label className="text-sm font-semibold text-slate-700">
-                                        Rows of tables
+                                        {t("seatingPlan.rows")}
                                         <input
                                             type="number"
                                             className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-sm"
@@ -625,7 +629,7 @@ export default function SeatingPlanPage() {
                                     </label>
 
                                     <label className="text-sm font-semibold text-slate-700">
-                                        Tables per row
+                                        {t("seatingPlan.tablesPerRow")}
                                         <input
                                             type="number"
                                             className="mt-1 w-full rounded-2xl border-2 border-slate-200 px-3 py-2 text-sm"
@@ -651,14 +655,14 @@ export default function SeatingPlanPage() {
                                     className="mt-4 w-full rounded-2xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm hover:opacity-95"
                                     onClick={initWizardLayout}
                                 >
-                                    Create seating plan
+                                    {t("seatingPlan.create")}
                                 </button>
                             </>
                         ) : (
                             <>
                                 <div className="mt-3 grid grid-cols-2 gap-3">
                                     <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
-                                        <div className="text-xs font-semibold text-slate-600">Students in plan</div>
+                                        <div className="text-xs font-semibold text-slate-600">{t("seatingPlan.studentsInPlan")}</div>
                                         <div className="text-xl font-extrabold text-slate-900">{seatingRosterCount}</div>
                                     </div>
                                     <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
@@ -882,7 +886,7 @@ export default function SeatingPlanPage() {
                                     <div className="text-xs text-slate-600">
                                         Last updated:{" "}
                                         <span className="font-semibold text-slate-800">
-                                            {new Date(state.updatedAt).toLocaleString()}
+                                            {new Date(state.updatedAt).toLocaleString(language === "ga" ? "ga-IE" : "en-IE")}
                                         </span>
                                     </div>
                                     <div className="text-right"></div>

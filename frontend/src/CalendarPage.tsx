@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "./api";
 import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 import InlineNotice from "./Components/InlineNotice";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 import { userFacingError } from "./userFacingError";
 
 type ClassItem = { id: number; name: string; subject: string };
@@ -89,12 +90,12 @@ function eventTypeMeta(t: string) {
   }
 }
 
-function formatEventTypeLabel(t: string) {
-  if (!t) return "General";
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
-
 export default function CalendarPage() {
+  const { t, language } = useUiLanguage();
+  const eventTypeLabel = (value: string) => {
+    const key = String(value || "general").toLowerCase();
+    return key === "test" ? t("calendar.test") : key === "homework" ? t("calendar.homework") : key === "trip" ? t("calendar.trip") : t("calendar.general");
+  };
   const { id } = useParams();
   const routeClassId = useMemo(() => Number(id), [id]);
   const hasRouteClass = Number.isFinite(routeClassId) && routeClassId > 0;
@@ -227,7 +228,8 @@ export default function CalendarPage() {
   const firstDay = new Date(visibleYear, visibleMonthIndex, 1).getDay();
   const offset = (firstDay + 6) % 7;
 
-  const monthLabel = visibleMonth.toLocaleString("en-IE", {
+  const calendarLocale = language === "ga" ? "ga-IE" : "en-IE";
+  const monthLabel = visibleMonth.toLocaleString(calendarLocale, {
     month: "long",
     year: "numeric",
   });
@@ -424,14 +426,14 @@ export default function CalendarPage() {
     }
   }
 
-  const pageTitle = hasRouteClass ? "Class Calendar" : "Calendar";
+  const pageTitle = hasRouteClass ? t("calendar.classTitle") : t("calendar.title");
 
   const subTitle = hasRouteClass
-    ? "Keep class events tidy, visible, and easy to update."
+    ? t("calendar.routeHelp")
     : filterMode === "all"
-      ? "See everything at a glance across classes and school-wide events."
+      ? t("calendar.allHelp")
       : filterMode === "global"
-        ? "Showing school-wide events only."
+        ? t("calendar.globalHelp")
         : `Showing events for ${classLabel(filterClassId) || `Class ${filterClassId}`}.`;
 
   return (
@@ -449,7 +451,7 @@ export default function CalendarPage() {
 
             <div className="min-w-[220px] flex-1">
               <div className="inline-flex items-center rounded-full border border-emerald-200 bg-white/90 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800 shadow-sm">
-                Elume Calendar
+                Elume {t("calendar.title")}
               </div>
               <div className="mt-3 text-3xl font-black tracking-tight text-slate-950 md:text-4xl">
                 {pageTitle}
@@ -463,7 +465,7 @@ export default function CalendarPage() {
                   {totalVisibleMonthEvents} event{totalVisibleMonthEvents === 1 ? "" : "s"} this month
                 </div>
                 <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-sm font-medium text-sky-800">
-                  AI-assisted planning
+                  {t("calendar.aiPlanning")}
                 </div>
                 {hasRouteClass && (
                   <div className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800">
@@ -479,7 +481,7 @@ export default function CalendarPage() {
                 className="rounded-2xl bg-[linear-gradient(90deg,#4fb788,#5ec7d8)] px-5 py-3 text-sm font-bold text-white shadow-[0_10px_24px_rgba(16,185,129,0.22)] transition hover:-translate-y-[1px]"
                 type="button"
               >
-                + New Event
+                {t("calendar.newEvent")}
               </button>
             </div>
           </div>
@@ -491,14 +493,14 @@ export default function CalendarPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
-                    View
+                    {t("calendar.view")}
                   </div>
                   <div className="mt-1 text-lg font-black tracking-tight text-slate-900">
-                    Filter events
+                    {t("calendar.filterEvents")}
                   </div>
                 </div>
                 <div className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                  Quick switch
+                  {t("calendar.quickSwitch")}
                 </div>
               </div>
 
@@ -512,7 +514,7 @@ export default function CalendarPage() {
                   type="button"
                   onClick={() => setFilterMode("all")}
                 >
-                  All events
+                  {t("calendar.allEvents")}
                 </button>
 
                 <button
@@ -524,7 +526,7 @@ export default function CalendarPage() {
                   type="button"
                   onClick={() => setFilterMode("global")}
                 >
-                  Global only
+                  {t("calendar.globalOnly")}
                 </button>
 
                 <button
@@ -536,7 +538,7 @@ export default function CalendarPage() {
                   type="button"
                   onClick={() => setFilterMode("class")}
                 >
-                  Class
+                  {t("calendar.class")}
                 </button>
               </div>
 
@@ -554,7 +556,7 @@ export default function CalendarPage() {
               {filterMode === "class" && (
                 <div className="mt-3">
                   <label className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Selected class
+                    {t("calendar.selectedClass")}
                   </label>
                   <select
                     value={filterClassId}
@@ -575,13 +577,13 @@ export default function CalendarPage() {
               <div className="flex h-full flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="inline-flex items-center rounded-full border border-emerald-200 bg-white/80 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800">
-                    Class Calendar
+                    {t("calendar.classTitle")}
                   </div>
                   <div className="mt-3 text-lg font-black tracking-tight text-slate-900">
-                    Focused class view
+                    {t("calendar.focusedView")}
                   </div>
                   <div className="mt-1 text-sm text-slate-600">
-                    Events here are linked directly to this class.
+                    {t("calendar.focusedViewHelp")}
                   </div>
 
                   <button
@@ -599,7 +601,7 @@ export default function CalendarPage() {
                   className="rounded-2xl bg-[linear-gradient(90deg,#33b17a,#58c7cf)] px-4 py-2.5 text-sm font-bold text-white shadow-[0_10px_24px_rgba(16,185,129,0.18)] transition hover:-translate-y-[1px]"
                   type="button"
                 >
-                  + New Event
+                  {t("calendar.newEvent")}
                 </button>
               </div>
             </div>
@@ -609,10 +611,10 @@ export default function CalendarPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="inline-flex items-center rounded-full border border-emerald-200 bg-white/80 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-800">
-                  AI Calendar Assistant
+                  {t("calendar.aiAssistant")}
                 </div>
                 <div className="mt-3 text-xl font-black tracking-tight text-slate-950">
-                  Turn a quick thought into a proper event
+                  {t("calendar.aiAssistantHelp")}
                 </div>
                 <div className="mt-1 text-sm text-slate-600">
                   Try something like <span className="font-semibold">“6th year maths test next Friday at 9:30”</span>
@@ -646,7 +648,7 @@ export default function CalendarPage() {
                 <AiAssistanceNotice variant="output" className="mb-3" />
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-black text-slate-900">AI suggestion ready</div>
+                    <div className="text-sm font-black text-slate-900">{t("calendar.aiSuggestionReady")}</div>
                     <div className="mt-1 text-sm text-slate-600">
                       We’ve opened it in the event modal so you can review and adjust it.
                     </div>
@@ -656,7 +658,7 @@ export default function CalendarPage() {
                     onClick={() => setShowModal(true)}
                     className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-100"
                   >
-                    Reopen review
+                    {t("calendar.reopenReview")}
                   </button>
                 </div>
               </div>
@@ -683,13 +685,13 @@ export default function CalendarPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">
-                Month View
+                {t("calendar.monthView")}
               </div>
               <div className="mt-1 text-2xl font-black tracking-tight text-slate-950">
                 {monthLabel}
               </div>
               <div className="mt-1 text-sm text-slate-500">
-                Tap a day to add something quickly.
+                {t("calendar.tapDay")}
               </div>
             </div>
 
@@ -711,7 +713,7 @@ export default function CalendarPage() {
                 }
                 className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100"
               >
-                Today
+                {t("calendar.today")}
               </button>
 
               <button
@@ -727,8 +729,11 @@ export default function CalendarPage() {
           </div>
 
           <div className="mt-5 hidden grid-cols-7 gap-3 text-center text-xs font-black uppercase tracking-[0.14em] text-slate-500 lg:grid">
-            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-              <div key={d} className="py-2">
+            {Array.from(
+              { length: 7 },
+              (_, index) => new Intl.DateTimeFormat(calendarLocale, { weekday: "short" }).format(new Date(2024, 0, index + 1)),
+            ).map((d, index) => (
+              <div key={index} className="py-2">
                 {d}
               </div>
             ))}
@@ -767,7 +772,7 @@ export default function CalendarPage() {
                       <span className="text-base font-black text-slate-950">{day}</span>
                       {isToday && (
                         <span className="rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-800">
-                          Today
+                          {t("calendar.today")}
                         </span>
                       )}
                     </div>
@@ -806,11 +811,11 @@ export default function CalendarPage() {
                               {e.title}
                             </div>
                             <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${meta.chip}`}>
-                              {formatEventTypeLabel(e.event_type)}
+                              {eventTypeLabel(e.event_type)}
                             </span>
                           </div>
                           <div className="mt-1 text-[11px] text-slate-600">
-                            {e.all_day ? "All day" : toLocalTimeHHMM(e.event_date)}
+                            {e.all_day ? t("calendar.allDay") : toLocalTimeHHMM(e.event_date)}
                             {e.class_id ? ` • ${classLabel(e.class_id)}` : ""}
                           </div>
                         </div>
@@ -844,7 +849,7 @@ export default function CalendarPage() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="text-xl font-black tracking-tight text-slate-950">
-                      {editingEventId ? "Edit event" : aiPreview ? "Review AI event" : "Create event"}
+                      {editingEventId ? t("calendar.editEvent") : aiPreview ? t("calendar.reviewAiEvent") : t("calendar.createEvent")}
                     </div>
 
                     {!editingEventId && aiPreview && (
@@ -880,7 +885,7 @@ export default function CalendarPage() {
                             <span
                               className={`rounded-full border px-3 py-1 text-xs font-semibold ${eventTypeMeta(draftType).chip}`}
                             >
-                              {formatEventTypeLabel(draftType)}
+                              {eventTypeLabel(draftType)}
                             </span>
 
                             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
@@ -931,11 +936,11 @@ export default function CalendarPage() {
                     <div className="mt-4 grid gap-3">
                       <div>
                         <label className="mb-1 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                          Event title
+                          {t("calendar.eventTitle")}
                         </label>
                         <input
                           className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-200 focus:bg-white"
-                          placeholder="Event title"
+                          placeholder={t("calendar.eventTitle")}
                           value={draftTitle}
                           onChange={(e) => setDraftTitle(e.target.value)}
                         />
@@ -943,7 +948,7 @@ export default function CalendarPage() {
 
                       <div>
                         <label className="mb-1 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                          Description
+                          {t("calendar.description")}
                         </label>
                         <textarea
                           className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-200 focus:bg-white"
@@ -964,7 +969,7 @@ export default function CalendarPage() {
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       <div>
                         <label className="mb-1 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                          Date
+                          {t("calendar.date")}
                         </label>
                         <input
                           type="date"
@@ -983,10 +988,10 @@ export default function CalendarPage() {
                           value={draftType}
                           onChange={(e) => setDraftType(e.target.value)}
                         >
-                          <option value="general">General</option>
-                          <option value="test">Test</option>
-                          <option value="homework">Homework</option>
-                          <option value="trip">Trip</option>
+                          <option value="general">{t("calendar.general")}</option>
+                          <option value="test">{t("calendar.test")}</option>
+                          <option value="homework">{t("calendar.homework")}</option>
+                          <option value="trip">{t("calendar.trip")}</option>
                         </select>
                       </div>
                     </div>
@@ -998,14 +1003,14 @@ export default function CalendarPage() {
                           checked={draftAllDay}
                           onChange={(e) => setDraftAllDay(e.target.checked)}
                         />
-                        All day
+                        {t("calendar.allDay")}
                       </label>
 
                       {!draftAllDay && (
                         <div className="mt-3 grid gap-3 sm:grid-cols-2">
                           <div>
                             <label className="mb-1 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                              Start time
+                              {t("calendar.time")}
                             </label>
                             <input
                               type="time"
@@ -1017,7 +1022,7 @@ export default function CalendarPage() {
 
                           <div>
                             <label className="mb-1 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                              End time
+                              {t("calendar.endTime")}
                             </label>
                             <input
                               type="time"
@@ -1035,7 +1040,7 @@ export default function CalendarPage() {
                 <div className="space-y-4">
                   <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
-                      Visibility
+                      {t("calendar.visibility")}
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -1049,7 +1054,7 @@ export default function CalendarPage() {
                             : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                         } ${hasRouteClass ? "cursor-not-allowed opacity-50" : ""}`}
                       >
-                        Global
+                        {t("calendar.global")}
                       </button>
                       <button
                         type="button"
@@ -1178,7 +1183,7 @@ export default function CalendarPage() {
                           className="rounded-full bg-[linear-gradient(90deg,#4fb788,#5ec7d8)] px-5 py-2.5 text-sm font-bold text-white shadow-[0_10px_24px_rgba(16,185,129,0.18)] transition hover:-translate-y-[1px]"
                           type="button"
                         >
-                          {editingEventId ? "Save changes" : "Save event"}
+                          {editingEventId ? t("common.saveChanges") : t("calendar.saveEvent")}
                         </button>
                       </div>
                     </div>
