@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { BookOpen, BrainCircuit, UsersRound } from "lucide-react";
+import { ArrowUpRight, BookOpen, BrainCircuit, UsersRound } from "lucide-react";
 import ELogo2 from "./assets/ELogo2.png";
 import {
     readRememberedStudentClasses,
@@ -640,6 +640,37 @@ export default function StudentPage() {
                                 onSubmit={() => submitJoin("collab")}
                                 autoFocused={openMode === "collab"}
                             />
+
+                            <section className="mt-8 border-t border-slate-200 pt-8">
+                                <div className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Study</div>
+                                <div className="mt-3 rounded-[28px] border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-slate-50 p-6 shadow-xl shadow-blue-100/50">
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div>
+                                            <div className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-800 px-4 py-2 text-sm font-black tracking-wide text-white shadow-lg">
+                                                <BookOpen aria-hidden="true" size={18} strokeWidth={2.5} />
+                                                STUDY RESOURCE
+                                            </div>
+                                            <h2 className="mt-4 text-2xl font-black tracking-tight text-slate-900 sm:text-[28px]">EXAM PAPERS</h2>
+                                            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 sm:text-base">
+                                                Browse past Junior Cycle and Leaving Certificate exam papers.
+                                            </p>
+                                        </div>
+                                        <span className="shrink-0 rounded-xl border border-blue-200 bg-blue-100 px-3 py-2 text-xs font-black tracking-[0.12em] text-blue-800">
+                                            NO CODE NEEDED
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            window.location.href = `${window.location.origin}/#/student/exam-papers`;
+                                        }}
+                                        className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-800 px-5 py-3 text-sm font-black text-white shadow-lg transition hover:scale-[1.01]"
+                                    >
+                                        Browse Exam Papers
+                                        <ArrowUpRight aria-hidden="true" size={17} strokeWidth={2.5} />
+                                    </button>
+                                </div>
+                            </section>
                         </div>
 
                         <div className="space-y-5">

@@ -32,6 +32,7 @@ import LegalPage from "./LegalPage";
 import ResetPasswordPage from "./ResetPasswordPage";
 import VerifyEmailPage from "./VerifyEmailPage";
 import StudentPage from "./StudentPage";
+import StudentExamPapersPage from "./StudentExamPapersPage";
 import BillingSuccessPage from "./BillingSuccessPage";
 import BillingCancelPage from "./BillingCancelPage";
 import BillingOnboardingPage from "./BillingOnboardingPage";
@@ -2295,6 +2296,7 @@ export default function App() {
         <Route path="/demo/cat4-analysis" element={<Cat4DemoPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/student" element={<StudentPage />} />
+        <Route path="/student/exam-papers" element={<StudentExamPapersPage />} />
         <Route path="/student/:token" element={<StudentClassPage />} />
         <Route path="/s/:token" element={<StudentClassPage />} />
         <Route
