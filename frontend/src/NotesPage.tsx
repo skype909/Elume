@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 import { BackToClassButton, ClassPageActionBar } from "./ClassPageActions";
 import InlineNotice from "./Components/InlineNotice";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 import { userFacingError } from "./userFacingError";
 
 const API_BASE = "/api";
@@ -95,19 +96,18 @@ function resolveFileUrl(u: string) {
   return `${API_BASE}/${u}`;
 }
 
-function formatStamp(ts?: string) {
+function formatStamp(ts: string | undefined, language: "en" | "ga") {
   if (!ts) return "";
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
 
-  const day = d.getDate();
-  const month = d.toLocaleString("en-IE", { month: "short" });
-  let h = d.getHours();
-  const m = d.getMinutes().toString().padStart(2, "0");
-  const ampm = h >= 12 ? "pm" : "am";
-  h = h % 12 || 12;
-
-  return `${day} ${month}, ${h}:${m}${ampm}`;
+  return d.toLocaleString(language === "ga" ? "ga-IE" : "en-IE", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
 }
 
 function getTileCols(count: number) {
@@ -133,6 +133,7 @@ function pickTileTone(index: number) {
 }
 
 export default function NotesPage() {
+  const { t, language } = useUiLanguage();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const classId = useMemo(() => Number(id), [id]);
@@ -514,10 +515,10 @@ export default function NotesPage() {
   }
 
   const pageTitle = loadingClass
-    ? "Notes"
+    ? t("notes.title")
     : classInfo?.name
-      ? `${classInfo.name} Notes`
-      : "Notes";
+      ? `${classInfo.name} ${t("notes.title")}`
+      : t("notes.title");
 
   return (
     <div className="min-h-screen bg-[#dff3df] px-4 py-6 md:px-6">
@@ -540,12 +541,12 @@ export default function NotesPage() {
             <div className="min-w-0">
               <div className="inline-flex items-center rounded-full bg-emerald-600 px-6 py-2 text-3xl font-bold tracking-wide text-white">
                 <span style={{ textShadow: "0 2px 4px rgba(0,0,0,0.35)" }}>
-                  Notes
+                  {t("notes.title")}
                 </span>
               </div>
 
               <div className="mt-1 text-sm text-slate-500">
-                Organise PDFs, slides, worksheets, audio and classroom files.
+                {t("notes.description")}
               </div>
 
               <div className="mt-2 text-xs font-medium text-slate-400">
@@ -560,7 +561,7 @@ export default function NotesPage() {
                   onClick={() => setSelectedTopicId(null)}
                   className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  All Categories
+                  {t("notes.allCategories")}
                 </button>
               ) : (
                 <span />
@@ -572,7 +573,7 @@ export default function NotesPage() {
                 className="rounded-xl border-2 border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
                 disabled={busy}
               >
-                Audio Library
+                {t("notes.audioLibrary")}
               </button>
 
               <button
@@ -580,7 +581,7 @@ export default function NotesPage() {
                 onClick={() => openUploadForTopic(selectedTopicId ?? undefined)}
                 className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
               >
-                Upload
+                {t("notes.upload")}
               </button>
             </div>
           </div>
@@ -592,7 +593,7 @@ export default function NotesPage() {
               placeholder={
                 selectedTopic
                   ? `Search inside ${selectedTopic.name}...`
-                  : "Search categories or files..."
+                  : t("notes.search")
               }
               className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-emerald-200 lg:max-w-xl"
             />
@@ -610,10 +611,10 @@ export default function NotesPage() {
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <div className="text-lg font-black tracking-tight text-slate-900">
-                  Categories
+                  {t("notes.categories")}
                 </div>
                 <div className="text-sm text-slate-500">
-                  Dashboard-style topic tiles for fast classroom access
+                  {t("notes.categoryHelp")}
                 </div>
               </div>
 
@@ -622,17 +623,17 @@ export default function NotesPage() {
                 onClick={() => openUploadForTopic()}
                 className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
               >
-                + Add Category / Upload
+                {t("notes.addCategoryUpload")}
               </button>
             </div>
 
             {loadingTopics || loadingNotes ? (
               <div className="rounded-3xl border-2 border-slate-200 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-                Loading notes workspace...
+                {t("notes.loadingWorkspace")}
               </div>
             ) : topicCards.length === 0 ? (
               <div className="rounded-3xl border-2 border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center">
-                <div className="text-xl font-bold text-slate-800">No categories yet</div>
+                <div className="text-xl font-bold text-slate-800">{t("notes.noCategories")}</div>
                 <div className="mt-2 text-sm text-slate-600">
                   Create your first category and upload files into it.
                 </div>
@@ -641,7 +642,7 @@ export default function NotesPage() {
                   onClick={() => openUploadForTopic()}
                   className="mt-5 rounded-2xl border-2 border-slate-900 bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
                 >
-                  Start Notes Library
+                  {t("notes.startLibrary")}
                 </button>
               </div>
             ) : (
@@ -678,7 +679,7 @@ export default function NotesPage() {
 
                         <div className="flex items-end justify-between">
                           <div className="text-sm font-semibold opacity-80">
-                            {topic.latest ? `Updated ${formatStamp(topic.latest)}` : "Ready to fill"}
+                            {topic.latest ? `Updated ${formatStamp(topic.latest, language)}` : "Ready to fill"}
                           </div>
                           <div className="text-xl opacity-70">▣</div>
                         </div>
@@ -696,7 +697,7 @@ export default function NotesPage() {
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Category
+                  {t("notes.category")}
                 </div>
                 <div className="mt-1 text-3xl font-black tracking-tight text-slate-900">
                   {selectedTopic.name}
@@ -709,7 +710,7 @@ export default function NotesPage() {
                   onClick={() => openUploadForTopic(selectedTopic.id)}
                   className="rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                 >
-                  Add files
+                  {t("notes.addFiles")}
                 </button>
 
                 <button
@@ -717,18 +718,18 @@ export default function NotesPage() {
                   onClick={() => handleDeleteTopic(selectedTopic.id)}
                   className="rounded-2xl border-2 border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
                 >
-                  Delete category
+                  {t("notes.deleteCategory")}
                 </button>
               </div>
             </div>
 
             {loadingNotes ? (
               <div className="rounded-3xl border-2 border-slate-200 bg-slate-50 px-5 py-8 text-sm text-slate-600">
-                Loading files...
+                {t("notes.loadingFiles")}
               </div>
             ) : selectedNotes.length === 0 ? (
               <div className="rounded-3xl border-2 border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
-                <div className="text-lg font-bold text-slate-800">No files in this category yet</div>
+                <div className="text-lg font-bold text-slate-800">{t("notes.noFiles")}</div>
                 <div className="mt-2 text-sm text-slate-600">
                   {isAudioTopicName(selectedTopic.name)
                     ? "Upload MP3, WAV, M4A, AAC, or OGG files for Whiteboard playback."
@@ -739,7 +740,7 @@ export default function NotesPage() {
                   onClick={() => openUploadForTopic(selectedTopic.id)}
                   className="mt-5 rounded-2xl border-2 border-slate-900 bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
                 >
-                  {isAudioTopicName(selectedTopic.name) ? "Upload audio" : "Upload files"}
+                  {isAudioTopicName(selectedTopic.name) ? t("notes.uploadAudio") : t("notes.uploadFiles")}
                 </button>
               </div>
             ) : (
@@ -754,7 +755,7 @@ export default function NotesPage() {
                         {n.filename}
                       </div>
                       <div className="mt-1 text-sm text-slate-500">
-                        Uploaded: {formatStamp(n.uploaded_at)}
+                        {t("notes.uploaded")} {formatStamp(n.uploaded_at, language)}
                       </div>
                     </div>
 
@@ -764,7 +765,7 @@ export default function NotesPage() {
                         onClick={() => handleOpenNote(n)}
                         className="rounded-2xl border-2 border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100"
                       >
-                        Open
+                        {t("common.open")}
                       </button>
 
                       {n.whiteboard_state_id ? (
@@ -773,7 +774,7 @@ export default function NotesPage() {
                           onClick={() => handleReopenWhiteboard(n)}
                           className="rounded-2xl border-2 border-emerald-200 bg-white px-5 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
                         >
-                          Reopen in Whiteboard
+                          {t("notes.reopenWhiteboard")}
                         </button>
                       ) : null}
 
@@ -782,7 +783,7 @@ export default function NotesPage() {
                         onClick={() => handleDeleteNote(n.id)}
                         className="rounded-2xl border-2 border-red-200 bg-white px-5 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
                       >
-                        Delete
+                        {t("common.delete")}
                       </button>
                     </div>
                   </div>
@@ -799,10 +800,10 @@ export default function NotesPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-2xl font-black tracking-tight text-slate-900">
-                  Upload notes
+                  {t("notes.uploadNotes")}
                 </div>
                 <div className="mt-1 text-sm text-slate-600">
-                  Choose an existing category or create a new one before uploading.
+                  {t("notes.uploadHelp")}
                 </div>
               </div>
 
@@ -816,7 +817,7 @@ export default function NotesPage() {
                   }}
                 className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
               >
-                Close
+                {t("common.close")}
               </button>
             </div>
 
@@ -831,7 +832,7 @@ export default function NotesPage() {
                       : "rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
                   }
                 >
-                  Existing category
+                  {t("notes.existingCategory")}
                 </button>
 
                 <button
@@ -843,21 +844,21 @@ export default function NotesPage() {
                       : "rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
                   }
                 >
-                  Create new category
+                  {t("notes.createNewCategory")}
                 </button>
               </div>
 
               {uploadMode === "existing" ? (
                 <div>
                   <label className="mb-2 block text-sm font-bold text-slate-700">
-                    Category
+                    {t("notes.category")}
                   </label>
                   <select
                     value={uploadTopicId}
                     onChange={(e) => setUploadTopicId(e.target.value ? Number(e.target.value) : "")}
                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
                   >
-                    <option value="">Choose a category...</option>
+                    <option value="">{t("notes.chooseCategory")}</option>
                     {topics.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name}
@@ -868,7 +869,7 @@ export default function NotesPage() {
               ) : (
                 <div>
                   <label className="mb-2 block text-sm font-bold text-slate-700">
-                    New category name
+                    {t("notes.newCategoryName")}
                   </label>
                   <input
                     value={newTopicName}
@@ -881,7 +882,7 @@ export default function NotesPage() {
 
               <div>
                 <label className="mb-2 block text-sm font-bold text-slate-700">
-                  {isAudioUpload ? "Audio files" : "Files"}
+                  {isAudioUpload ? t("notes.audioFiles") : t("notes.files")}
                 </label>
 
                 {isAudioUpload && (
@@ -904,7 +905,7 @@ export default function NotesPage() {
                   onClick={() => fileInputRef.current?.click()}
                   className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-100"
                 >
-                  {isAudioUpload ? "Choose audio files" : "Choose files"}
+                  {isAudioUpload ? t("notes.chooseAudioFiles") : t("notes.chooseFiles")}
                 </button>
 
                 {pickedFiles.length > 0 && (
@@ -940,7 +941,7 @@ export default function NotesPage() {
                   className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
                   disabled={busy}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
 
                 <button
@@ -949,7 +950,7 @@ export default function NotesPage() {
                   className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                   disabled={busy}
                 >
-                  {busy ? "Uploading..." : "Upload"}
+                  {busy ? t("notes.uploading") : t("notes.upload")}
                 </button>
               </div>
             </div>
@@ -961,10 +962,10 @@ export default function NotesPage() {
         <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="office-conversion-title">
           <div className="w-full max-w-xl rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-2xl md:p-7">
             <div className="inline-flex rounded-2xl bg-emerald-50 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-emerald-700">
-              Resource preparation
+              {t("notes.resourcePreparation")}
             </div>
             <h2 id="office-conversion-title" className="mt-4 text-2xl font-black tracking-tight text-slate-900">
-              Make this resource ready for Elume?
+              {t("notes.prepareResource")}
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               Elume can convert this file to PDF so it can be used with Whiteboard, quizzes and other teaching tools.
@@ -983,21 +984,21 @@ export default function NotesPage() {
                 onClick={() => setPendingOfficeFiles(null)}
                 className="min-h-11 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
                 onClick={() => void chooseOfficeUploadMode(false)}
                 className="min-h-11 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 transition hover:bg-slate-50"
               >
-                Upload Original
+                {t("notes.uploadOriginal")}
               </button>
               <button
                 type="button"
                 onClick={() => void chooseOfficeUploadMode(true)}
                 className="min-h-11 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700"
               >
-                Convert &amp; Upload
+                {t("notes.convertAndUpload")}
               </button>
             </div>
           </div>
