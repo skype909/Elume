@@ -1845,7 +1845,7 @@ export default function ClassPage() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-lg font-extrabold text-slate-900">
                     {timerFinished ? <Bell size={18} className="text-red-600" /> : <Timer size={18} />}
-                    {timerFinished ? "Time is up!" : "Timer"}
+                    {timerFinished ? t("tools.timeUp") : t("tools.timer")}
                   </div>
 
                   <button
@@ -1878,7 +1878,7 @@ export default function ClassPage() {
                 {!timerRunning && !timerFinished && (
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     <label className="text-sm font-semibold text-slate-700">
-                      Minutes
+                      {t("tools.minutes")}
                       <input
                         type="number"
                         value={timerMinutes}
@@ -1888,7 +1888,7 @@ export default function ClassPage() {
                     </label>
 
                     <label className="text-sm font-semibold text-slate-700">
-                      Seconds
+                      {t("tools.seconds")}
                       <input
                         type="number"
                         value={timerSeconds}
@@ -1922,7 +1922,7 @@ export default function ClassPage() {
                         title="Start timer"
                       >
                         <Play size={16} />
-                        Start
+                        {t("tools.start")}
                       </button>
                     </div>
                   </div>
@@ -1936,7 +1936,7 @@ export default function ClassPage() {
                       className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
                     >
                       <Pause size={16} />
-                      Pause
+                      {t("tools.pause")}
                     </button>
 
                     <button
@@ -1950,7 +1950,7 @@ export default function ClassPage() {
                       className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
                     >
                       <RotateCcw size={16} />
-                      Reset
+                      {t("tools.reset")}
                     </button>
                   </div>
                 )}
@@ -1967,7 +1967,7 @@ export default function ClassPage() {
                       className="rounded-2xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
                     >
                       <RotateCcw size={16} />
-                      Reset
+                      {t("tools.reset")}
                     </button>
 
                     <button
@@ -1979,7 +1979,7 @@ export default function ClassPage() {
                       }}
                       className="rounded-2xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                     >
-                      Done
+                      {t("tools.done")}
                     </button>
                   </div>
                 )}
@@ -1992,7 +1992,7 @@ export default function ClassPage() {
               <div className="w-full max-w-md rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-lg font-extrabold text-slate-900">Random Name Generator</div>
+                    <div className="text-lg font-extrabold text-slate-900">{t("tools.randomName")}</div>
                     <div className="mt-1 text-sm text-slate-500">
                       Picks from active students in Class Admin.
                     </div>
@@ -2003,7 +2003,7 @@ export default function ClassPage() {
                     onClick={() => setNameGenOpen(false)}
                     className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
                   >
-                    Close
+                    {t("common.close")}
                   </button>
                 </div>
 
@@ -2047,7 +2047,7 @@ export default function ClassPage() {
                     onClick={pickRandomName}
                     disabled={!nameValid || namePicking || loadingStudents}
                   >
-                    {loadingStudents ? "Loading..." : namePicking ? "Picking..." : "Pick Name"}
+                    {loadingStudents ? t("common.loading") : namePicking ? "Picking..." : t("tools.pickName")}
                   </button>
 
                   <button
@@ -2056,7 +2056,7 @@ export default function ClassPage() {
                     onClick={() => setNameResult(null)}
                     disabled={namePicking}
                   >
-                    Reset
+                    {t("tools.reset")}
                   </button>
                 </div>
 
@@ -2074,7 +2074,7 @@ export default function ClassPage() {
               <div className="flex w-full max-w-2xl max-h-[90vh] flex-col overflow-hidden rounded-3xl border-2 border-slate-200 bg-white shadow-xl">
                 <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
                   <div>
-                    <div className="text-lg font-extrabold text-slate-900">Team Generator</div>
+                    <div className="text-lg font-extrabold text-slate-900">{t("tools.teamGenerator")}</div>
                     <div className="mt-1 text-sm text-slate-500">
                       Builds quick random groups from active students in Class Admin.
                     </div>
@@ -2085,7 +2085,7 @@ export default function ClassPage() {
                     onClick={() => setTeamGenOpen(false)}
                     className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
                   >
-                    Close
+                    {t("common.close")}
                   </button>
                 </div>
 
@@ -2094,7 +2094,7 @@ export default function ClassPage() {
                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                       <div>
                         <div className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-                          Group size
+                          {t("tools.groupSize")}
                         </div>
                         <div className="mt-1 text-xs text-slate-500">
                           {loadingStudents

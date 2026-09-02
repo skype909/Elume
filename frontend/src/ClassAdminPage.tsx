@@ -4,6 +4,7 @@ import { apiFetch } from "./api";
 import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 import InlineNotice from "./Components/InlineNotice";
 import { userFacingError } from "./userFacingError";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 const API_BASE = "/api";
 
@@ -93,6 +94,7 @@ const REPORT_INDICATORS = [
 ];
 
 export default function ClassAdminPage() {
+    const { t } = useUiLanguage();
     const { id } = useParams<{ id: string }>();
     const classId = useMemo(() => Number(id), [id]);
     const validClassId = Number.isFinite(classId) && classId > 0;
@@ -964,7 +966,7 @@ export default function ClassAdminPage() {
                     <div className={`${card} ${cardPad} mt-6`}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                                <div className="text-lg font-extrabold tracking-tight text-slate-900">Student Roster</div>
+                                <div className="text-lg font-extrabold tracking-tight text-slate-900">{t("classAdmin.studentRoster")}</div>
                                 <div className="mt-1 text-sm text-slate-600">
                                     Add first names only. Use notes for quick teacher reminders.
                                 </div>
@@ -1051,7 +1053,7 @@ export default function ClassAdminPage() {
                             {loading ? (
                                 <div className="text-sm text-slate-600">Loading…</div>
                             ) : students.length === 0 ? (
-                                <div className="text-sm text-slate-600">No students yet.</div>
+                            <div className="text-sm text-slate-600">{t("classAdmin.noStudents")}</div>
                             ) : (
                                 <div className="divide-y divide-slate-200 rounded-3xl border-2 border-slate-200 bg-white">
                                     {students.map((s) => (
@@ -1107,7 +1109,7 @@ export default function ClassAdminPage() {
                 {/* Tests tab */}
                 {tab === "tests" && (
                     <div className={`${card} ${cardPad} mt-6`}>
-                        <div className="text-lg font-extrabold tracking-tight text-slate-900">Tests & Results</div>
+                        <div className="text-lg font-extrabold tracking-tight text-slate-900">{t("classAdmin.testsResults")}</div>
                         <div className="mt-1 text-sm text-slate-600">
                             Open a test to enter results, edit the test details, or delete it completely.
                         </div>
@@ -1116,7 +1118,7 @@ export default function ClassAdminPage() {
                             {loading ? (
                                 <div className="text-sm text-slate-600">Loading…</div>
                             ) : tests.length === 0 ? (
-                                <div className="text-sm text-slate-600">No tests yet.</div>
+                                <div className="text-sm text-slate-600">{t("classAdmin.noTests")}</div>
                             ) : (
                                 <div className="divide-y divide-slate-200 rounded-3xl border-2 border-slate-200 bg-white">
                                     {tests.map((t) => (
@@ -1164,7 +1166,7 @@ export default function ClassAdminPage() {
                     <div className={`${card} ${cardPad} mt-6`}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                                <div className="text-lg font-extrabold tracking-tight text-slate-900">Insights</div>
+                                <div className="text-lg font-extrabold tracking-tight text-slate-900">{t("classAdmin.insights")}</div>
                                 <div className="mt-1 text-sm text-slate-600">
                                     Class average • At-risk list • Rankings by average
                                 </div>
@@ -1202,7 +1204,7 @@ export default function ClassAdminPage() {
 
                         <div className="mt-5 grid gap-4 md:grid-cols-3">
                             <div className="rounded-3xl border-2 border-slate-200 bg-white p-4">
-                                <div className="text-sm font-semibold text-slate-600">Class Average</div>
+                                <div className="text-sm font-semibold text-slate-600">{t("classAdmin.classAverage")}</div>
                                 <div className="mt-2 flex items-end gap-3">
                                     <div className="text-4xl font-extrabold tracking-tight text-slate-900">
                                         {insightsLoading ? "…" : pct(insights?.class_average ?? null)}
@@ -1630,7 +1632,7 @@ export default function ClassAdminPage() {
                     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
                         <div className="w-full max-w-lg rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl">
                             <div className="flex items-center justify-between">
-                                <div className="text-lg font-extrabold text-slate-900">Create Test</div>
+                                <div className="text-lg font-extrabold text-slate-900">{t("classAdmin.createTest")}</div>
                                 <button
                                     type="button"
                                     onClick={() => setShowCreateTest(false)}
@@ -1681,7 +1683,7 @@ export default function ClassAdminPage() {
                     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
                         <div className="w-full max-w-lg rounded-3xl border-2 border-slate-200 bg-white p-5 shadow-xl">
                             <div className="flex items-center justify-between">
-                                <div className="text-lg font-extrabold text-slate-900">Edit Test</div>
+                                <div className="text-lg font-extrabold text-slate-900">{t("classAdmin.editTest")}</div>
                                 <button
                                     type="button"
                                     onClick={() => {
@@ -1778,7 +1780,7 @@ export default function ClassAdminPage() {
 
                             <div className="mt-4 grid gap-3 md:grid-cols-3">
                                 <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-3">
-                                    <div className="text-xs font-semibold text-slate-500">Students</div>
+                                    <div className="text-xs font-semibold text-slate-500">{t("classAdmin.students")}</div>
                                     <div className="mt-1 text-2xl font-extrabold text-slate-900">{resultRows.length}</div>
                                 </div>
 
@@ -1798,7 +1800,7 @@ export default function ClassAdminPage() {
                             <div className="mt-4 overflow-hidden rounded-3xl border-2 border-slate-200">
                                 <div className="grid grid-cols-12 gap-2 border-b-2 border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600">
                                     <div className="col-span-4">Student</div>
-                                    <div className="col-span-3">Result (%)</div>
+                                    <div className="col-span-3">{t("classAdmin.result")}</div>
                                     <div className="col-span-2 text-center">Absent</div>
                                     <div className="col-span-3 text-right">Actions</div>
                                 </div>
