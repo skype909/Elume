@@ -242,6 +242,9 @@ class WhiteboardStateModel(Base):
 
 class ClassModel(Base):
     __tablename__ = "classes"
+    __table_args__ = (
+        Index("ix_classes_owner_active_dashboard_order", "owner_user_id", "is_archived", "dashboard_order", "id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
@@ -250,6 +253,7 @@ class ClassModel(Base):
     subject = Column(String, nullable=False)
     stream = Column(String, nullable=True)
     color = Column(String, nullable=True)
+    dashboard_order = Column(Integer, nullable=True)
     preferred_exam_subject = Column(String, nullable=True)
     class_code = Column(String, unique=True, index=True, nullable=True)
     class_pin = Column(String, nullable=True)

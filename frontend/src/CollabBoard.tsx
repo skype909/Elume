@@ -42,7 +42,7 @@ type BoardObjectType =
     | "speech"
     | "image";
 
-type BoardObject = {
+export type BoardObject = {
     id: string;
     type: BoardObjectType;
     x: number;
@@ -240,7 +240,7 @@ function objectContainsPoint(obj: BoardObject, pt: StrokePoint) {
     );
 }
 
-function findTopObjectAtPoint(objects: BoardObject[], pt: StrokePoint) {
+export function findTopObjectAtPoint(objects: BoardObject[], pt: StrokePoint) {
     for (let i = objects.length - 1; i >= 0; i--) {
         if (objectContainsPoint(objects[i], pt)) return objects[i];
     }
@@ -1558,9 +1558,7 @@ export default function CollabBoard({
 
         if (tool === "select") {
             const hitObject = findTopObjectAtPoint(objects, pt);
-            if (!hitObject) {
-                setSelectedObjectId(null);
-            }
+            setSelectedObjectId(hitObject?.id ?? null);
             interactionRef.current = { mode: "idle" };
             return;
         }

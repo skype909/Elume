@@ -13,6 +13,8 @@ import { Settings, Timer, Bell, Play, Pause, RotateCcw } from "lucide-react";
 import { apiFetch, openProtectedFileInNewTab } from "./api";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
 import UiText from "./Components/UiText";
+import { classColourBackgroundClass } from "./classAppearance";
+import { resolveClassPageColourKey } from "./classAppearanceViews";
 
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
@@ -131,18 +133,6 @@ function resolveFileUrl(u: string) {
   if (u.startsWith("/api/")) return u;
   if (u.startsWith("/")) return `${API_BASE}${u}`;
   return `${API_BASE}/${u}`;
-}
-
-function resolveClassColour(classInfo: ClassItem | null, metaEntry: any): string | null {
-  if (typeof classInfo?.color === "string" && classInfo.color.trim()) {
-    return classInfo.color;
-  }
-
-  if (typeof metaEntry?.color === "string" && metaEntry.color.trim()) {
-    return metaEntry.color;
-  }
-
-  return null;
 }
 
 async function openProtectedAttachmentInNewTab(link: string) {
@@ -379,7 +369,6 @@ export default function ClassPage() {
   const { id } = useParams<{ id: string }>();
   const classId = useMemo(() => Number(id), [id]);
   const validClassId = Number.isFinite(classId) && classId > 0;
-  const [classColour, setClassColour] = useState<string>("bg-blue-500");
   const [studentToken, setStudentToken] = useState<string | null>(null);
   const [studentUrl, setStudentUrl] = useState<string | null>(null);
   const [classCode, setClassCode] = useState<string | null>(null);
@@ -387,6 +376,10 @@ export default function ClassPage() {
   const [loadingClassAccess, setLoadingClassAccess] = useState(false);
 
   const [classInfo, setClassInfo] = useState<ClassItem | null>(null);
+  const [legacyLocalColour, setLegacyLocalColour] = useState<string | null>(null);
+  const classColour = classColourBackgroundClass(
+    resolveClassPageColourKey(classInfo?.color, legacyLocalColour, classId)
+  );
   const [posts, setPosts] = useState<Post[]>([]);
   const [content, setContent] = useState("");
   const [author, setAuthor] = useState(() => loadTeacherDisplayName() || "");
@@ -599,11 +592,7 @@ export default function ClassPage() {
       const raw = localStorage.getItem(metaKeyForUser());
       const meta = raw ? JSON.parse(raw) : null;
       const entry = meta?.[String(classId)] || {};
-
-      const resolvedColour = resolveClassColour(classInfo, entry);
-      if (resolvedColour) {
-        setClassColour(resolvedColour);
-      }
+      setLegacyLocalColour(typeof entry?.color === "string" ? entry.color : null);
 
       const adminTeacherName = loadTeacherDisplayName();
       const savedTeacher = typeof entry?.teacher === "string" ? entry.teacher.trim() : "";
@@ -628,7 +617,9 @@ export default function ClassPage() {
       }
 
       setRoomLabel(savedRoom);
-    } catch {}
+    } catch {
+      setLegacyLocalColour(null);
+    }
   }, [classId, classInfo]);
 
   useEffect(() => {

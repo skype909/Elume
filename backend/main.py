@@ -122,6 +122,40 @@ from models import (
 
 )
 
+CLASS_COLOUR_KEYS = frozenset({
+    "emerald", "teal", "cyan", "sky", "blue", "indigo",
+    "violet", "fuchsia", "rose", "red", "orange", "amber",
+})
+LEGACY_CLASS_COLOUR_KEYS = {
+    "bg-emerald-500": "emerald",
+    "bg-teal-500": "teal",
+    "bg-cyan-500": "cyan",
+    "bg-sky-500": "sky",
+    "bg-blue-500": "blue",
+    "bg-indigo-500": "indigo",
+    "bg-violet-500": "violet",
+    "bg-fuchsia-500": "fuchsia",
+    "bg-rose-500": "rose",
+    "bg-red-500": "red",
+    "bg-orange-500": "orange",
+    "bg-amber-400": "amber",
+}
+
+
+def _normalise_class_colour(value: Optional[str]) -> Optional[str]:
+    """Accept canonical keys and recognised historic palette classes only."""
+    if value is None:
+        return None
+    colour = value.strip()
+    if not colour:
+        return None
+    if colour in CLASS_COLOUR_KEYS:
+        return colour
+    legacy_colour = LEGACY_CLASS_COLOUR_KEYS.get(colour)
+    if legacy_colour:
+        return legacy_colour
+    raise HTTPException(status_code=422, detail="Choose a supported class colour")
+
 def _dev_autologin_enabled() -> bool:
     return os.getenv("DEV_AUTO_LOGIN", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -11789,6 +11823,7 @@ def get_classes(
             ClassModel.owner_user_id == user.id,
             ClassModel.is_archived == archived,
         )
+        .order_by(ClassModel.dashboard_order.asc().nullslast(), ClassModel.id.asc())
         .all()
     )
 
@@ -11815,12 +11850,24 @@ def create_class(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
+    existing_active_classes = (
+        db.query(ClassModel)
+        .filter(
+            ClassModel.owner_user_id == user.id,
+            ClassModel.is_archived == False,
+        )
+        .all()
+    )
+    for existing in existing_active_classes:
+        existing.dashboard_order = (existing.dashboard_order if existing.dashboard_order is not None else 0) + 1
+
     c = ClassModel(
         owner_user_id=user.id,
         name=new_class.name,
         subject=new_class.subject,
         stream=(new_class.stream or "").strip() or None,
-        color=(new_class.color or "").strip() or None,
+        color=_normalise_class_colour(new_class.color),
+        dashboard_order=0,
         preferred_exam_subject=(new_class.preferred_exam_subject or "").strip() or None,
         class_code=_rand_class_code(db),
         class_pin=_rand_class_pin(),
@@ -11833,6 +11880,43 @@ def create_class(
     _get_or_create_active_student_access_link(c.id, db)
 
     return c
+
+
+@app.put("/classes/dashboard-order", response_model=List[schemas.ClassOut])
+def update_dashboard_order(
+    payload: schemas.ClassDashboardOrderUpdate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    class_ids = payload.class_ids
+    if not class_ids or any(not isinstance(class_id, int) or class_id <= 0 for class_id in class_ids):
+        raise HTTPException(status_code=422, detail="Provide the complete active class order")
+    if len(class_ids) != len(set(class_ids)):
+        raise HTTPException(status_code=422, detail="Class order cannot contain duplicates")
+
+    active_classes = (
+        db.query(ClassModel)
+        .filter(
+            ClassModel.owner_user_id == user.id,
+            ClassModel.is_archived == False,
+        )
+        .all()
+    )
+    active_ids = {cls.id for cls in active_classes}
+    if set(class_ids) != active_ids:
+        raise HTTPException(status_code=400, detail="Class order must include every active class")
+
+    classes_by_id = {cls.id: cls for cls in active_classes}
+    for order, class_id in enumerate(class_ids):
+        classes_by_id[class_id].dashboard_order = order
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return [classes_by_id[class_id] for class_id in class_ids]
 
 
 @app.post("/classes/demo", response_model=schemas.ClassOut)
@@ -12137,8 +12221,10 @@ def update_class(
     if "stream" in payload and isinstance(payload["stream"], str):
         cls.stream = payload["stream"].strip() or None
 
-    if "color" in payload and isinstance(payload["color"], str):
-        cls.color = payload["color"].strip() or None
+    if "color" in payload:
+        if not isinstance(payload["color"], str):
+            raise HTTPException(status_code=422, detail="Choose a supported class colour")
+        cls.color = _normalise_class_colour(payload["color"])
 
     if "preferred_exam_subject" in payload and isinstance(payload["preferred_exam_subject"], str):
         cls.preferred_exam_subject = payload["preferred_exam_subject"].strip() or None

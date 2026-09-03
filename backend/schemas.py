@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Dict, List, Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictInt
 
 
 class CurrentUserOut(BaseModel):
@@ -206,6 +206,10 @@ class ClassCreate(BaseModel):
     preferred_exam_subject: Optional[str] = None
 
 
+class ClassDashboardOrderUpdate(BaseModel):
+    class_ids: List[StrictInt]
+
+
 class PostCreate(BaseModel):
     author: str
     content: str
@@ -239,6 +243,7 @@ class ClassOut(BaseModel):
     subject: str
     stream: Optional[str] = None
     color: Optional[str] = None
+    dashboard_order: Optional[int] = None
     preferred_exam_subject: Optional[str] = None
     is_archived: bool = False
     archived_at: Optional[datetime] = None

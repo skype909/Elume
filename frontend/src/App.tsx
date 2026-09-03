@@ -1,5 +1,5 @@
 import { Routes, Route, useNavigate, useLocation, Link } from "react-router-dom";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ClassPage from "./ClassPage";
 import NotesPage from "./NotesPage";
@@ -48,6 +48,19 @@ import { userFacingError } from "./userFacingError";
 import LanguageSwitch from "./Components/LanguageSwitch";
 import UiText from "./Components/UiText";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
+import {
+  CLASS_COLOUR_OPTIONS,
+  DEFAULT_CLASS_COLOUR_KEY,
+  classColourBackgroundClass,
+  normaliseClassColourKey,
+  resolveClassColourKey,
+  type ClassColourKey,
+} from "./classAppearance";
+import {
+  consumeCreateClassHandoff,
+  shouldShowFirstClassPrompt,
+  type ServerClassLoadStatus,
+} from "./classOnboarding";
 
 
 import ELogo2 from "./assets/ELogo2.png";
@@ -61,6 +74,7 @@ type ClassItem = {
   subject: string;
   stream?: string | null;
   color?: string | null;
+  dashboard_order?: number | null;
   is_archived?: boolean;
   archived_at?: string | null;
 };
@@ -173,25 +187,6 @@ function loadTeacherTimetableLocal(): StoredAdminState | null {
   }
 }
 
-// 12 bright classroom colours
-const COLOURS: { name: string; bg: string; ring: string }[] = [
-  { name: "Emerald", bg: "bg-emerald-500", ring: "ring-emerald-200" },
-  { name: "Teal", bg: "bg-teal-500", ring: "ring-teal-200" },
-  { name: "Cyan", bg: "bg-cyan-500", ring: "ring-cyan-200" },
-  { name: "Sky", bg: "bg-sky-500", ring: "ring-sky-200" },
-  { name: "Blue", bg: "bg-blue-500", ring: "ring-blue-200" },
-  { name: "Indigo", bg: "bg-indigo-500", ring: "ring-indigo-200" },
-  { name: "Violet", bg: "bg-violet-500", ring: "ring-violet-200" },
-  { name: "Fuchsia", bg: "bg-fuchsia-500", ring: "ring-fuchsia-200" },
-  { name: "Rose", bg: "bg-rose-500", ring: "ring-rose-200" },
-  { name: "Red", bg: "bg-red-500", ring: "ring-red-200" },
-  { name: "Orange", bg: "bg-orange-500", ring: "ring-orange-200" },
-  { name: "Amber", bg: "bg-amber-400", ring: "ring-amber-200" },
-];
-
-const DEFAULT_BG = COLOURS[0]?.bg ?? "bg-emerald-500";
-const COLOUR_BG_SET = new Set(COLOURS.map((c) => c.bg));
-
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
   if (!t) return null;
@@ -245,26 +240,33 @@ function metaKeyForUser() {
   return `elume_class_layout_v1__${email}`;
 }
 
-
-function isKnownClassColour(value: string | null | undefined): value is string {
-  return typeof value === "string" && COLOUR_BG_SET.has(value);
+function firstClassPromptDismissKeyForUser() {
+  const email = getEmailFromToken() ?? "anon";
+  return `elume_first_class_prompt_dismissed_v1__${email}`;
 }
 
-function loadMeta(): { meta: MetaStore; legacyColors: LegacyColorStore } {
+
+function isKnownClassColour(value: string | null | undefined): value is string {
+  return normaliseClassColourKey(value) !== null;
+}
+
+function loadMeta(): { meta: MetaStore; legacyColors: LegacyColorStore; hasLegacyOrder: boolean } {
   try {
     const raw = localStorage.getItem(metaKeyForUser());
-    if (!raw) return { meta: {}, legacyColors: {} };
+    if (!raw) return { meta: {}, legacyColors: {}, hasLegacyOrder: false };
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return { meta: {}, legacyColors: {} };
+    if (!parsed || typeof parsed !== "object") return { meta: {}, legacyColors: {}, hasLegacyOrder: false };
 
     const meta: MetaStore = {};
     const legacyColors: LegacyColorStore = {};
+    let hasLegacyOrder = false;
 
     Object.entries(parsed as Record<string, any>).forEach(([key, value]) => {
       if (!value || typeof value !== "object") return;
 
       if (typeof value.order === "number" && Number.isFinite(value.order)) {
         meta[key] = { order: Math.trunc(value.order) };
+        hasLegacyOrder = true;
       }
 
       if (isKnownClassColour(value.color)) {
@@ -272,19 +274,10 @@ function loadMeta(): { meta: MetaStore; legacyColors: LegacyColorStore } {
       }
     });
 
-    return { meta, legacyColors };
+    return { meta, legacyColors, hasLegacyOrder };
   } catch {
-    return { meta: {}, legacyColors: {} };
+    return { meta: {}, legacyColors: {}, hasLegacyOrder: false };
   }
-}
-
-function saveMeta(meta: MetaStore) {
-  const orderOnly = Object.fromEntries(
-    Object.entries(meta)
-      .filter(([, value]) => typeof value?.order === "number" && Number.isFinite(value.order))
-      .map(([key, value]) => [key, { order: Math.trunc(value.order) }])
-  );
-  localStorage.setItem(metaKeyForUser(), JSON.stringify(orderOnly));
 }
 
 function normalizeClassOrderMeta(classes: ClassItem[], meta: MetaStore): { meta: MetaStore; changed: boolean } {
@@ -319,13 +312,12 @@ function normalizeClassOrderMeta(classes: ClassItem[], meta: MetaStore): { meta:
   return { meta: changed ? nextMeta : meta, changed };
 }
 
-function resolveClassTileColour(cls: ClassItem, legacyColors: LegacyColorStore, meta?: MetaStore) {
-  if (isKnownClassColour(cls.color)) return cls.color;
+function resolveClassTileColour(cls: ClassItem, legacyColors: LegacyColorStore, meta?: MetaStore): ClassColourKey {
+  const serverColour = normaliseClassColourKey(cls.color);
+  if (serverColour) return serverColour;
 
-  const legacyColor = legacyColors[String(cls.id)] ?? meta?.[String(cls.id)]?.color;
-  if (isKnownClassColour(legacyColor)) return legacyColor;
-
-  return COLOURS[cls.id % COLOURS.length]?.bg ?? DEFAULT_BG;
+  const legacyColour = legacyColors[String(cls.id)] ?? meta?.[String(cls.id)]?.color;
+  return resolveClassColourKey(legacyColour, cls.id);
 }
 
 
@@ -416,7 +408,7 @@ function levelOptionsForStream(s: Stream, y: YearOption): LevelOption[] {
   return ["Common Level"];
 }
 
-function Dashboard({
+export function Dashboard({
   installPromptEvent,
   installedApp,
   onInstallPromptConsumed,
@@ -426,7 +418,7 @@ function Dashboard({
   onInstallPromptConsumed: () => void;
 }) {
   const { t, language } = useUiLanguage();
-  const loadedMetaRef = useRef<{ meta: MetaStore; legacyColors: LegacyColorStore } | null>(null);
+  const loadedMetaRef = useRef<{ meta: MetaStore; legacyColors: LegacyColorStore; hasLegacyOrder: boolean } | null>(null);
   if (!loadedMetaRef.current) {
     loadedMetaRef.current = loadMeta();
   }
@@ -434,11 +426,17 @@ function Dashboard({
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [serverClassLoadStatus, setServerClassLoadStatus] = useState<ServerClassLoadStatus>("loading");
+  const [serverClassCount, setServerClassCount] = useState<number | null>(null);
+  const [firstClassPromptDismissed, setFirstClassPromptDismissed] = useState(
+    () => localStorage.getItem(firstClassPromptDismissKeyForUser()) === "1"
+  );
   const [welcome, setWelcome] = useState<string>(() => loadTeacherWelcome());
   const [installDismissed, setInstallDismissed] = useState(() => localStorage.getItem(TEACHER_INSTALL_DISMISS_KEY) === "1");
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
 
   const navigate = useNavigate();
+  const location = useLocation();
   const runningStandalone = installedApp || isStandaloneApp();
   const manualInstallAvailable = isIosDevice() || isMacSafari();
   const installAvailable = !runningStandalone && (Boolean(installPromptEvent) || manualInstallAvailable);
@@ -468,11 +466,14 @@ function Dashboard({
     onInstallPromptConsumed();
   }
 
-  // layout metadata (order only; legacy local colours migrate to backend when needed)
-  const [meta, setMeta] = useState<MetaStore>(() => loadedMetaRef.current?.meta ?? {});
+  // Legacy browser metadata is used only to seed the server once after this release.
+  const [meta] = useState<MetaStore>(() => loadedMetaRef.current?.meta ?? {});
   const legacyColourRef = useRef<LegacyColorStore>(loadedMetaRef.current?.legacyColors ?? {});
+  const hasLegacyOrderRef = useRef(loadedMetaRef.current?.hasLegacyOrder ?? false);
+  const orderMigrationAttemptedRef = useRef(false);
   const migratedColourIdsRef = useRef<Set<number>>(new Set());
   const dragIdRef = useRef<number | null>(null);
+  const orderRequestVersionRef = useRef(0);
 
   // header clock
   const [now, setNow] = useState(new Date());
@@ -490,15 +491,27 @@ function Dashboard({
   const [customClassMode, setCustomClassMode] = useState(false);
   const [customClassName, setCustomClassName] = useState("");
   const [customClassSubject, setCustomClassSubject] = useState("");
-  const [pickedColour, setPickedColour] = useState(DEFAULT_BG);
+  const [pickedColour, setPickedColour] = useState<ClassColourKey>(DEFAULT_CLASS_COLOUR_KEY);
   const [creating, setCreating] = useState(false);
+
+  const openCreate = useCallback(() => {
+    setStream("Junior Cycle");
+    setYear("1st Year");
+    setLevel("Common Level");
+    setSubject("Maths");
+    setCustomClassMode(false);
+    setCustomClassName("");
+    setCustomClassSubject("");
+    setPickedColour(DEFAULT_CLASS_COLOUR_KEY);
+    setCreateOpen(true);
+  }, []);
 
   // edit modal state
   const [editOpen, setEditOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editSubject, setEditSubject] = useState("");
-  const [editColour, setEditColour] = useState(DEFAULT_BG);
+  const [editColour, setEditColour] = useState<ClassColourKey>(DEFAULT_CLASS_COLOUR_KEY);
   const [savingEdit, setSavingEdit] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [manageClass, setManageClass] = useState<ClassItem | null>(null);
@@ -521,11 +534,16 @@ function Dashboard({
 
     setLoading(true);
     setError(null);
+    setServerClassLoadStatus("loading");
+    setServerClassCount(null);
 
     apiFetch("/classes")
       .then((data) => {
         if (cancelled) return;
-        const arr = Array.isArray(data) ? data : [];
+        if (!Array.isArray(data)) throw new Error("Invalid classes response");
+        const arr = data;
+        setServerClassCount(arr.length);
+        setServerClassLoadStatus("ready");
 
         setClasses((prev) => {
           // Prefer server truth; keep local extras only if server doesn't have them yet
@@ -543,6 +561,7 @@ function Dashboard({
       .catch((e: any) => {
         if (cancelled) return;
         setError(userFacingError(e, "We couldn’t load your classes just yet. Give it another try."));
+        setServerClassLoadStatus("error");
         setClasses([]);
       })
       .finally(() => {
@@ -553,6 +572,15 @@ function Dashboard({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const handoff = consumeCreateClassHandoff(location.state);
+    if (!handoff.shouldOpenCreate) return;
+
+    openCreate();
+    // Consume the one-time request so a refresh or Back navigation cannot reopen the modal.
+    navigate(location.pathname, { replace: true, state: handoff.nextState });
+  }, [location.pathname, location.state, navigate, openCreate]);
 
   useEffect(() => {
     const onStorage = () => setWelcome(loadTeacherWelcome());
@@ -569,19 +597,37 @@ function Dashboard({
   }, []);
 
   useEffect(() => {
-    if (classes.length === 0) return;
+    if (
+      classes.length === 0 ||
+      !hasLegacyOrderRef.current ||
+      orderMigrationAttemptedRef.current ||
+      classes.some((cls) => cls.dashboard_order != null)
+    ) {
+      return;
+    }
 
-    setMeta((prev) => {
-      const normalized = normalizeClassOrderMeta(classes, prev);
-      if (!normalized.changed) return prev;
-      saveMeta(normalized.meta);
-      return normalized.meta;
-    });
-  }, [classes]);
+    const normalized = normalizeClassOrderMeta(classes, meta).meta;
+    const classIds = Object.entries(normalized)
+      .sort(([, a], [, b]) => a.order - b.order)
+      .map(([id]) => Number(id));
+    if (classIds.length !== classes.length || classIds.some((id) => !Number.isInteger(id) || id <= 0)) return;
+
+    orderMigrationAttemptedRef.current = true;
+    apiFetch("/classes/dashboard-order", {
+      method: "PUT",
+      body: JSON.stringify({ class_ids: classIds }),
+    })
+      .then((updated) => {
+        if (Array.isArray(updated)) setClasses(updated as ClassItem[]);
+      })
+      .catch(() => {
+        // Preserve the legacy local order; a later dashboard load can try again.
+      });
+  }, [classes, meta]);
 
   useEffect(() => {
     const pending = classes.filter((cls) => {
-      if (isKnownClassColour(cls.color)) return false;
+      if (normaliseClassColourKey(cls.color)) return false;
       const legacyColor = legacyColourRef.current[String(cls.id)];
       return isKnownClassColour(legacyColor) && !migratedColourIdsRef.current.has(cls.id);
     });
@@ -593,7 +639,8 @@ function Dashboard({
     (async () => {
       for (const cls of pending) {
         const legacyColor = legacyColourRef.current[String(cls.id)];
-        if (!isKnownClassColour(legacyColor)) continue;
+        const canonicalColour = normaliseClassColourKey(legacyColor);
+        if (!canonicalColour) continue;
 
         migratedColourIdsRef.current.add(cls.id);
 
@@ -603,7 +650,7 @@ function Dashboard({
             body: JSON.stringify({
               name: cls.name,
               subject: cls.subject,
-              color: legacyColor,
+              color: canonicalColour,
             }),
           })) as ClassItem;
 
@@ -611,7 +658,7 @@ function Dashboard({
 
           setClasses((prev) =>
             prev.map((item) =>
-              item.id === cls.id ? { ...item, ...updated, color: updated?.color ?? legacyColor } : item
+              item.id === cls.id ? { ...item, ...updated, color: updated?.color ?? canonicalColour } : item
             )
           );
           delete legacyColourRef.current[String(cls.id)];
@@ -628,10 +675,11 @@ function Dashboard({
 
   const sortedClasses = useMemo(() => {
     const copy = [...classes];
+    const useLegacyOrder = classes.length > 0 && classes.every((cls) => cls.dashboard_order == null) && hasLegacyOrderRef.current;
     copy.sort((a, b) => {
-      const ao = meta[String(a.id)]?.order ?? 0;
-      const bo = meta[String(b.id)]?.order ?? 0;
-      return ao - bo;
+      const ao = useLegacyOrder ? meta[String(a.id)]?.order ?? Number.MAX_SAFE_INTEGER : a.dashboard_order ?? Number.MAX_SAFE_INTEGER;
+      const bo = useLegacyOrder ? meta[String(b.id)]?.order ?? Number.MAX_SAFE_INTEGER : b.dashboard_order ?? Number.MAX_SAFE_INTEGER;
+      return ao - bo || a.id - b.id;
     });
     return copy;
   }, [classes, meta]);
@@ -807,7 +855,9 @@ function Dashboard({
 
     if (hasClass) {
       const cls = entry?.classId != null ? classes.find((item) => item.id === entry.classId) : undefined;
-      const bg = cls ? resolveClassTileColour(cls, legacyColourRef.current, meta) : DEFAULT_BG;
+      const bg = classColourBackgroundClass(
+        cls ? resolveClassTileColour(cls, legacyColourRef.current, meta) : DEFAULT_CLASS_COLOUR_KEY
+      );
       return {
         tile: `border-black/70 ${bg} ${textClassForBg(bg)} shadow-[0_4px_0_rgba(15,23,42,0.18)]`,
         caption: textClassForBg(bg) === "text-white" ? "text-white/85" : "text-slate-700",
@@ -1038,19 +1088,32 @@ function Dashboard({
   function swapOrder(dragId: number, overId: number) {
     if (dragId === overId) return;
 
-    setMeta((prev) => {
-      const next = { ...normalizeClassOrderMeta(classes, prev).meta };
-      const aKey = String(dragId);
-      const bKey = String(overId);
-      const ao = next[aKey]?.order ?? 0;
-      const bo = next[bKey]?.order ?? 0;
+    const nextIds = sortedClasses.map((cls) => cls.id);
+    const dragIndex = nextIds.indexOf(dragId);
+    const overIndex = nextIds.indexOf(overId);
+    if (dragIndex < 0 || overIndex < 0) return;
 
-      next[aKey] = { order: bo };
-      next[bKey] = { order: ao };
+    [nextIds[dragIndex], nextIds[overIndex]] = [nextIds[overIndex], nextIds[dragIndex]];
+    const previousClasses = classes;
+    const orderById = new Map(nextIds.map((id, order) => [id, order]));
+    const requestVersion = ++orderRequestVersionRef.current;
 
-      saveMeta(next);
-      return next;
-    });
+    setClasses((previous) => previous.map((cls) => ({ ...cls, dashboard_order: orderById.get(cls.id) ?? cls.dashboard_order })));
+    apiFetch("/classes/dashboard-order", {
+      method: "PUT",
+      body: JSON.stringify({ class_ids: nextIds }),
+    })
+      .then((updated) => {
+        if (requestVersion === orderRequestVersionRef.current && Array.isArray(updated)) {
+          setClasses(updated as ClassItem[]);
+        }
+      })
+      .catch(() => {
+        if (requestVersion === orderRequestVersionRef.current) {
+          setClasses(previousClasses);
+          setError("We couldnâ€™t save that class order just now. Please try again.");
+        }
+      });
   }
 
   function suggestedName() {
@@ -1072,23 +1135,15 @@ function Dashboard({
     return `${year} ${subj}${lvlSuffix}`.trim();
   }
 
-  function openCreate() {
-    setStream("Junior Cycle");
-    setYear("1st Year");
-    setLevel("Common Level");
-    setSubject("Maths");
-    setCustomClassMode(false);
-    setCustomClassName("");
-    setCustomClassSubject("");
-    setPickedColour(DEFAULT_BG);
-    setCreateOpen(true);
-  }
-
   async function createClass() {
     const name = customClassMode ? customClassName.trim() : year.trim();
     const subj = customClassMode ? customClassSubject.trim() : subject.trim() || "Subject";
     if (!name) return;
     if (customClassMode && !subj) return;
+    const shouldSeedLegacyOrder =
+      hasLegacyOrderRef.current &&
+      classes.length > 0 &&
+      classes.every((cls) => cls.dashboard_order == null);
 
     setCreating(true);
     setError(null);
@@ -1108,30 +1163,46 @@ function Dashboard({
         ...created,
         name: (created as any)?.name ?? name,
         subject: (created as any)?.subject ?? subj,
-        color: isKnownClassColour((created as any)?.color) ? (created as any).color : pickedColour,
+        color: normaliseClassColourKey((created as any)?.color) ?? pickedColour,
       };
 
       if (!createdFixed?.id) throw new Error("Create returned no id");
 
       setClasses((prev) => [createdFixed, ...prev]);
+      // The create request succeeded, so this account is no longer empty even if the refresh below fails.
+      setServerClassCount(1);
+      setServerClassLoadStatus("ready");
 
       const fresh = await apiFetch("/classes");
-      const arr = Array.isArray(fresh) ? fresh : [];
-      setClasses(arr);
+      if (!Array.isArray(fresh)) throw new Error("Invalid classes response");
+      const arr = fresh;
+      setServerClassCount(arr.length);
+      setServerClassLoadStatus("ready");
+      if (shouldSeedLegacyOrder) {
+        const legacyOrder = normalizeClassOrderMeta(
+          arr.filter((cls) => cls.id !== createdFixed.id),
+          meta
+        ).meta;
+        const classIds = [
+          createdFixed.id,
+          ...Object.entries(legacyOrder)
+            .sort(([, a], [, b]) => a.order - b.order)
+            .map(([id]) => Number(id)),
+        ];
+        try {
+          const reordered = await apiFetch("/classes/dashboard-order", {
+            method: "PUT",
+            body: JSON.stringify({ class_ids: classIds }),
+          });
+          setClasses(Array.isArray(reordered) ? reordered : arr);
+        } catch {
+          // The class itself was created successfully; keep the server list and retry legacy order next visit.
+          setClasses(arr);
+        }
+      } else {
+        setClasses(arr);
+      }
 
-
-      setMeta((prev) => {
-        const next = { ...normalizeClassOrderMeta(arr, prev).meta };
-        const minOrder = Object.values(next).reduce(
-          (m, v) => Math.min(m, typeof v?.order === "number" ? v.order : 0),
-          999999
-        );
-        next[String(createdFixed.id)] = {
-          order: Number.isFinite(minOrder) ? minOrder - 1 : 0,
-        };
-        saveMeta(next);
-        return next;
-      });
 
       setCreateOpen(false);
     } catch (e: any) {
@@ -1140,6 +1211,21 @@ function Dashboard({
       setCreating(false);
     }
   }
+
+  function dismissFirstClassPrompt() {
+    try {
+      localStorage.setItem(firstClassPromptDismissKeyForUser(), "1");
+    } catch {
+      // Keep the in-memory dismissal even when storage is unavailable.
+    }
+    setFirstClassPromptDismissed(true);
+  }
+
+  const showFirstClassPrompt = shouldShowFirstClassPrompt(
+    serverClassLoadStatus,
+    serverClassCount,
+    firstClassPromptDismissed
+  );
 
   function openEdit(c: ClassItem) {
     setEditingId(c.id);
@@ -1330,6 +1416,32 @@ function Dashboard({
           />
         )}
 
+        {showFirstClassPrompt && (
+          <section
+            className="mb-5 overflow-hidden rounded-[28px] border-2 border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-cyan-50 p-5 shadow-[0_14px_34px_rgba(16,185,129,0.12)]"
+            aria-labelledby="first-class-welcome"
+          >
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="max-w-3xl">
+                <h2 id="first-class-welcome" className="text-2xl font-extrabold tracking-tight text-slate-900">
+                  Welcome to Elume
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-slate-700">
+                  Start by adding a class. You can add the rest whenever you’re ready, then arrange your timetable in Teacher Admin.
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button type="button" className="rounded-2xl border-2 border-emerald-700 bg-emerald-600 px-5 py-2.5 text-sm font-extrabold text-white shadow-sm hover:bg-emerald-700" onClick={openCreate}>
+                  Create my first class
+                </button>
+                <button type="button" className="rounded-2xl border-2 border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50" onClick={dismissFirstClassPrompt}>
+                  Not now
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
         <div className="mb-5 w-full">
           {/* Mobile layout */}
           <div className="flex items-stretch gap-3 md:hidden">
@@ -1493,7 +1605,7 @@ function Dashboard({
             </div>
           )}
 
-          {!loading && sortedClasses.length === 0 && (
+          {serverClassLoadStatus === "ready" && serverClassCount === 0 && sortedClasses.length === 0 && (
             <div className={`${card} p-4 text-sm text-slate-600 md:col-span-4`}>
               {t("dashboard.noClasses")}
             </div>
@@ -1501,7 +1613,8 @@ function Dashboard({
 
           {!loading &&
             sortedClasses.map((c) => {
-              const bg = resolveClassTileColour(c, legacyColourRef.current, meta);
+              const colourKey = resolveClassTileColour(c, legacyColourRef.current, meta);
+              const bg = classColourBackgroundClass(colourKey);
               const txt = textClassForBg(bg);
 
               return (
@@ -1933,15 +2046,15 @@ function Dashboard({
                 <div className="md:col-span-2">
                   <div className="mb-2 text-sm font-bold text-slate-700">{t("createClass.tileColour")}</div>
                   <div className="grid grid-cols-6 gap-2 md:grid-cols-12">
-                    {COLOURS.map((c) => {
-                      const selected = pickedColour === c.bg;
+                    {CLASS_COLOUR_OPTIONS.map((c) => {
+                      const selected = pickedColour === c.key;
                       return (
                         <button
                           key={c.name}
                           type="button"
-                          onClick={() => setPickedColour(c.bg)}
-                          className={`h-9 w-9 rounded-2xl border-2 border-white ${c.bg}
-                            ring-2 ${selected ? c.ring : "ring-transparent"} hover:brightness-110`}
+                          onClick={() => setPickedColour(c.key)}
+                          className={`h-9 w-9 rounded-2xl border-2 border-white ${c.backgroundClass}
+                            ring-2 ${selected ? c.ringClass : "ring-transparent"} hover:brightness-110`}
                           title={c.name}
                         />
                       );
@@ -2018,15 +2131,15 @@ function Dashboard({
                 <div className="md:col-span-2">
                   <div className="mb-2 text-sm font-bold text-slate-700">{t("createClass.tileColour")}</div>
                   <div className="grid grid-cols-6 gap-2 md:grid-cols-12">
-                    {COLOURS.map((c) => {
-                      const selected = editColour === c.bg;
+                    {CLASS_COLOUR_OPTIONS.map((c) => {
+                      const selected = editColour === c.key;
                       return (
                         <button
                           key={c.name}
                           type="button"
-                          onClick={() => setEditColour(c.bg)}
-                          className={`h-9 w-9 rounded-2xl border-2 border-white ${c.bg}
-                            ring-2 ${selected ? c.ring : "ring-transparent"} hover:brightness-110`}
+                          onClick={() => setEditColour(c.key)}
+                          className={`h-9 w-9 rounded-2xl border-2 border-white ${c.backgroundClass}
+                            ring-2 ${selected ? c.ringClass : "ring-transparent"} hover:brightness-110`}
                           title={c.name}
                         />
                       );

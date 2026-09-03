@@ -4,6 +4,7 @@ import { apiFetch, apiFetchBlob } from "./api";
 import StructuredLessonPlanPreview, { isStructuredLessonPlanDocument, type StructuredLessonPlanDocument } from "./Components/StructuredLessonPlanPreview";
 import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 import { applyLessonPlanDurationDefault, deriveLessonPlanDuration, type TeacherTimetableState } from "./createResourcesDuration";
+import { tileVisualForClass } from "./classAppearanceViews";
 
 type ClassItem = { id: number; name: string; subject: string; color?: string | null };
 type BrandingChoice = "none" | "elume" | "school";
@@ -232,48 +233,6 @@ function saveGeneratedResourcesForClass(classId: number, items: SavedGeneratedRe
   try {
     localStorage.setItem(generatedResourcesStorageKey(classId), JSON.stringify(items));
   } catch {}
-}
-
-const CLASS_TILE_COLOURS: { bg: string; ring: string }[] = [
-  { bg: "bg-emerald-500", ring: "ring-emerald-200" },
-  { bg: "bg-teal-500", ring: "ring-teal-200" },
-  { bg: "bg-cyan-500", ring: "ring-cyan-200" },
-  { bg: "bg-sky-500", ring: "ring-sky-200" },
-  { bg: "bg-blue-500", ring: "ring-blue-200" },
-  { bg: "bg-indigo-500", ring: "ring-indigo-200" },
-  { bg: "bg-violet-500", ring: "ring-violet-200" },
-  { bg: "bg-fuchsia-500", ring: "ring-fuchsia-200" },
-  { bg: "bg-rose-500", ring: "ring-rose-200" },
-  { bg: "bg-red-500", ring: "ring-red-200" },
-  { bg: "bg-orange-500", ring: "ring-orange-200" },
-  { bg: "bg-amber-400", ring: "ring-amber-200" },
-];
-
-const CLASS_TILE_BG_SET = new Set(CLASS_TILE_COLOURS.map((item) => item.bg));
-
-function isKnownClassColour(value: string | null | undefined): value is string {
-  return typeof value === "string" && CLASS_TILE_BG_SET.has(value);
-}
-
-function textClassForTile(bgClass: string) {
-  if (
-    bgClass.includes("bg-yellow") ||
-    bgClass.includes("bg-amber") ||
-    bgClass.includes("bg-lime") ||
-    bgClass.includes("bg-slate-100") ||
-    bgClass.includes("bg-slate-200") ||
-    bgClass.includes("bg-white")
-  ) {
-    return "text-slate-900";
-  }
-  return "text-white";
-}
-
-function tileVisualForClass(item: ClassItem) {
-  const fallback = CLASS_TILE_COLOURS[item.id % CLASS_TILE_COLOURS.length] ?? CLASS_TILE_COLOURS[0];
-  const bg = isKnownClassColour(item.color) ? item.color : fallback.bg;
-  const ring = CLASS_TILE_COLOURS.find((entry) => entry.bg === bg)?.ring ?? fallback.ring;
-  return { bg, ring, text: textClassForTile(bg) };
 }
 
 function labelForOutput(kind: OutputKind) {

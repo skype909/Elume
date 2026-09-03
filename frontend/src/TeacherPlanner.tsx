@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
+import { plannerClassBadgeClass } from "./classAppearanceViews";
 
 type ClassItem = { id: number; name: string; subject: string; color?: string | null };
 
@@ -75,22 +76,6 @@ type TeacherAdminState = {
 
 const DAYS: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 const MAX_BELL_PREVIEW_EVENTS = 4;
-const PLANNER_CLASS_COLOURS = [
-    { bg: "bg-emerald-500", badge: "border-emerald-200 bg-emerald-50 text-emerald-700" },
-    { bg: "bg-teal-500", badge: "border-teal-200 bg-teal-50 text-teal-700" },
-    { bg: "bg-cyan-500", badge: "border-cyan-200 bg-cyan-50 text-cyan-700" },
-    { bg: "bg-sky-500", badge: "border-sky-200 bg-sky-50 text-sky-700" },
-    { bg: "bg-blue-500", badge: "border-blue-200 bg-blue-50 text-blue-700" },
-    { bg: "bg-indigo-500", badge: "border-indigo-200 bg-indigo-50 text-indigo-700" },
-    { bg: "bg-violet-500", badge: "border-violet-200 bg-violet-50 text-violet-700" },
-    { bg: "bg-fuchsia-500", badge: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700" },
-    { bg: "bg-rose-500", badge: "border-rose-200 bg-rose-50 text-rose-700" },
-    { bg: "bg-red-500", badge: "border-red-200 bg-red-50 text-red-700" },
-    { bg: "bg-orange-500", badge: "border-orange-200 bg-orange-50 text-orange-700" },
-    { bg: "bg-amber-400", badge: "border-amber-200 bg-amber-50 text-amber-800" },
-] as const;
-const DEFAULT_PLANNER_BADGE = "border-slate-200 bg-slate-100 text-slate-600";
-
 function pad2(n: number) {
     return String(n).padStart(2, "0");
 }
@@ -259,16 +244,6 @@ function getPlannerSlotHeadingForDay(
     return truncateOneLine(descriptor, 24) || "FREE";
 }
 
-function plannerClassBadgeClass(classId: number | null, liveClass?: ClassItem) {
-    const configuredColour = (liveClass?.color || "").trim();
-    const configuredMatch = PLANNER_CLASS_COLOURS.find((item) => item.bg === configuredColour);
-    if (configuredMatch) return configuredMatch.badge;
-    if (typeof classId === "number" && classId > 0) {
-        return PLANNER_CLASS_COLOURS[(classId - 1) % PLANNER_CLASS_COLOURS.length]?.badge ?? DEFAULT_PLANNER_BADGE;
-    }
-    return DEFAULT_PLANNER_BADGE;
-}
-
 function getPlannerSlotMetaForDay(
     teacherAdminState: TeacherAdminState | null,
     classes: ClassItem[],
@@ -276,7 +251,7 @@ function getPlannerSlotMetaForDay(
     slotIndex: number
 ) {
     const periodSlot = periodSlotsForDay(teacherAdminState, day)[slotIndex];
-    if (!periodSlot) return { heading: "FREE", badgeClass: DEFAULT_PLANNER_BADGE };
+    if (!periodSlot) return { heading: "FREE", badgeClass: plannerClassBadgeClass(null) };
 
     const entry = teacherAdminState?.schedule?.[day]?.entries?.[periodSlot.id];
     const classId = entry?.classId ?? null;
@@ -292,7 +267,7 @@ function getPlannerSlotMetaForDay(
 
     return {
         heading,
-        badgeClass: heading === "FREE" ? DEFAULT_PLANNER_BADGE : plannerClassBadgeClass(classId, liveClass),
+        badgeClass: heading === "FREE" ? plannerClassBadgeClass(null) : plannerClassBadgeClass(classId, liveClass?.color),
     };
 }
 

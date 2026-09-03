@@ -4,6 +4,12 @@ import { apiFetch, apiFetchBlob } from "./api";
 import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
 import ELogo2 from "./assets/ELogo2.png";
+import {
+  classColourBackgroundClass,
+  normaliseClassColourKey,
+  resolveClassColourKey,
+} from "./classAppearance";
+import { shouldShowClassFirstEmptyState, type ServerClassLoadStatus } from "./classOnboarding";
 
 type DayKey = "Mon" | "Tue" | "Wed" | "Thu" | "Fri";
 type SlotKind = "period" | "break" | "lunch";
@@ -85,7 +91,7 @@ type ClassItem = {
   color?: string | null;
 };
 
-type ClassMeta = { color: string; order: number };
+type ClassMeta = { color?: string; order?: number; [key: string]: unknown };
 type MetaStore = Record<string, ClassMeta>;
 type BillingStatus = {
   subscription_status: string;
@@ -106,23 +112,6 @@ type BillingStatus = {
 };
 
 const DAYS: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-
-const COLOURS = [
-  { name: "Emerald", bg: "bg-emerald-600", ring: "ring-emerald-200" },
-  { name: "Amber", bg: "bg-amber-500", ring: "ring-amber-200" },
-  { name: "Rose", bg: "bg-rose-600", ring: "ring-rose-200" },
-  { name: "Sky", bg: "bg-sky-600", ring: "ring-sky-200" },
-  { name: "Sunflower", bg: "bg-yellow-400", ring: "ring-yellow-200" },
-  { name: "Violet", bg: "bg-violet-700", ring: "ring-violet-200" },
-  { name: "Lime", bg: "bg-lime-500", ring: "ring-lime-200" },
-  { name: "Fuchsia", bg: "bg-fuchsia-600", ring: "ring-fuchsia-200" },
-  { name: "Orange", bg: "bg-orange-600", ring: "ring-orange-200" },
-  { name: "Slate", bg: "bg-slate-800", ring: "ring-slate-300" },
-];
-
-function defaultBgForClassId(classId: number) {
-  return COLOURS[classId % COLOURS.length]?.bg ?? "bg-emerald-600";
-}
 
 function toMinutes(hhmm: string) {
   const [h, m] = hhmm.split(":").map(Number);
@@ -638,6 +627,7 @@ export default function TeacherAdminPage() {
   const [loadedFromServer, setLoadedFromServer] = useState(false);
   const [savedToast, setSavedToast] = useState<string | null>(null);
   const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [classesLoadStatus, setClassesLoadStatus] = useState<ServerClassLoadStatus>("loading");
   const [meta, setMeta] = useState<MetaStore>(() => loadMeta());
 
   const today = dayKeyToday();
@@ -648,7 +638,6 @@ export default function TeacherAdminPage() {
   const [setupOpen, setSetupOpen] = useState(false);
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [resetTimetableModalOpen, setResetTimetableModalOpen] = useState(false);
-  const [setupPromptDismissed, setSetupPromptDismissed] = useState(false);
 
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
@@ -758,13 +747,6 @@ export default function TeacherAdminPage() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (loadedFromServer && !state.timetableConfig.setupComplete && !setupPromptDismissed) {
-      setSetupDraft(structuredClone(state.timetableConfig));
-      setSetupOpen(true);
-    }
-  }, [loadedFromServer, state.timetableConfig.setupComplete, setupPromptDismissed]);
 
   function saveState(next: StoredAdminState) {
     try {
@@ -1002,14 +984,15 @@ export default function TeacherAdminPage() {
   function tileBgForClassId(classId: number | null) {
     if (!classId) return "bg-white";
     const cls = classes.find((item) => item.id === classId);
-    if (typeof cls?.color === "string" && cls.color.trim()) {
-      return cls.color;
-    }
-    const m = meta[String(classId)];
-    return m?.color ?? defaultBgForClassId(classId);
+    const serverColour = normaliseClassColourKey(cls?.color);
+    const legacyColour = normaliseClassColourKey(meta[String(classId)]?.color);
+    return classColourBackgroundClass(
+      serverColour ?? legacyColour ?? resolveClassColourKey(null, classId)
+    );
   }
 
   function openSetupWizard() {
+    if (classesLoadStatus === "ready" && classes.length === 0) return;
     setSetupDraft(structuredClone(state.timetableConfig));
     setSetupOpen(true);
   }
@@ -1121,7 +1104,8 @@ export default function TeacherAdminPage() {
     apiFetch("/classes")
       .then((data) => {
         if (cancelled) return;
-        const arr = Array.isArray(data) ? (data as any[]) : [];
+        if (!Array.isArray(data)) throw new Error("Invalid classes response");
+        const arr = data as any[];
         const cleaned: ClassItem[] = arr
           .map((c) => ({
             id: Number(c.id),
@@ -1132,31 +1116,13 @@ export default function TeacherAdminPage() {
           .filter((c) => Number.isFinite(c.id) && c.id > 0);
 
         setClasses(cleaned);
+        setClassesLoadStatus("ready");
 
-        const currentMeta = loadMeta();
-        let changed = false;
-
-        for (const cls of cleaned) {
-          const key = String(cls.id);
-          if (!currentMeta[key]?.color) {
-            currentMeta[key] = {
-              color:
-                typeof cls.color === "string" && cls.color.trim()
-                  ? cls.color
-                  : defaultBgForClassId(cls.id),
-              order: currentMeta[key]?.order ?? cls.id,
-            };
-            changed = true;
-          }
-        }
-
-        if (changed) {
-          localStorage.setItem(metaKeyForUser(), JSON.stringify(currentMeta));
-          setMeta(currentMeta);
-        }
       })
       .catch(() => {
-        if (!cancelled) setClasses([]);
+        if (!cancelled) {
+          setClassesLoadStatus("error");
+        }
       });
 
     return () => {
@@ -1246,6 +1212,8 @@ export default function TeacherAdminPage() {
   }, [today]);
 
   const setupIncomplete = !state.timetableConfig.setupComplete;
+  const hasServerClasses = classesLoadStatus === "ready" && classes.length > 0;
+  const hasConfirmedNoClasses = shouldShowClassFirstEmptyState(classesLoadStatus, classes.length);
   const billingUi = billingStatusMessage(billing);
   const teacherDisplayShort = useMemo(() => {
     const title = (state.profile.title || "").trim();
@@ -1270,19 +1238,19 @@ export default function TeacherAdminPage() {
       </style>
 
       <div className="mx-auto max-w-7xl px-4 py-6 print:px-0 print:py-0">
-        {setupIncomplete && (
+        {setupIncomplete && hasServerClasses && (
           <div className="mb-4 rounded-[28px] border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 via-teal-50 to-cyan-50 p-5 shadow-sm print-hide">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
                 <div className="text-xl font-extrabold tracking-tight text-slate-900">
-                  Finish your timetable setup
+                  Set up your timetable when your class list is ready
                 </div>
                 <div className="mt-1 text-sm text-slate-700">
-                  Before you use Teacher Admin properly, set your school day, period lengths, breaks, lunch and supervision slots.
+                  Add all the classes you teach before arranging your week. Then set your school day, periods, breaks and supervision slots.
                 </div>
               </div>
               <button type="button" className={btnPrimary} onClick={openSetupWizard}>
-                Set up timetable now
+                Set up timetable
               </button>
             </div>
           </div>
@@ -1295,7 +1263,9 @@ export default function TeacherAdminPage() {
                 Teacher Admin
               </div>
               <div className="text-sm text-slate-600">
-                Quick reference timetable • editable profile • secure teacher settings
+                {hasConfirmedNoClasses
+                  ? "Create your classes first, then return here to arrange your week."
+                  : "Quick reference timetable • editable profile • secure teacher settings"}
               </div>
             </div>
 
@@ -1343,9 +1313,11 @@ export default function TeacherAdminPage() {
               <button className={btn} type="button" onClick={() => navigate("/")}>
                 Back to Dashboard
               </button>
-              <button className={btn} type="button" onClick={exportPdf}>
-                Print Timetable
-              </button>
+              {!hasConfirmedNoClasses && (
+                <button className={btn} type="button" onClick={exportPdf}>
+                  Print Timetable
+                </button>
+              )}
               {savedToast && (
                 <span className="rounded-full border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
                   {savedToast}
@@ -1367,7 +1339,7 @@ export default function TeacherAdminPage() {
               <ol className="flex flex-wrap gap-2 text-sm font-semibold text-slate-700">
                 {[
                   "Complete your details",
-                  "Set up your timetable",
+                  hasConfirmedNoClasses ? "Create your classes" : "Set up your timetable",
                   "Change your Teacher PIN",
                 ].map((step, index) => (
                   <li key={step} className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/85 px-3 py-2 shadow-sm">
@@ -1638,16 +1610,11 @@ export default function TeacherAdminPage() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className={btn}
-                    onClick={() => {
-                      setSetupDraft(structuredClone(state.timetableConfig));
-                      setSetupOpen(true);
-                    }}
-                  >
-                    Timetable settings
-                  </button>
+                  {!hasConfirmedNoClasses && (
+                    <button type="button" className={btn} onClick={openSetupWizard}>
+                      {state.timetableConfig.setupComplete ? "Timetable settings" : "Set up timetable"}
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -1663,7 +1630,7 @@ export default function TeacherAdminPage() {
                 </div>
               </div>
 
-              {!state.timetableConfig.setupComplete && (
+              {!state.timetableConfig.setupComplete && hasServerClasses && (
                 <div className="mt-4 rounded-2xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
                   Your timetable setup is not complete yet. You can finish it now or come back later from
                   <span className="font-semibold"> Timetable settings</span>.
@@ -1750,6 +1717,27 @@ export default function TeacherAdminPage() {
           </div>
           ) : null}
 
+          {hasConfirmedNoClasses ? (
+            <section className="md:col-span-12" aria-labelledby="classes-first-heading">
+              <div className={`${card} overflow-hidden p-6 print-hide`}>
+                <div className="max-w-2xl">
+                  <h2 id="classes-first-heading" className="text-2xl font-extrabold tracking-tight text-slate-900">
+                    Create classes before setting up your timetable
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">
+                    Add the classes you teach first. When your class list is ready, return here to arrange your week.
+                  </p>
+                  <button
+                    type="button"
+                    className={`${btnPrimary} mt-5`}
+                    onClick={() => navigate("/", { state: { openCreateClass: true } })}
+                  >
+                    Create classes
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : (
           <div className="md:col-span-12">
             <div className={`${card} p-4 print-tight`}>
               <div className="flex items-center justify-between print-hide">
@@ -1871,6 +1859,7 @@ export default function TeacherAdminPage() {
               </div>
             </div>
           </div>
+          )}
 
           <div className="md:col-span-12 print-hide">
             <div className={`${card} p-4`}>
@@ -2211,7 +2200,6 @@ export default function TeacherAdminPage() {
                 className={btn}
                 onClick={() => {
                   setSetupOpen(false);
-                  setSetupPromptDismissed(true);
                 }}
               >
                 Cancel
@@ -2482,7 +2470,6 @@ export default function TeacherAdminPage() {
                     className={btn}
                     onClick={() => {
                       setSetupOpen(false);
-                      setSetupPromptDismissed(true);
                     }}
                   >
                     Skip for now
