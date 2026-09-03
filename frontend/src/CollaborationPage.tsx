@@ -7,6 +7,9 @@ import { apiFetch } from "./api";
 import DepartmentShareModal from "./Components/DepartmentShareModal";
 import InlineNotice from "./Components/InlineNotice";
 import { userFacingError } from "./userFacingError";
+import { TeacherToolPalette } from "./TeacherToolPalette";
+import { TeacherHighlighterSettings } from "./TeacherHighlighterSettings";
+import { ColourSwatch, StrokeSizeButton } from "./BoardControlOptions";
 
 const API_BASE = "/api";
 
@@ -93,6 +96,7 @@ type CollaborationNotice = {
     title?: string;
     message: string;
 };
+
 function uid(prefix = "id") {
     return `${prefix}_${Math.random().toString(36).slice(2, 9)}_${Date.now().toString(36)}`;
 }
@@ -1025,134 +1029,73 @@ export default function CollaborationPage() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[220px_minmax(0,1fr)_320px]">
+                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[236px_minmax(0,1fr)_320px]">
                         <div className="sticky top-3 z-20 self-start">
-                            <div className="rounded-[24px] border border-white/70 bg-white/90 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-                                <div className="mb-3 flex items-center justify-between gap-2 px-1">
-                                    <div className="text-sm font-black text-slate-900">Tools</div>
-                                    <div className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.16em] text-violet-700">
-                                        {tool}
-                                    </div>
-                                </div>
+                            <div className="rounded-[28px] border border-slate-200/80 bg-white/95 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                                <TeacherToolPalette selectedTool={tool} onToolChange={(nextTool) => setTool(nextTool)} />
 
-                                <div className="grid grid-cols-2 gap-2">
-                                    {[
-                                        ["select", "✋", "Select"],
-                                        ["pen", "✎", "Pen"],
-                                        ["eraser", "⌫", "Erase"],
-                                        ["highlighter", "🖍️", "Mark"],
-                                        ["rectangle", "▭", "Rect"],
-                                        ["circle", "◯", "Circle"],
-                                        ["triangle", "△", "Tri"],
-                                        ["sticky", "🗒️", "Sticky"],
-                                        ["arrow", "➜", "Arrow"],
-                                        ["curved-arrow", "↷", "Curve"],
-                                        ["speech", "💬", "Speech"],
-                                    ].map(([key, icon, label]) => (
-                                        <button
-                                            key={key}
-                                            type="button"
-                                            onClick={() => setTool(key as ToolKey)}
-                                            className={`flex h-14 flex-col items-center justify-center rounded-2xl border text-xs font-black shadow-sm transition ${tool === key
-                                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                                }`}
-                                        >
-                                            <span className="text-lg">{icon}</span>
-                                            <span>{label}</span>
-                                        </button>
-                                    ))}
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setPdfImportRequestNonce((n) => n + 1)}
-                                        className="flex h-14 flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white text-xs font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
-                                    >
-                                        <span className="text-lg">📄</span>
-                                        <span>PDF</span>
-                                    </button>
-                                </div>
-
-                                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-                                    <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Tool settings</div>
+                                {(tool === "pen" || tool === "eraser" || tool === "highlighter") && <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-3">
 
                                     {tool === "pen" && (
                                         <div className="space-y-3">
-                                            <div className="grid grid-cols-3 gap-2">
+                                            <div>
+                                                <div className="mb-1 px-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Colour</div>
+                                                <div className="flex flex-wrap gap-2">
                                                 {(["black", "red", "blue", "yellow", "green", "purple"] as PenColor[]).map((c) => (
-                                                    <button
+                                                    <ColourSwatch
                                                         key={c}
-                                                        type="button"
+                                                        color={c}
+                                                        label={c.charAt(0).toUpperCase() + c.slice(1)}
+                                                        selected={penColor === c}
                                                         onClick={() => setPenColor(c)}
-                                                        className={`rounded-xl border px-2 py-2 text-[11px] font-black capitalize ${penColor === c
-                                                            ? "border-slate-900 bg-slate-900 text-white"
-                                                            : "border-slate-200 bg-white text-slate-700"
-                                                            }`}
-                                                    >
-                                                        {c}
-                                                    </button>
+                                                    />
                                                 ))}
+                                                </div>
                                             </div>
 
-                                            <div className="grid grid-cols-3 gap-2">
-                                                {[{ value: 1, label: "Fine" }, { value: 2, label: "Medium" }, { value: 3, label: "Bold" }].map(({ value, label }) => (
-                                                    <button
+                                            <div>
+                                                <div className="mb-1 px-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Stroke</div>
+                                                <div className="flex gap-2">
+                                                {[{ value: 1 }, { value: 2 }, { value: 3 }].map(({ value }) => (
+                                                    <StrokeSizeButton
                                                         key={value}
-                                                        type="button"
+                                                        value={value as PenSize}
+                                                        color={penColor}
+                                                        selected={penSize === value}
                                                         onClick={() => setPenSize(value as PenSize)}
-                                                        aria-pressed={penSize === value}
-                                                        className={`rounded-xl border px-2 py-2 text-[11px] font-black ${penSize === value
-                                                            ? "border-emerald-500 bg-emerald-500 text-white"
-                                                            : "border-slate-200 bg-white text-slate-700"
-                                                            }`}
-                                                    >
-                                                        {label}
-                                                    </button>
+                                                    />
                                                 ))}
+                                                </div>
                                             </div>
                                         </div>
                                     )}
 
                                     {tool === "eraser" && (
-                                        <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                            <div className="mb-1 px-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Eraser size</div>
+                                            <div className="flex gap-2">
                                             {[1, 2, 3].map((s) => (
-                                                <button
+                                                <StrokeSizeButton
                                                     key={s}
-                                                    type="button"
+                                                    value={s as EraserSize}
+                                                    selected={eraserSize === s}
                                                     onClick={() => setEraserSize(s as EraserSize)}
-                                                    className={`rounded-xl border px-2 py-2 text-[11px] font-black ${eraserSize === s
-                                                        ? "border-emerald-500 bg-emerald-500 text-white"
-                                                        : "border-slate-200 bg-white text-slate-700"
-                                                        }`}
-                                                >
-                                                    Size {s}
-                                                </button>
+                                                />
                                             ))}
+                                            </div>
                                         </div>
                                     )}
 
                                     {tool === "highlighter" && (
-                                        <div className="grid grid-cols-3 gap-2">
-                                            {(["yellow", "green", "blue", "violet"] as HighlightColor[]).map((c) => (
-                                                <button
-                                                    key={c}
-                                                    type="button"
-                                                    onClick={() => setHighlightColor(c)}
-                                                    className={`rounded-xl border px-2 py-2 text-[11px] font-black capitalize ${highlightColor === c
-                                                        ? "border-slate-900 bg-slate-900 text-white"
-                                                        : "border-slate-200 bg-white text-slate-700"
-                                                        }`}
-                                                >
-                                                    {c}
-                                                </button>
-                                            ))}
-                                        </div>
+                                        <TeacherHighlighterSettings
+                                            color={highlightColor}
+                                            penSize={penSize}
+                                            onColorChange={(color) => setHighlightColor(color as HighlightColor)}
+                                            onPenSizeChange={setPenSize}
+                                        />
                                     )}
 
-                                    {!['pen', 'eraser', 'highlighter'].includes(tool) && (
-                                        <div className="text-xs font-semibold text-slate-600">Select the tool and use the board directly.</div>
-                                    )}
-                                </div>
+                                </div>}
 
                                 <div className="mt-3 space-y-2">
                                     <button

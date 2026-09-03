@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { UsersRound } from "lucide-react";
+import { Eraser, Hand, Highlighter, PenLine, StickyNote, UsersRound } from "lucide-react";
 import CollabBoard from "./CollabBoard";
 import elumeLogo from "./assets/ELogo2.png";
+import { selectStudentDrawingTool, studentBoardTool, type StudentDrawingTool } from "./collaborationToolControls";
+import { ColourSwatch, StrokeSizeButton } from "./BoardControlOptions";
 
 const API_BASE = "/api";
 const STUDENT_NAME_KEY = "elume_student_name_v1";
@@ -78,7 +80,7 @@ export default function StudentCollabRoomPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [tool, setTool] = useState<"pen" | "highlighter" | "eraser" | "sticky">("pen");
+  const [tool, setTool] = useState<StudentDrawingTool>("pen");
   const [viewportMode, setViewportMode] = useState<"fixed" | "pan">("fixed");
   const [penColor, setPenColor] = useState<(typeof STUDENT_PEN_COLOURS)[number]["value"]>("black");
   const [penSize, setPenSize] = useState<1 | 2 | 3>(1);
@@ -372,84 +374,80 @@ export default function StudentCollabRoomPage() {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 rounded-[24px] border border-slate-100 bg-slate-50/80 p-2">
+            <div className="flex flex-wrap gap-1.5 rounded-[24px] border border-slate-100 bg-slate-50/80 p-2">
               <button
                 type="button"
-                onClick={() => setTool("pen")}
+                onClick={() => selectStudentDrawingTool("pen", setTool, setViewportMode)}
                 aria-pressed={tool === "pen"}
-                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
+                className={`inline-flex min-h-11 items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-black shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                   tool === "pen" ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white ring-2 ring-emerald-200" : "border border-slate-200 bg-white text-slate-800 hover:bg-emerald-50"
                 }`}
               >
-                Pen
+                <PenLine className="h-4 w-4" aria-hidden="true" /> Pen
               </button>
               <button
                 type="button"
-                onClick={() => setTool("highlighter")}
+                onClick={() => selectStudentDrawingTool("highlighter", setTool, setViewportMode)}
                 aria-pressed={tool === "highlighter"}
-                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
+                className={`inline-flex min-h-11 items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-black shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                   tool === "highlighter"
                     ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white ring-2 ring-emerald-200"
                     : "border border-slate-200 bg-white text-slate-800 hover:bg-emerald-50"
                 }`}
               >
-                Highlight
+                <Highlighter className="h-4 w-4" aria-hidden="true" /> Highlighter
               </button>
               <button
                 type="button"
-                onClick={() => setTool("eraser")}
+                onClick={() => selectStudentDrawingTool("eraser", setTool, setViewportMode)}
                 aria-pressed={tool === "eraser"}
-                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
+                className={`inline-flex min-h-11 items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-black shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                   tool === "eraser"
                     ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white ring-2 ring-emerald-200"
                     : "border border-slate-200 bg-white text-slate-800 hover:bg-emerald-50"
                 }`}
               >
-                Eraser
+                <Eraser className="h-4 w-4" aria-hidden="true" /> Eraser
               </button>
               <button
                 type="button"
-                onClick={() => setTool("sticky")}
+                onClick={() => selectStudentDrawingTool("sticky", setTool, setViewportMode)}
                 aria-pressed={tool === "sticky"}
-                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
+                className={`inline-flex min-h-11 items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-black shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                   tool === "sticky"
                     ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white ring-2 ring-violet-200"
                     : "border border-slate-200 bg-white text-slate-800 hover:bg-violet-50"
                 }`}
               >
-                Sticky note
+                <StickyNote className="h-4 w-4" aria-hidden="true" /> Sticky note
               </button>
               <button
                 type="button"
                 onClick={() => setViewportMode((prev) => (prev === "pan" ? "fixed" : "pan"))}
-                aria-pressed={viewportMode === "pan"}
-                className={`rounded-2xl px-4 py-3 text-sm font-black shadow-sm transition ${
+                role="switch"
+                aria-checked={viewportMode === "pan"}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-2xl px-3 py-2 text-xs font-black shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                   viewportMode === "pan"
                     ? "bg-cyan-600 text-white"
                     : "border border-slate-200 bg-white text-slate-800"
                 } md:hidden`}
               >
-                Pan
+                <Hand className="h-4 w-4" aria-hidden="true" />
+                {viewportMode === "pan" ? "Move board on" : "Move board"}
+                <span className={`relative h-5 w-9 rounded-full ${viewportMode === "pan" ? "bg-white/80" : "bg-slate-300"}`} aria-hidden="true"><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-slate-700 transition-transform ${viewportMode === "pan" ? "translate-x-4" : "translate-x-0.5"}`} /></span>
               </button>
+              {viewportMode === "pan" && <div className="w-full rounded-xl bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-800 md:hidden">Drag to move around. Switch off to draw.</div>}
               {tool === "pen" && (
                 <div className="ml-1 flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
                   <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Colour</span>
                   {STUDENT_PEN_COLOURS.map((option) => (
-                    <button
+                    <ColourSwatch
                       key={option.value}
-                      type="button"
+                      color={option.value}
+                      label={option.label}
+                      selected={penColor === option.value}
                       onClick={() => setPenColor(option.value)}
-                      aria-label={`${option.label} pen`}
-                      aria-pressed={penColor === option.value}
-                      title={`${option.label} pen`}
-                      className={`grid h-10 w-10 place-items-center rounded-xl border transition ${
-                        penColor === option.value
-                          ? "border-slate-900 bg-slate-900 ring-2 ring-slate-300"
-                          : "border-slate-200 bg-slate-50 hover:bg-white"
-                      }`}
-                    >
-                      <span className={`h-5 w-5 rounded-full border border-white/80 shadow-sm ${option.dot}`} />
-                    </button>
+                    />
                   ))}
                 </div>
               )}
@@ -457,48 +455,34 @@ export default function StudentCollabRoomPage() {
                 <div className="ml-1 flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
                   <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Highlight</span>
                   {STUDENT_HIGHLIGHTER_COLOURS.map((option) => (
-                    <button
+                    <ColourSwatch
                       key={option.value}
-                      type="button"
+                      color={option.value}
+                      label={option.label}
+                      selected={highlighterColor === option.value}
                       onClick={() => setHighlighterColor(option.value)}
-                      aria-label={`${option.label} highlighter`}
-                      aria-pressed={highlighterColor === option.value}
-                      title={`${option.label} highlighter`}
-                      className={`grid h-10 w-10 place-items-center rounded-xl border transition ${
-                        highlighterColor === option.value
-                          ? "border-slate-900 bg-slate-900 ring-2 ring-slate-300"
-                          : "border-slate-200 bg-slate-50 hover:bg-white"
-                      }`}
-                    >
-                      <span className={`h-5 w-5 rounded-full border border-white/80 shadow-sm ${option.dot}`} />
-                    </button>
+                    />
                   ))}
                 </div>
               )}
-              <div className="ml-1 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
+              {(tool === "pen" || tool === "highlighter") && <div className="ml-1 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
                 <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Stroke</span>
-                {([{ value: 1, label: "Fine" }, { value: 2, label: "Medium" }, { value: 3, label: "Bold" }] as const).map(({ value, label }) => (
-                  <button
+                {([{ value: 1 }, { value: 2 }, { value: 3 }] as const).map(({ value }) => (
+                  <StrokeSizeButton
                     key={value}
-                    type="button"
+                    value={value}
+                    color={tool === "highlighter" ? highlighterColor : penColor}
+                    selected={penSize === value}
                     onClick={() => setPenSize(value)}
-                    aria-pressed={penSize === value}
-                    className={`rounded-xl px-3 py-2 text-xs font-black ${
-                      penSize === value
-                        ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-slate-50 text-slate-700"
-                    }`}
-                  >
-                    {label}
-                  </button>
+                  />
                 ))}
-              </div>
+              </div>}
             </div>
           </div>
         </div>
 
         <div className="relative">
-          <div className="absolute right-3 top-3 z-10 w-56 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-lg backdrop-blur-xl">
+          <div className="absolute right-3 top-3 z-10 w-52 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-lg backdrop-blur-xl max-md:top-2">
             <div className="flex items-center justify-between gap-2">
               <div className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
                 Room members
@@ -535,7 +519,7 @@ export default function StudentCollabRoomPage() {
             boardRound={boardRound}
             participantId={anonId}
             participantAnonId={anonId}
-            tool={viewportMode === "pan" ? "select" : tool}
+            tool={studentBoardTool(viewportMode, tool)}
             penColor={penColor}
             penSize={penSize}
             highlighterColor={highlighterColor}
