@@ -1,0 +1,50 @@
+import sys
+import unittest
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+import authorization
+import main
+import models
+import schemas
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
+class GaeilgeRecoveryTests(unittest.TestCase):
+    def test_application_imports_and_reviewer_routes_are_absent(self):
+        route_paths = {route.path for route in main.app.routes}
+        self.assertNotIn("/ui-translations/ga", route_paths)
+        self.assertNotIn("/ui-translations/ga/{translation_key}", route_paths)
+        self.assertFalse(hasattr(authorization, "GAEILGE_REVIEWER_EMAILS"))
+        self.assertFalse(hasattr(authorization, "is_gaeilge_reviewer"))
+        self.assertIn("/auth/me", route_paths)
+        self.assertIn("/classes/{class_id}/student-access-code", route_paths)
+        self.assertIn("/student/join/class", route_paths)
+        self.assertIn("/exam-library/items", route_paths)
+
+    def test_migration_009_is_retained_and_dashboard_surface_remains(self):
+        migrations = BACKEND_DIR / "migrations"
+        self.assertTrue((migrations / "20260902_009_ui_translation_overrides.up.sql").is_file())
+        self.assertTrue((migrations / "20260902_009_ui_translation_overrides.down.sql").is_file())
+        self.assertTrue(hasattr(models.ClassModel, "dashboard_order"))
+        self.assertTrue(hasattr(schemas, "ClassDashboardOrderUpdate"))
+        self.assertIn("/classes/dashboard-order", {route.path for route in main.app.routes})
+
+    def test_application_startup_completes(self):
+        with TestClient(main.app) as client:
+            self.assertEqual(client.get("/openapi.json").status_code, 200)
+            self.assertEqual(client.get("/auth/me").status_code, 401)
+            self.assertEqual(client.get("/exam-library/items").status_code, 401)
+            self.assertEqual(client.get("/classes/1/student-access-code").status_code, 401)
+            self.assertEqual(client.post("/student/join/class", json={}).status_code, 422)
+
+
+if __name__ == "__main__":
+    unittest.main()

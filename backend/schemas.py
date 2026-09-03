@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, StrictInt
 
 
@@ -16,16 +16,6 @@ class CurrentUserOut(BaseModel):
     school_name: Optional[str] = None
     school_slug: Optional[str] = None
     school_logo_url: Optional[str] = None
-
-
-class UiTranslationOverrideUpdate(BaseModel):
-    value: str
-    base_value: Optional[str] = None
-
-
-class UiTranslationOverridesOut(BaseModel):
-    overrides: Dict[str, str]
-    is_gaeilge_reviewer: bool
 
 
 class SchoolAdminTeacherOut(BaseModel):

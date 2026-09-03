@@ -1,3 +1,9 @@
+import unittest
+
+raise unittest.SkipTest(
+    "Gaeilge reviewer backend is paused after the 2026-09-02 production startup incident."
+)
+
 import sys
 import unittest
 from pathlib import Path
