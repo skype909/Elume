@@ -6,7 +6,7 @@ jest.mock("./i18n/UiLanguageContext", () => ({ useUiLanguage: () => ({ t: (key: 
 
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { SeatingPlanHeading } from "./SeatingPlanPage";
+import { SeatingPlanHeading, seatingPlanHeading } from "./SeatingPlanPage";
 
 test("renders the seating-plan heading with an em dash rather than mojibake", () => {
   render(React.createElement(SeatingPlanHeading, {
@@ -17,4 +17,11 @@ test("renders the seating-plan heading with an em dash rather than mojibake", ()
 
   expect(screen.getByText("6th Year — Seating Plan")).toBeInTheDocument();
   expect(screen.queryByText("â€”")).not.toBeInTheDocument();
+});
+
+test("accepts the production numeric class ID for the fallback heading", () => {
+  const heading = seatingPlanHeading(undefined, 12, "Seating Plan");
+
+  expect(heading).toBe("Class 12 — Seating Plan");
+  expect(heading).not.toContain("â€”");
 });

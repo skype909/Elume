@@ -7,7 +7,7 @@ import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 const API_BASE = "/api";
 
-export function seatingPlanHeading(className: string | undefined, classId: string | undefined, pageTitle: string) {
+export function seatingPlanHeading(className: string | undefined, classId: string | number | undefined, pageTitle: string) {
     return `${className || `Class ${classId || ""}`} \u2014 ${pageTitle}`;
 }
 
@@ -17,7 +17,7 @@ export function SeatingPlanHeading({
     pageTitle,
 }: {
     className?: string;
-    classId?: string;
+    classId?: string | number;
     pageTitle: string;
 }) {
     return (
