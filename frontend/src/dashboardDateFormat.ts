@@ -47,35 +47,49 @@ function dublinDateParts(date: Date) {
   };
 }
 
-export function formatDashboardDateCard(date: Date, language: UiLanguage) {
-  const time = new Intl.DateTimeFormat("en-IE", {
+function formatDublinTime(date: Date, hour12: boolean) {
+  return new Intl.DateTimeFormat("en-IE", {
     timeZone: DUBLIN_TIME_ZONE,
-    hour: "2-digit",
+    hour: hour12 ? "numeric" : "2-digit",
     minute: "2-digit",
-    hourCycle: "h23",
+    ...(hour12 ? { hour12: true } : { hourCycle: "h23" }),
   }).format(date);
+}
+
+export function formatDublinDateCardParts(date: Date, language: UiLanguage) {
+  const { year, month, day } = dublinDateParts(date);
 
   if (language === "ga") {
     // Some otherwise modern browsers do not ship Gaeilge ICU data and silently
     // fall back to English for ga-IE. Derive Dublin calendar values numerically,
     // then provide the fixed Irish UI vocabulary ourselves.
-    const { year, month, day } = dublinDateParts(date);
     const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
     return {
-      day: IRISH_WEEKDAYS[weekday],
-      date: `${day} ${IRISH_MONTHS[month - 1]} ${year}`,
-      time,
+      weekday: IRISH_WEEKDAYS[weekday],
+      day,
+      month: IRISH_MONTHS[month - 1],
+      year,
+      time: formatDublinTime(date, false),
     };
   }
 
   return {
-    day: new Intl.DateTimeFormat("en-IE", { timeZone: DUBLIN_TIME_ZONE, weekday: "long" }).format(date),
-    date: new Intl.DateTimeFormat("en-IE", {
+    weekday: new Intl.DateTimeFormat("en-IE", { timeZone: DUBLIN_TIME_ZONE, weekday: "long" }).format(date),
+    day,
+    month: new Intl.DateTimeFormat("en-IE", {
       timeZone: DUBLIN_TIME_ZONE,
-      day: "numeric",
       month: "long",
-      year: "numeric",
     }).format(date),
-    time,
+    year,
+    time: formatDublinTime(date, true),
+  };
+}
+
+export function formatDashboardDateCard(date: Date, language: UiLanguage) {
+  const parts = formatDublinDateCardParts(date, language);
+  return {
+    day: parts.weekday,
+    date: `${parts.day} ${parts.month} ${parts.year}`,
+    time: language === "ga" ? parts.time : formatDublinTime(date, false),
   };
 }

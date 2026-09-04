@@ -15,6 +15,7 @@ import { useUiLanguage } from "./i18n/UiLanguageContext";
 import UiText from "./Components/UiText";
 import { classColourBackgroundClass } from "./classAppearance";
 import { resolveClassPageColourKey } from "./classAppearanceViews";
+import { formatDublinDateCardParts } from "./dashboardDateFormat";
 
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
@@ -954,15 +955,11 @@ export default function ClassPage() {
     return () => window.clearInterval(t);
   }, []);
 
-  const locale = language === "ga" ? "ga-IE" : "en-IE";
-  const dayName = now.toLocaleDateString(locale, { weekday: "long" });
-  const dayNumber = now.getDate();
-  const monthName = now.toLocaleDateString(locale, { month: "long" });
-  const timeNow = now.toLocaleTimeString(locale, {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  const classDateCard = formatDublinDateCardParts(now, language);
+  const dayName = classDateCard.weekday;
+  const dayNumber = classDateCard.day;
+  const monthName = classDateCard.month;
+  const timeNow = classDateCard.time;
 
   const today = now;
   function toYMD(d: Date) {
