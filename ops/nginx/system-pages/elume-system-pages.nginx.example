@@ -1,0 +1,54 @@
+# REVIEW ONLY — do not install this file unchanged.
+#
+# Place the HTML files outside the React deployment root:
+#   /var/www/elume-system-pages/404.html
+#   /var/www/elume-system-pages/outage.html
+#
+# Include this inside Elume's HTTPS server block. It deliberately preserves
+# the existing SPA fallback and does not intercept proxied /api/ JSON errors.
+
+# Internal static documents. Exact-match locations bypass the maintenance
+# marker, preventing an error-page loop.
+location = /_elume-system/404 {
+    internal;
+    alias /var/www/elume-system-pages/404.html;
+}
+
+location = /_elume-system/outage {
+    internal;
+    alias /var/www/elume-system-pages/outage.html;
+    add_header Cache-Control "no-store, max-age=0" always;
+}
+
+# Optional nginx-only liveness endpoint during a maintenance window. This is
+# deliberately localhost-only and does not claim that FastAPI is healthy.
+location = /_elume-system/health {
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+    access_log off;
+    return 204;
+}
+
+# Add this narrowly-scoped static asset location. Keep the existing
+# `location / { try_files $uri /index.html; }` unchanged so hash-based React
+# routes, including /#/student and /#/class/..., continue to load the SPA.
+location ~* \.(?:css|js|map|png|jpe?g|gif|svg|webp|ico|woff2?|json|pdf|xlsx|mp3)$ {
+    try_files $uri =404;
+    error_page 404 =404 /_elume-system/404;
+}
+
+# Replace the existing SPA location with this equivalent version only when
+# maintenance mode is being configured. `if` is safe here because it only
+# performs an immediate `return`; it does not rewrite or proxy requests.
+location / {
+    if (-f /etc/nginx/elume-maintenance.enabled) {
+        return 503;
+    }
+    try_files $uri /index.html;
+    error_page 503 =503 /_elume-system/outage;
+}
+
+# Leave the existing /api/ and /ws/ proxy locations unchanged. In particular,
+# do not set proxy_intercept_errors on: API clients must continue receiving
+# their normal JSON errors rather than outage HTML.
