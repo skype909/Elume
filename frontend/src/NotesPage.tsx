@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiFetch, apiFetchBlob } from "./api";
+import { ApiError, apiFetch, apiFetchBlob } from "./api";
 import { BackToClassButton, ClassPageActionBar } from "./ClassPageActions";
 import InlineNotice from "./Components/InlineNotice";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
@@ -25,6 +25,9 @@ const AUDIO_MIME_TYPES = new Set([
 ]);
 const OFFICE_CONVERSION_EXTENSIONS = new Set([".doc", ".docx", ".ppt", ".pptx"]);
 const POWERPOINT_CONVERSION_EXTENSIONS = new Set([".ppt", ".pptx"]);
+const SLIDESHOW_MAX_SLIDES = 30;
+const SLIDESHOW_LIMIT_TITLE = "That slideshow is a little too large";
+const SLIDESHOW_LIMIT_MESSAGE = "Elume supports slideshow presentations with up to 30 slides. Try splitting this file into two smaller presentations and uploading them separately.";
 
 type ClassItem = {
   id: number;
@@ -86,6 +89,29 @@ function buildNotesUploadWarning(files: File[]) {
     return "Choose Convert & Upload to make documents available to Elume's PDF-based teaching tools.";
   }
   return "You can store these files in Notes, but quiz generation currently works with PDF files only. Please export documents or presentations as PDF if you want to use them for quiz generation.";
+}
+
+type SlideshowLimitDetails = {
+  actualSlides?: number;
+};
+
+function slideshowLimitDetails(error: unknown): SlideshowLimitDetails | null {
+  const response = error instanceof ApiError ? error.response : null;
+  const detail = response && typeof response === "object" && "detail" in response
+    ? (response as { detail?: unknown }).detail
+    : response;
+
+  if (detail && typeof detail === "object") {
+    const value = detail as { code?: unknown; maximum_slides?: unknown; actual_slides?: unknown };
+    if (value.code === "slideshow_slide_limit_exceeded" && Number(value.maximum_slides) === SLIDESHOW_MAX_SLIDES) {
+      const actualSlides = Number(value.actual_slides);
+      return Number.isFinite(actualSlides) ? { actualSlides } : {};
+    }
+  }
+
+  const legacyMessage = error instanceof Error ? error.message : "";
+  if (/presentation has more than\s+30\s+slides/i.test(legacyMessage)) return {};
+  return null;
 }
 
 function resolveFileUrl(u: string) {
@@ -162,6 +188,7 @@ export default function NotesPage() {
   const [convertOfficeFiles, setConvertOfficeFiles] = useState(false);
   const [pendingOfficeFiles, setPendingOfficeFiles] = useState<File[] | null>(null);
   const [uploadFileLimitWarning, setUploadFileLimitWarning] = useState<string | null>(null);
+  const [slideshowLimitError, setSlideshowLimitError] = useState<SlideshowLimitDetails | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -360,6 +387,14 @@ export default function NotesPage() {
       setPickedFiles([]);
       setConvertOfficeFiles(false);
     } catch (e: any) {
+      const slideshowLimit = slideshowLimitDetails(e);
+      if (slideshowLimit) {
+        setSlideshowLimitError(slideshowLimit);
+        setPickedFiles([]);
+        setConvertOfficeFiles(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
       setError(userFacingError(e, "We couldn’t upload that file just now. Please try again."));
       if (shouldConvertOfficeFiles && filesToUpload.some(isConvertibleOfficeFile)) {
         setPendingOfficeFiles(filesToUpload);
@@ -458,6 +493,7 @@ export default function NotesPage() {
     setConvertOfficeFiles(false);
     setPendingOfficeFiles(null);
     setUploadFileLimitWarning(null);
+    setSlideshowLimitError(null);
   }
 
   async function openAudioLibrary() {
@@ -485,6 +521,7 @@ export default function NotesPage() {
   }
 
   function handlePickedFilesChange(nextFiles: File[]) {
+    setSlideshowLimitError(null);
     const limitedFiles = nextFiles.slice(0, MAX_NOTES_UPLOAD_FILES);
     if (nextFiles.length > MAX_NOTES_UPLOAD_FILES) {
       setUploadFileLimitWarning(`You can upload up to ${MAX_NOTES_UPLOAD_FILES} files at a time. Only the first ${MAX_NOTES_UPLOAD_FILES} files have been selected.`);
@@ -512,6 +549,14 @@ export default function NotesPage() {
     setPickedFiles(filesToUpload);
     setConvertOfficeFiles(shouldConvert);
     await uploadFiles(filesToUpload, shouldConvert);
+  }
+
+  function chooseAnotherFile() {
+    setSlideshowLimitError(null);
+    setPickedFiles([]);
+    setConvertOfficeFiles(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    fileInputRef.current?.click();
   }
 
   const pageTitle = loadingClass
@@ -908,6 +953,12 @@ export default function NotesPage() {
                   {isAudioUpload ? t("notes.chooseAudioFiles") : t("notes.chooseFiles")}
                 </button>
 
+                {!isAudioUpload && (
+                  <p className="mt-2 text-sm font-medium text-slate-600">
+                    Slideshow presentations can contain up to 30 slides.
+                  </p>
+                )}
+
                 {pickedFiles.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {pickedFiles.map((f, i) => (
@@ -931,6 +982,24 @@ export default function NotesPage() {
                   <div className="mt-3 rounded-2xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-800">
                     {uploadFileLimitWarning}
                   </div>
+                )}
+
+                {slideshowLimitError && (
+                  <InlineNotice
+                    variant="error"
+                    title={SLIDESHOW_LIMIT_TITLE}
+                    message={
+                      <>
+                        <p>{SLIDESHOW_LIMIT_MESSAGE}</p>
+                        {slideshowLimitError.actualSlides != null && (
+                          <p className="mt-1 font-semibold">This slideshow contains {slideshowLimitError.actualSlides} slides.</p>
+                        )}
+                      </>
+                    }
+                    actionLabel="Choose another file"
+                    onAction={chooseAnotherFile}
+                    className="mt-3"
+                  />
                 )}
               </div>
 

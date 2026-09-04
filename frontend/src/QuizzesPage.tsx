@@ -66,6 +66,8 @@ type GenerateQuizResponse = {
 
 /** ---------------- Helpers ---------------- */
 const API_BASE = "/api";
+export const QUIZ_TITLE_REQUIRED_ERROR = "Quiz title can\u2019t be empty.";
+export const QUIZ_QUESTION_REQUIRED_ERROR = "Question text can\u2019t be empty.";
 
 function getFileExtension(name: string) {
   const trimmed = String(name || "").trim();
@@ -433,7 +435,7 @@ export default function QuizzesPage() {
   async function saveQuizMeta() {
     resetError();
     const title = quizTitle.trim();
-    if (!title) return setError("Quiz title canâ€™t be empty.");
+    if (!title) return setError(QUIZ_TITLE_REQUIRED_ERROR);
 
     const category = clampCategory(quizCategory);
     const description = quizDescription.trim();
@@ -529,7 +531,7 @@ export default function QuizzesPage() {
     if (!editingQuizId) return setError("No quiz selected.");
 
     const prompt = qPrompt.trim();
-    if (!prompt) return setError("Question text canâ€™t be empty.");
+    if (!prompt) return setError(QUIZ_QUESTION_REQUIRED_ERROR);
 
     const a = qA.trim();
     const b = qB.trim();

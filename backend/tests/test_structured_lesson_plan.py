@@ -100,6 +100,37 @@ class StructuredLessonPlanTests(unittest.TestCase):
         definitions = next(block for block in result["document"]["blocks"] if block.get("label") == "Key definitions")
         self.assertEqual(definitions["definitions"][0]["term"], "Chlorophyll")
 
+    def test_junior_cycle_outcome_language_normalises_to_the_canonical_structured_document(self):
+        payload = lesson_plan_payload()["document"]
+        payload["level"] = "Junior Cycle"
+        payload["learning_outcomes"] = payload.pop("learning_intentions")
+        payload["success_indicators"] = payload.pop("success_criteria")
+        payload["assessment_for_learning"] = payload.pop("assessment")
+        payload["differentiation_support"] = payload.pop("differentiation")
+
+        result = normalise_create_resources_result("lesson_plan", payload, "Junior Cycle fallback")
+
+        self.assertEqual(result["document"]["resource_type"], "lesson_plan")
+        self.assertEqual(result["document"]["level"], "Junior Cycle")
+        self.assertEqual(
+            [block.get("title") or block.get("label") for block in result["document"]["blocks"]],
+            [
+                "Primary learning outcome",
+                "Learning intentions",
+                "Success criteria",
+                "Key definitions",
+                "Prior knowledge",
+                "Lesson flow",
+                "Resources",
+                "Differentiation and support",
+                "Misconceptions to address",
+                "Assessment and checks for understanding",
+                "Teacher reference",
+                "Suggested homework",
+                "Stopping point / next lesson",
+            ],
+        )
+
     def test_direct_lesson_plan_document_is_accepted_but_invalid_content_still_fails(self):
         direct_document = lesson_plan_payload()["document"]
         result = normalise_create_resources_result("lesson_plan", direct_document, "Fallback")

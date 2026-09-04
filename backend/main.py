@@ -195,6 +195,7 @@ OFFICE_CONVERSION_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx"}
 POWERPOINT_CONVERSION_EXTENSIONS = {".ppt", ".pptx"}
 OFFICE_CONVERSION_TIMEOUT_SECONDS = 60
 POWERPOINT_CONVERSION_MAX_SLIDES = 30
+SLIDESHOW_SLIDE_LIMIT_ERROR_CODE = "slideshow_slide_limit_exceeded"
 _office_conversion_lock = threading.Lock()
 
 STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
@@ -12612,6 +12613,18 @@ def _office_conversion_error(message: str, status_code: int = 422) -> HTTPExcept
     return HTTPException(status_code=status_code, detail=message)
 
 
+def _slideshow_slide_limit_error(actual_slides: int) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={
+            "code": SLIDESHOW_SLIDE_LIMIT_ERROR_CODE,
+            "maximum_slides": POWERPOINT_CONVERSION_MAX_SLIDES,
+            "actual_slides": int(actual_slides),
+            "message": "This slideshow is above Elume's supported slide limit.",
+        },
+    )
+
+
 def _convert_structured_lesson_plan_docx_to_pdf(docx_data: bytes) -> bytes:
     """Convert the canonical structured Lesson Plan DOCX into a validated PDF."""
     command = _libreoffice_command()
@@ -12713,9 +12726,7 @@ def _convert_office_upload_to_pdf(file: UploadFile, output_path: Path) -> None:
             if extension == ".pptx":
                 slide_count = _pptx_slide_count(source_path)
                 if slide_count > POWERPOINT_CONVERSION_MAX_SLIDES:
-                    raise _office_conversion_error(
-                        "This presentation has more than 30 slides. To keep conversion fast and reliable, Elume can automatically prepare presentations of up to 30 slides."
-                    )
+                    raise _slideshow_slide_limit_error(slide_count)
 
             try:
                 result = subprocess.run(
@@ -12769,9 +12780,7 @@ def _convert_office_upload_to_pdf(file: UploadFile, output_path: Path) -> None:
                         "Elume could not validate this presentation after conversion. Please upload the original file."
                     ) from exc
                 if page_count > POWERPOINT_CONVERSION_MAX_SLIDES:
-                    raise _office_conversion_error(
-                        "This presentation has more than 30 slides. To keep conversion fast and reliable, Elume can automatically prepare presentations of up to 30 slides."
-                    )
+                    raise _slideshow_slide_limit_error(page_count)
 
             shutil.copyfile(converted_pdf, output_path)
     finally:
@@ -13497,7 +13506,23 @@ def student_view(token: str, db: Session = Depends(get_db)):
         .all()
     )
 
-    notes = db.query(models.Note).filter(models.Note.class_id == link.class_id).all()
+    notes = (
+        db.query(
+            models.Note,
+            models.Topic.id.label("topic_id"),
+            models.Topic.name.label("topic_name"),
+        )
+        .outerjoin(
+            models.Topic,
+            and_(
+                models.Note.topic_id == models.Topic.id,
+                models.Topic.class_id == link.class_id,
+            ),
+        )
+        .filter(models.Note.class_id == link.class_id)
+        .order_by(models.Note.uploaded_at.desc(), models.Note.id.desc())
+        .all()
+    )
     tests = db.query(TestItem).filter(TestItem.class_id == link.class_id).all()
 
     return {
@@ -13526,8 +13551,11 @@ def student_view(token: str, db: Session = Depends(get_db)):
                 "id": n.id,
                 "filename": n.filename,
                 "file_url": f"/student/{token}/notes/{n.id}/download",
+                "topic_id": topic_id,
+                "topic_name": strip_prefix(topic_name) if topic_name else None,
+                "uploaded_at": n.uploaded_at.isoformat() if n.uploaded_at else None,
             }
-            for n in notes
+            for n, topic_id, topic_name in notes
         ],
         "tests": [
             {

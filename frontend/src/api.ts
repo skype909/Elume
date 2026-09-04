@@ -6,6 +6,18 @@ type ApiRequestInit = Omit<RequestInit, "body"> & { body?: JsonBody };
 const FRIENDLY_AUTH_ERROR =
   "Your session has expired or changed. Please log in again to continue. This can happen for security reasons or if you signed in on another device.";
 
+export class ApiError extends Error {
+  status: number;
+  response: unknown;
+
+  constructor(status: number, message: string, response: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.response = response;
+  }
+}
+
 export function getToken(): string | null {
   try {
     return localStorage.getItem(TOKEN_KEY);
@@ -88,11 +100,12 @@ export async function apiFetch(path: string, init: ApiRequestInit = {}) {
   }
 
   if (!res.ok) {
+    const detail = data && typeof data === "object" ? (data.detail || data.message) : data;
     const msg =
-      (data && (data.detail || data.message)) ||
-      (typeof data === "string" && data) ||
+      (typeof detail === "string" && detail) ||
+      (detail && typeof detail === "object" && typeof detail.message === "string" && detail.message) ||
       `Request failed (${res.status})`;
-    throw new Error(normaliseApiErrorMessage(res.status, String(msg)));
+    throw new ApiError(res.status, normaliseApiErrorMessage(res.status, msg), data);
   }
 
   return data;

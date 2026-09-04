@@ -80,6 +80,7 @@ type ClassItem = {
 };
 
 const API_BASE = "/api";
+export const CLASS_ORDER_SAVE_ERROR = "We couldn\u2019t save that class order just now. Please try again.";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -1111,7 +1112,7 @@ export function Dashboard({
       .catch(() => {
         if (requestVersion === orderRequestVersionRef.current) {
           setClasses(previousClasses);
-          setError("We couldnâ€™t save that class order just now. Please try again.");
+          setError(CLASS_ORDER_SAVE_ERROR);
         }
       });
   }

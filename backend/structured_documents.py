@@ -243,9 +243,13 @@ def lesson_plan_to_legacy_text(content: LessonPlanContent) -> str:
 
 _LESSON_PLAN_ROOT_ALIASES = {
     "learning_objectives": "learning_intentions",
+    "learning_outcomes": "learning_intentions",
     "key_definitions": "definitions",
     "lesson_timeline": "lesson_flow",
     "lesson_steps": "lesson_flow",
+    "success_indicators": "success_criteria",
+    "assessment_for_learning": "assessment",
+    "differentiation_support": "differentiation",
     "teacher_notes": "teacher_note",
     "next_step": "stopping_point",
 }

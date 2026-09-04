@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { ChevronDown, Download, FileText, FolderOpen, Search } from "lucide-react";
 import ELogo2 from "./assets/ELogo2.png";
 import { rememberStudentClass, removeRememberedStudentClassAccessToken } from "./studentClasses";
 
@@ -19,7 +20,9 @@ type StudentNote = {
   filename?: string;
   file_url?: string;
   url?: string;
-  topic_name?: string;
+  topic_id?: number | null;
+  topic_name?: string | null;
+  uploaded_at?: string | null;
 };
 
 type StudentTest = {
@@ -111,6 +114,18 @@ function cleanSessionCode(s: string) {
   return s.replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
 }
 
+function noteFileType(filename: string) {
+  const extension = filename.split(".").pop()?.trim().toUpperCase();
+  return extension && extension !== filename.toUpperCase() ? extension : "FILE";
+}
+
+function formatNoteDate(value?: string | null) {
+  if (!value) return "Shared resource";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Shared resource";
+  return date.toLocaleDateString("en-IE", { day: "numeric", month: "short", year: "numeric" });
+}
+
 export default function StudentClassPage() {
   const { token } = useParams();
   const navigate = useNavigate();
@@ -121,6 +136,8 @@ export default function StudentClassPage() {
 
   const [view, setView] = useState<View>("home");
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
+  const [noteSearch, setNoteSearch] = useState("");
+  const [expandedTopics, setExpandedTopics] = useState<Set<string>>(() => new Set());
 
   const [quizCode, setQuizCode] = useState("");
   const [quizJoinError, setQuizJoinError] = useState<string | null>(null);
@@ -212,12 +229,33 @@ export default function StudentClassPage() {
     Array.isArray(data?.tests) ? data?.tests ?? [] : []
   ), [data]);
 
+  const sortedNotes = useMemo(() => [...notes].sort((a, b) => {
+    const aTime = a.uploaded_at ? new Date(a.uploaded_at).getTime() : 0;
+    const bTime = b.uploaded_at ? new Date(b.uploaded_at).getTime() : 0;
+    return bTime - aTime || b.id - a.id;
+  }), [notes]);
+
+  const noteTopics = useMemo(() => {
+    const groups = new Map<string, { key: string; name: string; notes: StudentNote[]; general: boolean }>();
+    sortedNotes.forEach((note) => {
+      const name = (note.topic_name || "").trim();
+      const general = !name;
+      const key = general ? "general" : `topic-${note.topic_id ?? name.toLocaleLowerCase()}`;
+      const group = groups.get(key) || { key, name: general ? "General notes" : name, notes: [], general };
+      group.notes.push(note);
+      groups.set(key, group);
+    });
+    return Array.from(groups.values()).sort((a, b) => {
+      if (a.general !== b.general) return a.general ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [sortedNotes]);
+
   const notesByTopic = useMemo(() => {
     const map = new Map<string, StudentNote[]>();
-    notes.forEach((n) => {
-      const topic = (n.topic_name || "Resources").trim() || "Resources";
-      if (!map.has(topic)) map.set(topic, []);
-      map.get(topic)!.push(n);
+    notes.forEach((note) => {
+      const topic = (note.topic_name || "Resources").trim() || "Resources";
+      map.set(topic, [...(map.get(topic) || []), note]);
     });
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [notes]);
@@ -493,6 +531,36 @@ export default function StudentClassPage() {
     );
   }
 
+  function NoteRow({ note, compact = false }: { note: StudentNote; compact?: boolean }) {
+    const label = note.filename || "Resource";
+    const url = resolveFileUrl(note.file_url || note.url || "");
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`Open ${label}`}
+        className={`group flex min-w-0 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50/40 focus:outline-none focus:ring-4 focus:ring-emerald-100 active:scale-[0.99] sm:px-4 ${compact ? "" : "sm:py-4"}`}
+      >
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-cyan-100 bg-cyan-50 text-cyan-700">
+          <FileText size={20} strokeWidth={2.2} aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-black text-slate-900">{label}</div>
+          <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs font-semibold text-slate-500">
+            <span>{noteFileType(label)}</span>
+            <span aria-hidden="true">•</span>
+            <span>{formatNoteDate(note.uploaded_at)}</span>
+          </div>
+        </div>
+        <span className="inline-flex min-h-10 shrink-0 items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-xs font-black text-emerald-800 group-hover:bg-emerald-100">
+          <Download size={15} aria-hidden="true" />
+          Open
+        </span>
+      </a>
+    );
+  }
+
   function LiveQuizCard() {
     return (
       <div id="live-quiz-card" className={`${card} p-5`}>
@@ -670,6 +738,33 @@ export default function StudentClassPage() {
     );
   }
 
+  function NotesLibrary() {
+    if (!notes.length) return <EmptyState title="Notes" hint="No notes shared yet. Your teacher’s resources will appear here." />;
+
+    const query = noteSearch.trim().toLocaleLowerCase();
+    const topics = noteTopics.filter((topic) => !query || topic.name.toLocaleLowerCase().includes(query) || topic.notes.some((note) => (note.filename || "").toLocaleLowerCase().includes(query)));
+    const toggleTopic = (key: string) => setExpandedTopics((current) => {
+      const next = new Set(current);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+
+    return <div className="space-y-5 overflow-x-hidden">
+      <section className={`${card} p-4 sm:p-5`} aria-labelledby="notes-library-title">
+        <div className="flex items-start gap-3"><div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-500 to-cyan-500 text-white shadow-md"><FolderOpen size={21} aria-hidden="true" /></div><div className="min-w-0"><h2 id="notes-library-title" className="text-lg font-black tracking-tight text-slate-900">Notes library</h2><p className="mt-1 text-sm leading-6 text-slate-600">Browse the topics and resources your teacher has shared.</p></div></div>
+        <label className="relative mt-4 block"><span className="sr-only">Search notes and topics</span><Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={19} aria-hidden="true" /><input value={noteSearch} onChange={(event) => setNoteSearch(event.target.value)} placeholder="Search notes and topics" aria-label="Search notes and topics" className="min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-4 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-100" /></label>
+      </section>
+      {!query ? <section className={`${softCard} p-4 sm:p-5`} aria-labelledby="recent-notes-title"><div className="mb-3 flex items-center justify-between"><div><h2 id="recent-notes-title" className="text-base font-black text-slate-900">Recently added</h2><p className="mt-0.5 text-xs font-semibold text-slate-500">Your latest shared resources</p></div><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">Latest {Math.min(sortedNotes.length, 4)}</span></div><div className="space-y-2">{sortedNotes.slice(0, 4).map((note) => <NoteRow key={`recent-${note.id}`} note={note} compact />)}</div></section> : null}
+      <section aria-labelledby="topics-title" className="space-y-3"><div className="px-1"><h2 id="topics-title" className="text-lg font-black tracking-tight text-slate-900">Topics</h2><p className="mt-0.5 text-sm text-slate-600">{topics.length} matching topic{topics.length === 1 ? "" : "s"}</p></div>
+        {topics.length ? topics.map((topic) => {
+          const expanded = Boolean(query) || expandedTopics.has(topic.key);
+          const contentId = `student-topic-${topic.key.replace(/[^a-z0-9-]/gi, "-")}`;
+          return <article key={topic.key} className={`${card} overflow-hidden`}><button type="button" onClick={() => toggleTopic(topic.key)} aria-expanded={expanded} aria-controls={contentId} className="flex min-h-[64px] w-full items-center gap-3 px-4 py-3 text-left hover:bg-emerald-50/50 focus:outline-none focus:ring-4 focus:ring-inset focus:ring-emerald-100 sm:px-5"><div className={`grid h-10 w-10 shrink-0 place-items-center rounded-2xl ${topic.general ? "bg-violet-50 text-violet-700" : "bg-emerald-50 text-emerald-700"}`}><FolderOpen size={19} aria-hidden="true" /></div><div className="min-w-0 flex-1"><div className="truncate text-base font-black text-slate-900">{topic.name}</div><div className="mt-0.5 text-xs font-semibold text-slate-500">{topic.notes.length} note{topic.notes.length === 1 ? "" : "s"}</div></div><ChevronDown className={`shrink-0 text-emerald-700 ${expanded ? "rotate-180" : ""}`} size={21} aria-hidden="true" /><span className="sr-only">{expanded ? "Collapse" : "Expand"} {topic.name}</span></button>{expanded ? <div id={contentId} className="border-t border-slate-100 bg-slate-50/60 p-3 sm:p-4"><div className="space-y-2">{topic.notes.map((note) => <NoteRow key={note.id} note={note} />)}</div></div> : null}</article>;
+        }) : <EmptyState title="No search results" hint="Try a different topic name or note title." />}
+      </section>
+    </div>;
+  }
+
   function ResourcesView() {
     if (!notes.length) return <EmptyState title="Resources" hint="No resources uploaded yet." />;
 
@@ -819,7 +914,7 @@ export default function StudentClassPage() {
 
         {view === "resources" && (
           <div className="mt-5">
-            <ResourcesView />
+            {NotesLibrary()}
           </div>
         )}
 

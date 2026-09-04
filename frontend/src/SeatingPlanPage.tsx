@@ -7,6 +7,26 @@ import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 const API_BASE = "/api";
 
+export function seatingPlanHeading(className: string | undefined, classId: string | undefined, pageTitle: string) {
+    return `${className || `Class ${classId || ""}`} \u2014 ${pageTitle}`;
+}
+
+export function SeatingPlanHeading({
+    className,
+    classId,
+    pageTitle,
+}: {
+    className?: string;
+    classId?: string;
+    pageTitle: string;
+}) {
+    return (
+        <div className="text-2xl font-extrabold tracking-tight text-slate-900">
+            {className || `Class ${classId || ""}`} {"\u2014"} {pageTitle}
+        </div>
+    );
+}
+
 type ClassItem = { id: number; name: string; subject: string };
 
 type StudentRow = {
@@ -332,7 +352,7 @@ export default function SeatingPlanPage() {
         const node = document.getElementById("seatingPlanPrint");
         if (!node) return;
 
-        const heading = `${classInfo?.name || `Class ${classId}`} — Seating Plan`;
+        const heading = seatingPlanHeading(classInfo?.name, classId, "Seating Plan");
 
         try {
             const dataUrl = await toPng(node as HTMLElement, {
@@ -550,16 +570,16 @@ export default function SeatingPlanPage() {
         );
     }
 
-    const title = `${classInfo?.name || `Class ${classId}`} — Seating Plan`;
-
-    void title;
-
     return (
         <div className="min-h-screen bg-slate-50 p-4 md:p-6">
             {/* Header */}
             <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                    <div className="text-2xl font-extrabold tracking-tight text-slate-900">{classInfo?.name || `Class ${classId}`} â€” {t("seatingPlan.title")}</div>
+                    <SeatingPlanHeading
+                        className={classInfo?.name}
+                        classId={classId}
+                        pageTitle={t("seatingPlan.title")}
+                    />
                     <div className="mt-1 text-sm text-slate-600">
                         Regenerate every 6 weeks • Roster is editable here without affecting Class Admin
                     </div>
