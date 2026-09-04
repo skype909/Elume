@@ -1188,7 +1188,7 @@ export default function ClassPage() {
                   rel="noopener noreferrer"
                   className={className}
                 >
-                  {t(item.labelKey)}
+                  <UiText translationKey={item.labelKey} />
                 </a>
               );
             }
@@ -1206,7 +1206,7 @@ export default function ClassPage() {
                 }}
                 className={className}
               >
-                {t(item.labelKey)}
+                <UiText translationKey={item.labelKey} />
               </button>
             );
           })}
@@ -1367,8 +1367,8 @@ export default function ClassPage() {
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-lg font-extrabold text-slate-900">{t(item.titleKey)}</div>
-                <div className="mt-1 text-sm text-slate-600">{t(item.subtitleKey)}</div>
+                <div className="text-lg font-extrabold text-slate-900"><UiText translationKey={item.titleKey} /></div>
+                <div className="mt-1 text-sm text-slate-600"><UiText translationKey={item.subtitleKey} /></div>
               </div>
               <div className="grid h-11 w-11 place-items-center rounded-2xl border border-white/80 bg-white/80 text-xl shadow-sm">
                 {item.icon}
@@ -1423,7 +1423,7 @@ export default function ClassPage() {
                     else if (x.id === "resources") navigate(`/class/${classId}/links`);
                   }}
                 >
-                  {t(x.labelKey)}
+                  <UiText translationKey={x.labelKey} />
                 </button>
               );
             })()
@@ -1456,7 +1456,7 @@ export default function ClassPage() {
                     onClick={() => setNameGenOpen(true)}
                   >
                     <div className={toolIcon}>🙋</div>
-                    <div className={toolLabel}>{t("class.randomName")}</div>
+                    <div className={toolLabel}><UiText translationKey="class.randomName" /></div>
                   </button>
 
                   <button
@@ -1465,7 +1465,7 @@ export default function ClassPage() {
                     onClick={() => navigate(`/class/${classId}/seating-plan`)}
                   >
                     <div className={toolIcon}>🪑</div>
-                    <div className={toolLabel}>{t("class.seatingPlan")}</div>
+                    <div className={toolLabel}><UiText translationKey="class.seatingPlan" /></div>
                   </button>
 
                   <button
@@ -1481,7 +1481,7 @@ export default function ClassPage() {
                     <div className={toolIcon}>
                       <Timer size={22} />
                     </div>
-                    <div className={toolLabel}>{t("class.timer")}</div>
+                    <div className={toolLabel}><UiText translationKey="class.timer" /></div>
                   </button>
 
                   <button
@@ -1495,7 +1495,7 @@ export default function ClassPage() {
                     }}
                   >
                     <div className={toolIcon}>👥</div>
-                    <div className={toolLabel}>{t("class.teamGenerator")}</div>
+                    <div className={toolLabel}><UiText translationKey="class.teamGenerator" /></div>
                   </button>
                 </>
               );

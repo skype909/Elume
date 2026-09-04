@@ -17,6 +17,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import main
 import models
+import authorization
 from db import Base
 
 
@@ -104,6 +105,20 @@ class UiTranslationOverrideTests(unittest.TestCase):
         self.assertEqual(self.put(self.reviewer, value="a" * 501).status_code, 400)
         self.assertEqual(self.put(self.reviewer, base_value="a" * 501).status_code, 400)
         self.assertEqual(self.db.query(models.UiTranslationOverrideModel).count(), 0)
+
+    def test_dashboard_and_class_reviewer_keys_are_allowlisted_without_expanding_reviewer_emails(self):
+        expected = {
+            "nav.admin", "nav.calendar", "dashboard.timetable", "dashboard.createResources",
+            "class.whiteboard", "class.collaboration", "class.liveQuiz", "class.classAdmin",
+            "class.notes", "class.tests", "class.quizzes", "class.examPapers", "class.videos",
+            "class.links", "class.randomName", "class.seatingPlan", "class.timer", "class.teamGenerator",
+        }
+        self.assertTrue(expected.issubset(main.GAEILGE_REVIEWABLE_KEYS))
+        self.assertEqual(authorization.GAEILGE_REVIEWER_EMAILS, {
+            "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",
+        })
+        self.assertEqual(self.put(self.reviewer, key="dashboard.createResources", value="Cruthaigh acmhainní").status_code, 200)
+        self.assertEqual(self.put(self.reviewer, key="not.reviewable", value="Ní hea").status_code, 400)
 
     def test_get_returns_shared_overrides_and_account_specific_capability(self):
         self.assertEqual(self.put(self.reviewer, value="Áiseanna").status_code, 200)

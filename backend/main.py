@@ -2784,6 +2784,13 @@ def auth_me(user: models.UserModel = Depends(get_current_user)):
 
 # Keep this deliberately limited to the non-interactive reviewer labels.
 GAEILGE_REVIEWABLE_KEYS = {
+    "nav.dashboard",
+    "nav.admin",
+    "nav.calendar",
+    "dashboard.createClass",
+    "dashboard.createResources",
+    "dashboard.timetable",
+    "dashboard.viewTimetable",
     "createClass.title",
     "createClass.help",
     "dashboard.dragToArrange",
@@ -2798,6 +2805,23 @@ GAEILGE_REVIEWABLE_KEYS = {
     "class.quickTools",
     "class.quickToolsSubtitle",
     "class.externalResources",
+    "class.whiteboard",
+    "class.whiteboardSubtitle",
+    "class.collaboration",
+    "class.collaborationSubtitle",
+    "class.liveQuiz",
+    "class.liveQuizSubtitle",
+    "class.classAdmin",
+    "class.notes",
+    "class.tests",
+    "class.quizzes",
+    "class.examPapers",
+    "class.videos",
+    "class.links",
+    "class.randomName",
+    "class.seatingPlan",
+    "class.timer",
+    "class.teamGenerator",
 }
 UI_TRANSLATION_VALUE_MAX_LENGTH = 500
 

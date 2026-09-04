@@ -47,6 +47,7 @@ import InlineNotice from "./Components/InlineNotice";
 import { userFacingError } from "./userFacingError";
 import LanguageSwitch from "./Components/LanguageSwitch";
 import UiText from "./Components/UiText";
+import { formatDashboardDateCard } from "./dashboardDateFormat";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
 import {
   CLASS_COLOUR_OPTIONS,
@@ -685,18 +686,8 @@ export function Dashboard({
     return copy;
   }, [classes, meta]);
 
-  const headerLocale = language === "ga" ? "ga-IE" : "en-IE";
-  const headerDay = now.toLocaleDateString(headerLocale, { weekday: "long" });
-  const headerDate = now.toLocaleDateString(headerLocale, {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  });
-  const headerTime = now.toLocaleTimeString(headerLocale, {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  });
+  // Dynamic calendar output deliberately remains locale-formatted, not reviewer-editable UI text.
+  const { day: headerDay, date: headerDate, time: headerTime } = formatDashboardDateCard(now, language);
   const plannerTeacherName = welcome ? welcome.replace(/^Welcome\s*/i, "") : "";
   const plannerGreeting = plannerTeacherName ? `${t("planner.welcome")}, ${plannerTeacherName}` : t("planner.welcome");
 
@@ -1341,7 +1332,7 @@ export function Dashboard({
                 type="button"
                 onClick={openTimetableQuickView}
               >
-                {t("dashboard.timetable")}
+                <UiText translationKey="dashboard.timetable" />
               </button>
 
               <button
@@ -1349,7 +1340,7 @@ export function Dashboard({
                 type="button"
                 onClick={() => navigate("/admin")}
               >
-                {t("nav.admin")}
+                <UiText translationKey="nav.admin" />
               </button>
 
               <button
@@ -1357,7 +1348,7 @@ export function Dashboard({
                 type="button"
                 onClick={() => navigate("/calendar")}
               >
-                {t("nav.calendar")}
+                <UiText translationKey="nav.calendar" />
               </button>
             </div>
 
@@ -1378,7 +1369,7 @@ export function Dashboard({
                 </span>
               </span>
 
-              <span className="drop-shadow-[0_2px_2px_rgba(0,0,0,0.55)]">Create Resources</span>
+              <span className="drop-shadow-[0_2px_2px_rgba(0,0,0,0.55)]"><UiText translationKey="dashboard.createResources" /></span>
 
               <span className="ml-1 rounded-full bg-white/20 px-2 py-[2px] text-[10px] font-bold tracking-wide text-white border border-white/40">
                 AI
@@ -1388,11 +1379,11 @@ export function Dashboard({
             {/* Admin + Calendar stacked to the right (desktop) */}
             <div className="hidden md:flex flex-col gap-2 items-end">
               <button className={headerBtn} type="button" onClick={() => navigate("/admin")}>
-                Admin
+                <UiText translationKey="nav.admin" />
               </button>
 
               <button className={headerBtn} type="button" onClick={() => navigate("/calendar")}>
-                Calendar
+                <UiText translationKey="nav.calendar" />
               </button>
             </div>
 
