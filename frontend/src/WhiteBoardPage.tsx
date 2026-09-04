@@ -12,6 +12,18 @@ import {
   normalizeExamLibrarySubject,
 } from "./examLibrary";
 import { userFacingError } from "./userFacingError";
+import {
+  WhiteboardActionBar,
+  WhiteboardBoardActions,
+  WhiteboardContextControls,
+  WhiteboardToolRail,
+} from "./Components/WhiteboardControls";
+import { getContinuationBoardTitle } from "./whiteboardContinuation";
+import { getBottomRightResizeHandle, isWithinBottomRightResizeHandle } from "./whiteboardImageResize";
+import {
+  INITIAL_WHITEBOARD_HEIGHT,
+  useWhiteboardExtension,
+} from "./whiteboardExtension";
 
 const API_BASE = "/api";
 const AUDIO_TOPIC_NAME = "audio";
@@ -124,8 +136,6 @@ type SharedExamImportItem = {
 const PEN_COLORS = ["#111827", "#ef4444", "#3b82f6", "#22c55e", "#a855f7"];
 const PEN_SIZES = [2, 6, 12];
 const ERASER_SIZES = [10, 24, 40];
-const VISIBLE_RESIZE_HANDLE_SIZE = 14;
-const RESIZE_HIT_SIZE = 28;
 const IMAGE_MIN_SIZE = 40;
 const DELETE_W = 76;
 const DELETE_H = 30;
@@ -878,6 +888,7 @@ export default function WhiteBoardPage() {
   const lockedBoardWidthRef = useRef<number | null>(null);
   const lockedBoardDprRef = useRef<number | null>(null);
   const autoOpenedWhiteboardRef = useRef<number | null>(null);
+  const continuationInFlightRef = useRef(false);
   const pendingPageSeparatorRedrawRef = useRef(false);
   const [lockedBoardWidth, setLockedBoardWidth] = useState<number | null>(null);
   const [showHorizontalScrollHint, setShowHorizontalScrollHint] = useState(false);
@@ -1004,8 +1015,16 @@ export default function WhiteBoardPage() {
 
 
   // Long page + pages
-  const PAGE_HEIGHT = 2400;
-  const [canvasHeight, setCanvasHeight] = useState(2400);
+  const PAGE_HEIGHT = INITIAL_WHITEBOARD_HEIGHT;
+  const [canvasHeight, setCanvasHeight] = useState(INITIAL_WHITEBOARD_HEIGHT);
+  const { isBoardExtended, extendBoard } = useWhiteboardExtension({
+    canvasHeight,
+    setCanvasHeight,
+    markDirty,
+    onExtended: () => {
+      pendingPageSeparatorRedrawRef.current = true;
+    },
+  });
 
   // Modals
   const [showTitleModal, setShowTitleModal] = useState(true);
@@ -1019,6 +1038,8 @@ export default function WhiteBoardPage() {
 
   const [saving, setSaving] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showNewBoardModal, setShowNewBoardModal] = useState(false);
+  const [continuingToNewBoard, setContinuingToNewBoard] = useState(false);
   const [boardNotice, setBoardNotice] = useState<BoardNotice | null>(null);
 
   // Import list
@@ -1346,7 +1367,11 @@ export default function WhiteBoardPage() {
     width: number,
     height: number
   ) {
-    if (!dataUrl || !ctx) return;
+    if (!ctx) return;
+    if (!dataUrl) {
+      ctx.clearRect(0, 0, width, height);
+      return;
+    }
     const img = new Image();
     img.src = dataUrl;
     try {
@@ -1358,19 +1383,47 @@ export default function WhiteBoardPage() {
     }
   }
 
-  function restoreWhiteboardState(draft: WhiteboardDraftState) {
+  function restoreWhiteboardState(draft: WhiteboardDraftState, { markDirtyAfterRestore = false }: { markDirtyAfterRestore?: boolean } = {}): Promise<void> {
+    // Saved board navigation must not carry transient media, selection, or undo
+    // state into another board. Those are intentionally not persisted.
+    setSelectedImageId(null);
+    commitInkHistory([], []);
+    setBgUndoStack([]);
+    setObjUndoStack([]);
+    setObjRedoStack([]);
+    setImportedPdf(null);
+    setShowPdfPanel(true);
+    setShowVideoModal(false);
+    setShowVideoPanel(false);
+    setYoutubeUrlDraft("");
+    setYoutubeUrlError(null);
+    setYoutubeEmbedUrl(null);
+    setShowCalc(false);
+    setCalcExpr("");
+    setCalcResult("");
+    setSnipMode(false);
+    setClipRect(null);
+    setShowAudioLibrary(false);
+    closeAudioPlayer();
     if (typeof draft.boardWidth === "number" && draft.boardWidth > 0) {
       lockedBoardWidthRef.current = draft.boardWidth;
       setLockedBoardWidth(draft.boardWidth);
+    } else {
+      lockedBoardWidthRef.current = null;
+      setLockedBoardWidth(null);
     }
     if (typeof draft.boardDpr === "number" && draft.boardDpr > 0) {
       lockedBoardDprRef.current = draft.boardDpr;
+    } else {
+      lockedBoardDprRef.current = null;
     }
     setBoardTitle(draft.boardTitle || "Class Whiteboard");
     setTitleDraft(draft.boardTitle || "Class Whiteboard");
-    setCanvasHeight(Math.max(PAGE_HEIGHT, draft.canvasHeight || PAGE_HEIGHT));
+    const restoredHeight = Math.max(PAGE_HEIGHT, draft.canvasHeight || PAGE_HEIGHT);
+    // Saved boards can be taller than the new one-extension limit. Preserve
+    // their existing geometry; the extension hook disables the new UI for them.
+    setCanvasHeight(restoredHeight);
     setPlacedImages(Array.isArray(draft.placedImages) ? draft.placedImages : []);
-    setSelectedImageId(null);
     setTool(draft.tool ?? "pen");
     setPenColor(draft.penColor ?? PEN_COLORS[0]);
     setPenSize(draft.penSize ?? PEN_SIZES[0]);
@@ -1391,17 +1444,22 @@ export default function WhiteBoardPage() {
     setAxesApplied(Boolean(draft.axesApplied));
     setShowTitleModal(false);
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(async () => {
-        lockBoardWidthIfNeeded();
-        lockBoardDprIfNeeded();
-        const width = getBoardWidthCss();
-        if (width < 20) return;
-        const height = Math.max(PAGE_HEIGHT, draft.canvasHeight || PAGE_HEIGHT);
-        await drawDataUrlToCanvas(draft.bgDataUrl, bgCtxRef.current, width, height);
-        await drawDataUrlToCanvas(draft.inkDataUrl, inkCtxRef.current, width, height);
-        scheduleViewportRedraw();
-        markDirty();
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(async () => {
+          lockBoardWidthIfNeeded();
+          lockBoardDprIfNeeded();
+          const width = getBoardWidthCss();
+          if (width >= 20) {
+            const height = Math.max(PAGE_HEIGHT, draft.canvasHeight || PAGE_HEIGHT);
+            await drawDataUrlToCanvas(draft.bgDataUrl, bgCtxRef.current, width, height);
+            await drawDataUrlToCanvas(draft.inkDataUrl, inkCtxRef.current, width, height);
+            scheduleViewportRedraw();
+          }
+          if (markDirtyAfterRestore) markDirty();
+          else markClean();
+          resolve();
+        });
       });
     });
   }
@@ -1451,7 +1509,7 @@ export default function WhiteBoardPage() {
       const parsedState =
         typeof rawState === "string" ? (JSON.parse(rawState) as WhiteboardDraftState) : (rawState as WhiteboardDraftState | null);
       if (!parsedState) throw new Error("This whiteboard does not include editable state yet.");
-      restoreWhiteboardState(parsedState);
+      await restoreWhiteboardState(parsedState);
       setCurrentWhiteboardId(Number(data?.id || whiteboardId));
       if (typeof data?.title === "string" && data.title.trim()) {
         setBoardTitle(data.title.trim());
@@ -2131,25 +2189,34 @@ export default function WhiteBoardPage() {
         }
         ctx.drawImage(img, p.x, p.y, p.w, p.h);
         if (p.id === selectedImageId) {
-          const handle = VISIBLE_RESIZE_HANDLE_SIZE;
+          const handle = getBottomRightResizeHandle(p);
           const deleteRect = getDeletePillRect(p);
           ctx.save();
-          ctx.strokeStyle = "#2563eb";
-          ctx.lineWidth = 2;
-          ctx.setLineDash([8, 6]);
+          ctx.shadowColor = "rgba(15,23,42,0.2)";
+          ctx.shadowBlur = 10;
+          ctx.shadowOffsetY = 3;
+          ctx.strokeStyle = "#059669";
+          ctx.lineWidth = 3;
+          ctx.setLineDash([7, 5]);
           ctx.strokeRect(p.x, p.y, p.w, p.h);
           ctx.setLineDash([]);
+          const handleX = handle.x;
+          const handleY = handle.y;
           ctx.fillStyle = "#ffffff";
-          ctx.strokeStyle = "#1d4ed8";
-          for (const [hx, hy] of [
-            [p.x, p.y],
-            [p.x + p.w, p.y],
-            [p.x, p.y + p.h],
-            [p.x + p.w, p.y + p.h],
-          ]) {
-            ctx.fillRect(hx - handle / 2, hy - handle / 2, handle, handle);
-            ctx.strokeRect(hx - handle / 2, hy - handle / 2, handle, handle);
-          }
+          ctx.beginPath();
+          ctx.arc(handleX, handleY, handle.visualRadius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#059669";
+          ctx.stroke();
+          ctx.strokeStyle = "#047857";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(handleX - 5, handleY + 4);
+          ctx.lineTo(handleX + 5, handleY - 4);
+          ctx.moveTo(handleX + 1, handleY - 4);
+          ctx.lineTo(handleX + 5, handleY - 4);
+          ctx.lineTo(handleX + 5, handleY);
+          ctx.stroke();
           ctx.shadowColor = "rgba(15,23,42,0.18)";
           ctx.shadowBlur = 14;
           ctx.shadowOffsetY = 4;
@@ -2166,6 +2233,16 @@ export default function WhiteBoardPage() {
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillText("Delete", deleteRect.x + deleteRect.w / 2, deleteRect.y + deleteRect.h / 2 + 0.5);
+          ctx.shadowColor = "rgba(15,23,42,0.18)";
+          ctx.shadowBlur = 8;
+          ctx.fillStyle = "rgba(15,23,42,0.86)";
+          ctx.beginPath();
+          ctx.roundRect(p.x, p.y + p.h + 12, 104, 26, 13);
+          ctx.fill();
+          ctx.shadowColor = "transparent";
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "600 12px system-ui";
+          ctx.fillText("Drag to resize", p.x + 52, p.y + p.h + 25);
           ctx.restore();
         }
       } catch { }
@@ -2296,6 +2373,26 @@ export default function WhiteBoardPage() {
       return true;
     }
 
+    // The visible bottom-right handle extends outside the image bounds, so it
+    // must win before body hit-testing can deselect the selected image.
+    if (selectedImage && isWithinBottomRightResizeHandle(selectedImage, x, y)) {
+      snapshotObjects();
+      imgDragRef.current = {
+        id: selectedImage.id,
+        mode: "se",
+        startX: x,
+        startY: y,
+        orig: {
+          x: selectedImage.x,
+          y: selectedImage.y,
+          w: selectedImage.w,
+          h: selectedImage.h,
+          aspect: selectedImage.w / Math.max(selectedImage.h, 1),
+        },
+      };
+      return true;
+    }
+
     const hit = findTopImageAt(x, y);
     if (!hit) {
       setSelectedImageId(null);
@@ -2304,41 +2401,15 @@ export default function WhiteBoardPage() {
 
     setSelectedImageId(hit.id);
 
-    const visibleHandleHalf = VISIBLE_RESIZE_HANDLE_SIZE / 2;
-    const resizeHitHalf = RESIZE_HIT_SIZE / 2;
-
     if (hitDeletePill(x, y, hit)) {
       deletePlacedImageById(hit.id);
       return true;
     }
 
-    const corners = {
-      nw: { cx: hit.x, cy: hit.y },
-      ne: { cx: hit.x + hit.w, cy: hit.y },
-      sw: { cx: hit.x, cy: hit.y + hit.h },
-      se: { cx: hit.x + hit.w, cy: hit.y + hit.h },
-    } as const;
-
-    const didHitHandle = (cx: number, cy: number) =>
-      inRect(
-        x,
-        y,
-        cx - Math.max(visibleHandleHalf, resizeHitHalf),
-        cy - Math.max(visibleHandleHalf, resizeHitHalf),
-        Math.max(VISIBLE_RESIZE_HANDLE_SIZE, RESIZE_HIT_SIZE),
-        Math.max(VISIBLE_RESIZE_HANDLE_SIZE, RESIZE_HIT_SIZE)
-      );
-
-    let mode: "move" | "nw" | "ne" | "sw" | "se" = "move";
-    if (didHitHandle(corners.nw.cx, corners.nw.cy)) mode = "nw";
-    else if (didHitHandle(corners.ne.cx, corners.ne.cy)) mode = "ne";
-    else if (didHitHandle(corners.sw.cx, corners.sw.cy)) mode = "sw";
-    else if (didHitHandle(corners.se.cx, corners.se.cy)) mode = "se";
-
     snapshotObjects();
     imgDragRef.current = {
       id: hit.id,
-      mode,
+      mode: "move",
       startX: x,
       startY: y,
       orig: { x: hit.x, y: hit.y, w: hit.w, h: hit.h, aspect: hit.w / Math.max(hit.h, 1) },
@@ -2368,6 +2439,13 @@ export default function WhiteBoardPage() {
   const onImgPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const container = containerRef.current;
     if (!container) return;
+
+    if (tool === "hand" && !imgDragRef.current) {
+      const selected = selectedImageId ? placedImages.find((image) => image.id === selectedImageId) : null;
+      const point = getBoardPoint(e);
+      const isOverResizeHandle = selected && isWithinBottomRightResizeHandle(selected, point.x, point.y);
+      e.currentTarget.style.cursor = isOverResizeHandle ? "nwse-resize" : "grab";
+    }
 
     if (handModeRef.current === "pan" && handDragRef.current && handStartRef.current) {
       const dy = e.clientY - handStartRef.current.y;
@@ -2791,12 +2869,6 @@ export default function WhiteBoardPage() {
     scheduleViewportRedraw();
   };
 
-  function addPage() {
-    lockBoardWidthIfNeeded();
-    lockBoardDprIfNeeded();
-    pendingPageSeparatorRedrawRef.current = true;
-    setCanvasHeight((h) => Math.min(h + PAGE_HEIGHT, 30000));
-  }
 
   function drawPageSeparators() {
     const bgCtx = bgCtxRef.current;
@@ -2851,13 +2923,43 @@ export default function WhiteBoardPage() {
     inkCtx.stroke();
   }
 
+  function createBlankWhiteboardState(title: string): WhiteboardDraftState {
+    return {
+      boardTitle: title,
+      canvasHeight: INITIAL_WHITEBOARD_HEIGHT,
+      boardWidth: null,
+      boardDpr: null,
+      placedImages: [],
+      tool: "pen",
+      penColor: PEN_COLORS[0],
+      penSize: PEN_SIZES[0],
+      eraserSize: ERASER_SIZES[1],
+      gridMode: "full",
+      gridX: 24,
+      gridY: 24,
+      gridTop: null,
+      gridApplied: false,
+      axesMode: "full",
+      domMin: -10,
+      domMax: 10,
+      domStep: 1,
+      rngMin: -50,
+      rngMax: 50,
+      rngStep: 5,
+      axesApplied: false,
+      axesTop: null,
+      bgDataUrl: null,
+      inkDataUrl: null,
+    };
+  }
+
   /* ---------- Save ---------- */
-  async function doSave() {
+  async function saveCurrentBoard({ navigateAfterSave }: { navigateAfterSave: boolean }): Promise<number> {
     const bg = bgCanvasRef.current;
     const ink = inkCanvasRef.current;
     const container = containerRef.current;
 
-    if (!bg || !ink || !container) return;
+    if (!bg || !ink || !container) throw new Error("The whiteboard is not ready to save yet.");
 
     setSaving(true);
     setBoardNotice(null);
@@ -3036,54 +3138,137 @@ export default function WhiteBoardPage() {
       });
       const savedPostId = Number(saveRes?.id);
 
-      try {
-        const editableState = serializeWhiteboardState();
-        if (editableState) {
-          const whiteboardRes = await apiFetch(`${API_BASE}/whiteboards`, {
+      const editableState = serializeWhiteboardState();
+      if (!editableState) throw new Error("The editable whiteboard state could not be prepared.");
+      const whiteboardRes = await apiFetch(`${API_BASE}/whiteboards`, {
+        method: "POST",
+        body: JSON.stringify({
+          whiteboard_id: currentWhiteboardId ?? undefined,
+          class_id: classId,
+          title: boardTitle,
+          state: editableState,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      const nextId = Number(whiteboardRes?.id);
+      if (!Number.isFinite(nextId) || nextId <= 0) throw new Error("The editable whiteboard did not return an ID.");
+      setCurrentWhiteboardId(nextId);
+
+      if (Number.isFinite(savedPostId) && savedPostId > 0) {
+        try {
+          await apiFetch(`${API_BASE}/whiteboards/${nextId}/link-note`, {
             method: "POST",
             body: JSON.stringify({
-              whiteboard_id: currentWhiteboardId ?? undefined,
               class_id: classId,
-              title: boardTitle,
-              state: editableState,
+              post_id: savedPostId,
             }),
             headers: {
               "Content-Type": "application/json",
             },
           });
-          const nextId = Number(whiteboardRes?.id);
-          if (Number.isFinite(nextId) && nextId > 0) {
-            setCurrentWhiteboardId(nextId);
-
-            if (Number.isFinite(savedPostId) && savedPostId > 0) {
-              await apiFetch(`${API_BASE}/whiteboards/${nextId}/link-note`, {
-                method: "POST",
-                body: JSON.stringify({
-                  class_id: classId,
-                  post_id: savedPostId,
-                }),
-                headers: {
-                  "Content-Type": "application/json",
-                },
-              });
-            }
-          }
+        } catch (linkError) {
+          // The editable board has saved successfully; retain the existing
+          // best-effort note link behaviour without blocking a continuation.
+          console.warn("Whiteboard note link was not saved.", linkError);
         }
-      } catch (e) {
-        console.warn("Editable whiteboard state was not saved.", e);
       }
 
       clearDraftFromLocalStorage();
       markClean();
-      navigate(`/class/${classId}`);
+      if (navigateAfterSave) navigate(`/class/${classId}`);
+      return nextId;
     } catch (e: unknown) {
       setBoardNotice({
         variant: "error",
         title: "That didn’t quite work",
         message: userFacingError(e, "We couldn’t save the whiteboard just now. Please try again."),
       });
+      throw e;
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function doSave() {
+    try {
+      await saveCurrentBoard({ navigateAfterSave: true });
+    } catch {
+      // saveCurrentBoard already provides the friendly established error notice.
+    }
+  }
+
+  async function saveAndContinueToNewBoard() {
+    if (continuationInFlightRef.current) return;
+    continuationInFlightRef.current = true;
+    const nextTitle = getContinuationBoardTitle(boardTitle);
+    let currentBoardSaved = false;
+    setContinuingToNewBoard(true);
+    setBoardNotice(null);
+    try {
+      const savedBoardId = await saveCurrentBoard({ navigateAfterSave: false });
+      currentBoardSaved = true;
+      const created = await apiFetch(`${API_BASE}/whiteboards`, {
+        method: "POST",
+        body: JSON.stringify({
+          class_id: classId,
+          title: nextTitle,
+          state: createBlankWhiteboardState(nextTitle),
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const nextId = Number(created?.id);
+      const returnedClassId = Number(created?.class_id);
+      const returnedTitle = typeof created?.title === "string" ? created.title.trim() : "";
+      const returnedState = created?.state as WhiteboardDraftState | undefined;
+      const isExpectedBlankState = Boolean(
+        returnedState &&
+        returnedState.boardTitle === nextTitle &&
+        returnedState.canvasHeight === INITIAL_WHITEBOARD_HEIGHT &&
+        Array.isArray(returnedState.placedImages) &&
+        returnedState.placedImages.length === 0 &&
+        returnedState.bgDataUrl == null &&
+        returnedState.inkDataUrl == null &&
+        !returnedState.gridApplied &&
+        !returnedState.axesApplied
+      );
+      if (
+        !Number.isFinite(nextId) ||
+        nextId <= 0 ||
+        nextId === savedBoardId ||
+        returnedClassId !== classId ||
+        returnedTitle !== nextTitle ||
+        !returnedState ||
+        typeof returnedState !== "object" ||
+        !isExpectedBlankState
+      ) {
+        throw new Error("The new whiteboard response was incomplete.");
+      }
+      // The create endpoint already returns the decoded blank state. Establish
+      // it before changing the URL so the page never shows the old board under
+      // a new whiteboardId while waiting for an unnecessary second GET.
+      await restoreWhiteboardState(returnedState);
+      setCurrentWhiteboardId(nextId);
+      setBoardTitle(returnedTitle);
+      setTitleDraft(returnedTitle);
+      markClean();
+      autoOpenedWhiteboardRef.current = nextId;
+      setShowNewBoardModal(false);
+      const nextSearch = new URLSearchParams(location.search);
+      nextSearch.set("whiteboardId", String(nextId));
+      navigate({ pathname: location.pathname, search: `?${nextSearch.toString()}` });
+    } catch (e: unknown) {
+      if (currentBoardSaved) {
+        setBoardNotice({
+          variant: "error",
+          title: "That didn’t quite work",
+          message: userFacingError(e, "Your current board is still available, but we couldn’t open a new board just now."),
+        });
+      }
+    } finally {
+      continuationInFlightRef.current = false;
+      setContinuingToNewBoard(false);
     }
   }
 
@@ -4090,29 +4275,6 @@ export default function WhiteBoardPage() {
     }
   }, [isFullscreen]);
 
-  function DotSizeButton({
-    value,
-    active,
-    onClick,
-  }: {
-    value: number;
-    active: boolean;
-    onClick: () => void;
-  }) {
-    const d = Math.max(6, Math.min(18, value));
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        className={`h-10 w-10 rounded-xl border-2 ${active ? "border-slate-900 bg-slate-900" : "border-slate-200 bg-white"
-          } hover:bg-slate-50 grid place-items-center`}
-        title={`Size ${value}`}
-      >
-        <span className="rounded-full" style={{ width: d, height: d, background: active ? "white" : "#111827" }} />
-      </button>
-    );
-  }
-
   return (
     <div ref={fsRootRef} className="min-h-screen bg-[#dff3df]">
       {boardNotice && (
@@ -4159,148 +4321,60 @@ export default function WhiteBoardPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <button className={pill} type="button" onClick={toggleFullscreen}>
-              {isFullscreen ? "Exit full screen" : "Full screen"}
-            </button>
-            <button
-              className={pill}
-              type="button"
-              onClick={() => {
-                stabilizeBoardGeometryIfNeeded();
-                setShowImportModal(true);
-              }}
-            >
-              Import PDF
-            </button>
-            <button
-              type="button"
-              className={pill}
-              onClick={openFormulaBooklet}
-            >
-              Formula Booklet
-            </button>
-            <button
-              type="button"
-              className={pill}
-              onClick={openAudioLibrary}
-            >
-              Audio
-            </button>
-            <button
-              type="button"
-              className={pill}
-              onClick={() => {
-                setYoutubeUrlError(null);
-                setShowVideoModal(true);
-              }}
-            >
-              Video
-            </button>
-            <button
-              className={pill}
-              type="button"
-              onClick={() => requestLeave(`/class/${classId}`)}
-            >
-              Back to Class
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowSaveModal(true)}
-              disabled={saving}
-              className="rounded-xl border-2 border-slate-200 bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60"
-            >
-              Save
-            </button>
-          </div>
+          <WhiteboardActionBar
+            isFullscreen={isFullscreen}
+            saving={saving}
+            onFullscreen={toggleFullscreen}
+            onImportPdf={() => {
+              stabilizeBoardGeometryIfNeeded();
+              setShowImportModal(true);
+            }}
+            onFormulaBooklet={openFormulaBooklet}
+            onAudio={openAudioLibrary}
+            onVideo={() => {
+              setYoutubeUrlError(null);
+              setShowVideoModal(true);
+            }}
+            onNewBoard={() => setShowNewBoardModal(true)}
+            onBack={() => requestLeave(`/class/${classId}`)}
+            onSave={() => setShowSaveModal(true)}
+          />
         </div>
 
-        {/* Tools */}
-        <div className="mt-2 rounded-2xl border border-slate-200 bg-white/90 p-2 shadow-sm">
-          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap">
-            <button type="button" className={tool === "pen" ? pillOn : pill} onClick={() => setTool("pen")}>
-              Pen
-            </button>
-            <button type="button" className={tool === "eraser" ? pillOn : pill} onClick={() => setTool("eraser")}>
-              Eraser
-            </button>
-            <button type="button" className={tool === "line" ? pillOn : pill} onClick={() => setTool("line")}>
-              Line
-            </button>
-            <button type="button" className={tool === "hand" ? pillOn : pill} onClick={() => setTool("hand")}>
-              Select
-            </button>
-
-            <div className="mx-2 h-6 w-px bg-slate-200" />
-
-            <div className="flex items-center gap-2">
-              {PEN_COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => {
-                    setPenColor(c);
-                  }}
-                  className={`h-9 w-9 rounded-xl border-2 ${penColor === c ? "border-slate-900" : "border-slate-200"}`}
-                  style={{ background: c }}
-                  title="Pen colour"
-                />
-              ))}
-            </div>
-
-            <div className="mx-2 h-6 w-px bg-slate-200" />
-
-            <div className="flex items-center gap-2">
-              {(tool === "eraser" ? ERASER_SIZES : PEN_SIZES).map((s) => (
-                <DotSizeButton
-                  key={s}
-                  value={s}
-                  active={tool === "eraser" ? eraserSize === s : penSize === s}
-                  onClick={() => {
-                    if (tool === "eraser") setEraserSize(s);
-                    else setPenSize(s);
-                  }}
-                />
-              ))}
-            </div>
-
-            <div className="ml-auto flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap">
-              <button type="button" className={pill} onClick={undo} disabled={inkUndoStack.length === 0}>
-                Undo
-              </button>
-              <button type="button" className={pill} onClick={redo} disabled={inkRedoStack.length === 0}>
-                Redo
-              </button>
-              <button type="button" className={pill} onClick={() => addPage()}>
-                + Add Page
-              </button>
-            <button type="button" className={pill} onClick={() => setShowGridModal(true)}>
-              Grid
-            </button>
-            <button type="button" className={pill} onClick={() => setShowAxesModal(true)}>
-              XY Plane
-            </button>
-            <button type="button" className={pill} onClick={() => setShowCalc((s) => !s)}>
-              Calculator
-            </button>
-              <button
-                type="button"
-                className={pill}
-                onClick={() => {
-                  stabilizeBoardGeometryIfNeeded();
-                  setShowVideoPanel(false);
-                  setShowPdfPanel((v) => !v);
-                }}
-              >
-                {showPdfPanel ? "Hide PDF" : "Show PDF"}
-              </button>
-              <button type="button" className={pill} onClick={() => clearInk()}>
-                Clear Ink
-              </button>
-              <button type="button" className={pill} onClick={() => clearAll()}>
-                Erase All
-              </button>
-            </div>
+        <div className="mt-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm">
+          <div className="flex flex-wrap items-center gap-1.5" aria-label="Whiteboard toolbar">
+          <WhiteboardToolRail tool={tool} onToolChange={setTool} />
+          <WhiteboardContextControls
+            tool={tool}
+            colours={PEN_COLORS}
+            penColor={penColor}
+            onPenColorChange={setPenColor}
+            penSizes={PEN_SIZES}
+            eraserSizes={ERASER_SIZES}
+            penSize={penSize}
+            eraserSize={eraserSize}
+            onPenSizeChange={setPenSize}
+            onEraserSizeChange={setEraserSize}
+          />
+          <WhiteboardBoardActions
+            canUndo={inkUndoStack.length > 0}
+            canRedo={inkRedoStack.length > 0}
+            isExtended={isBoardExtended}
+            onUndo={undo}
+            onRedo={redo}
+            onExtend={extendBoard}
+            onGrid={() => setShowGridModal(true)}
+            onAxes={() => setShowAxesModal(true)}
+            onCalculator={() => setShowCalc((shown) => !shown)}
+            onPdfPanel={() => {
+              stabilizeBoardGeometryIfNeeded();
+              setShowVideoPanel(false);
+              setShowPdfPanel((shown) => !shown);
+            }}
+            onClearInk={clearInk}
+            onClearAll={clearAll}
+            isPdfVisible={Boolean(importedPdf && showPdfPanel && !showVideoPanel)}
+          />
           </div>
 
           {/* Imported PDF panel */}
@@ -4312,6 +4386,8 @@ export default function WhiteBoardPage() {
               {/* Scrollable OneNote-style page */}
               <div
                 ref={containerRef}
+                role="region"
+                aria-label="Whiteboard canvas workspace"
                 onScroll={onScroll}
                 onPointerDown={tool === "hand" ? onHandDown : undefined}
                 onPointerMove={tool === "hand" ? onHandMove : undefined}
@@ -4332,7 +4408,7 @@ export default function WhiteBoardPage() {
                   <canvas
                     ref={imgCanvasRef}
                     className={`absolute left-0 top-0 z-10 ${tool === "hand" ? "touch-none" : "pointer-events-none"}`}
-                    style={{ touchAction: tool === "hand" ? "none" : "auto" }}
+                    style={{ touchAction: tool === "hand" ? "none" : "auto", cursor: tool === "hand" ? "grab" : "default" }}
                     onPointerDown={onImgPointerDown}
                     onPointerMove={onImgPointerMove}
                     onPointerUp={onImgPointerUp}
@@ -5073,6 +5149,33 @@ export default function WhiteBoardPage() {
           )}
 
           {/* Save Modal */}
+          {showNewBoardModal && (
+            <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 px-4" role="dialog" aria-modal="true" aria-labelledby="new-board-title">
+              <div className="w-full max-w-lg rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-xl">
+                <h2 id="new-board-title" className="text-xl font-semibold text-slate-900">Continue on a new board?</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  We’ll save this board first, then open a new blank board in this tab so you can keep teaching without losing your work.
+                </p>
+                <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                  New board: <span className="font-semibold">{getContinuationBoardTitle(boardTitle)}</span>
+                </div>
+                <div className="mt-5 flex justify-end gap-2">
+                  <button className={pill} type="button" onClick={() => setShowNewBoardModal(false)} disabled={continuingToNewBoard}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl border-2 border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                    onClick={() => void saveAndContinueToNewBoard()}
+                    disabled={continuingToNewBoard || saving}
+                  >
+                    {continuingToNewBoard ? "Saving…" : "Save & continue"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {showSaveModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
               <div className="w-full max-w-lg rounded-2xl border-2 border-slate-200 bg-white p-5">
@@ -5131,7 +5234,7 @@ export default function WhiteBoardPage() {
                       const draft = pendingDraftRef.current;
                       pendingDraftRef.current = null;
                       setDraftPromptOpen(false);
-                      if (draft) restoreWhiteboardState(draft);
+                      if (draft) restoreWhiteboardState(draft, { markDirtyAfterRestore: true });
                     }}
                   >
                     Restore draft
