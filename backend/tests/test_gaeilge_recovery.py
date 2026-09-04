@@ -18,12 +18,15 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
 class GaeilgeRecoveryTests(unittest.TestCase):
-    def test_application_imports_and_reviewer_routes_are_absent(self):
+    def test_application_imports_and_reviewer_routes_are_registered(self):
         route_paths = {route.path for route in main.app.routes}
-        self.assertNotIn("/ui-translations/ga", route_paths)
-        self.assertNotIn("/ui-translations/ga/{translation_key}", route_paths)
-        self.assertFalse(hasattr(authorization, "GAEILGE_REVIEWER_EMAILS"))
-        self.assertFalse(hasattr(authorization, "is_gaeilge_reviewer"))
+        self.assertIn("/ui-translations/ga", route_paths)
+        self.assertIn("/ui-translations/ga/{translation_key}", route_paths)
+        self.assertEqual(
+            authorization.GAEILGE_REVIEWER_EMAILS,
+            {"admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie"},
+        )
+        self.assertTrue(authorization.is_gaeilge_reviewer(type("User", (), {"email": "peter@elume.ie"})()))
         self.assertIn("/auth/me", route_paths)
         self.assertIn("/classes/{class_id}/student-access-code", route_paths)
         self.assertIn("/student/join/class", route_paths)

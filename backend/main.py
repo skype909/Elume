@@ -75,6 +75,7 @@ from authorization import (
     ROLE_PLATFORM_ADMIN,
     ROLE_SCHOOL_ADMIN,
     ROLE_TEACHER,
+    is_gaeilge_reviewer,
     is_platform_admin,
     require_platform_admin,
     require_school_admin,
@@ -2779,6 +2780,115 @@ def auth_me(user: models.UserModel = Depends(get_current_user)):
         "school_slug": getattr(school, "slug", None),
         "school_logo_url": _school_logo_url(getattr(school, "logo_storage_key", None)),
     }
+
+
+# Keep this deliberately limited to the non-interactive reviewer labels.
+GAEILGE_REVIEWABLE_KEYS = {
+    "createClass.title",
+    "createClass.help",
+    "dashboard.dragToArrange",
+    "class.studentAccess",
+    "class.studentAccessHelp",
+    "class.teacher",
+    "class.group",
+    "class.room",
+    "class.liveTeachingTools",
+    "class.liveTeachingHelp",
+    "class.resources",
+    "class.quickTools",
+    "class.quickToolsSubtitle",
+    "class.externalResources",
+}
+UI_TRANSLATION_VALUE_MAX_LENGTH = 500
+
+
+@app.get("/ui-translations/ga", response_model=schemas.UiTranslationOverridesOut)
+def get_gaeilge_ui_translation_overrides(
+    db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)
+):
+    rows = (
+        db.query(models.UiTranslationOverrideModel)
+        .filter(models.UiTranslationOverrideModel.language_code == "ga")
+        .order_by(models.UiTranslationOverrideModel.translation_key.asc())
+        .all()
+    )
+    return {
+        "overrides": {row.translation_key: row.value for row in rows},
+        "is_gaeilge_reviewer": is_gaeilge_reviewer(user),
+    }
+
+
+@app.put("/ui-translations/ga/{translation_key}")
+def save_gaeilge_ui_translation_override(
+    translation_key: str,
+    payload: schemas.UiTranslationOverrideUpdate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_current_user),
+):
+    if not is_gaeilge_reviewer(user):
+        raise HTTPException(status_code=403, detail="Gaeilge reviewer access required.")
+    if translation_key not in GAEILGE_REVIEWABLE_KEYS:
+        raise HTTPException(status_code=400, detail="That UI translation cannot be reviewed here.")
+
+    value = (payload.value or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="A Gaeilge translation is required.")
+    if len(value) > UI_TRANSLATION_VALUE_MAX_LENGTH:
+        raise HTTPException(status_code=400, detail="That Gaeilge translation is too long.")
+
+    base_value = (payload.base_value or "").strip() or None
+    if base_value and len(base_value) > UI_TRANSLATION_VALUE_MAX_LENGTH:
+        raise HTTPException(status_code=400, detail="The built-in translation snapshot is too long.")
+
+    override = (
+        db.query(models.UiTranslationOverrideModel)
+        .filter(
+            models.UiTranslationOverrideModel.language_code == "ga",
+            models.UiTranslationOverrideModel.translation_key == translation_key,
+        )
+        .first()
+    )
+    previous_value = override.value if override else None
+    now = datetime.utcnow()
+    if override is None:
+        override = models.UiTranslationOverrideModel(
+            language_code="ga",
+            translation_key=translation_key,
+            value=value,
+            base_value_at_edit=base_value,
+            updated_by_user_id=user.id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(override)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="This Gaeilge translation was updated at the same time. Please retry.",
+            )
+    else:
+        override.value = value
+        override.base_value_at_edit = base_value
+        override.updated_by_user_id = user.id
+        override.updated_at = now
+
+    db.add(
+        models.UiTranslationOverrideRevisionModel(
+            override_id=override.id,
+            language_code="ga",
+            translation_key=translation_key,
+            previous_value=previous_value,
+            new_value=value,
+            base_value_at_edit=base_value,
+            reviewed_by_user_id=user.id,
+            created_at=now,
+        )
+    )
+    db.commit()
+    return {"translation_key": translation_key, "value": value}
 
 
 SCHOOL_INVITATION_EXPIRY_DAYS = 7

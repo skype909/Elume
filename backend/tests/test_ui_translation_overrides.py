@@ -1,9 +1,3 @@
-import unittest
-
-raise unittest.SkipTest(
-    "Gaeilge reviewer backend is paused after the 2026-09-02 production startup incident."
-)
-
 import sys
 import unittest
 from pathlib import Path
@@ -58,6 +52,10 @@ class UiTranslationOverrideTests(unittest.TestCase):
         response = self.client.put("/ui-translations/ga/class.resources", json={"value": "Acmhainní"})
         self.assertEqual(response.status_code, 401)
 
+    def test_unauthenticated_read_is_rejected(self):
+        response = self.client.get("/ui-translations/ga")
+        self.assertEqual(response.status_code, 401)
+
     def test_non_reviewer_write_is_rejected(self):
         self.assertEqual(self.put(self.non_reviewer).status_code, 403)
 
@@ -104,6 +102,7 @@ class UiTranslationOverrideTests(unittest.TestCase):
         self.assertEqual(self.put(self.reviewer, key="class.not-a-real-key").status_code, 400)
         self.assertEqual(self.put(self.reviewer, value="   ").status_code, 400)
         self.assertEqual(self.put(self.reviewer, value="a" * 501).status_code, 400)
+        self.assertEqual(self.put(self.reviewer, base_value="a" * 501).status_code, 400)
         self.assertEqual(self.db.query(models.UiTranslationOverrideModel).count(), 0)
 
     def test_get_returns_shared_overrides_and_account_specific_capability(self):

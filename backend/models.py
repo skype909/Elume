@@ -87,6 +87,36 @@ class UserModel(Base):
     school = relationship("SchoolModel", back_populates="users")
 
 
+class UiTranslationOverrideModel(Base):
+    __tablename__ = "ui_translation_overrides"
+    __table_args__ = (
+        UniqueConstraint("language_code", "translation_key", name="uq_ui_translation_overrides_language_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    language_code = Column(String(16), nullable=False, index=True)
+    translation_key = Column(String(160), nullable=False)
+    value = Column(Text, nullable=False)
+    base_value_at_edit = Column(Text, nullable=True)
+    updated_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class UiTranslationOverrideRevisionModel(Base):
+    __tablename__ = "ui_translation_override_revisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    override_id = Column(Integer, ForeignKey("ui_translation_overrides.id", ondelete="RESTRICT"), nullable=False, index=True)
+    language_code = Column(String(16), nullable=False, index=True)
+    translation_key = Column(String(160), nullable=False)
+    previous_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=False)
+    base_value_at_edit = Column(Text, nullable=True)
+    reviewed_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class SchoolDepartmentMembershipModel(Base):
     __tablename__ = "school_department_memberships"
     __table_args__ = (
