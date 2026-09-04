@@ -49,6 +49,10 @@ location / {
     error_page 503 =503 /_elume-system/outage;
 }
 
-# Leave the existing /api/ and /ws/ proxy locations unchanged. In particular,
-# do not set proxy_intercept_errors on: API clients must continue receiving
-# their normal JSON errors rather than outage HTML.
+# Keep the existing API proxy behaviour, but make its prefix location
+# `location ^~ /api/` in the active server block. The `^~` is essential:
+# without it, the generic extension regex above can intercept API-served
+# uploads such as `/api/uploads/school-logos/example.jpg`. Do not set
+# proxy_intercept_errors on API traffic; clients must continue receiving their
+# normal JSON errors rather than outage HTML. Leave the existing /ws/ proxy
+# location unchanged.

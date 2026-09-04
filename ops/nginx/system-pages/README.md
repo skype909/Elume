@@ -17,7 +17,7 @@ production configuration. It is designed for the current nginx pattern:
 location / {
     try_files $uri /index.html;
 }
-location /api/ { proxy_pass http://127.0.0.1:8000/; }
+location ^~ /api/ { proxy_pass http://127.0.0.1:8000/; }
 location /ws/  { proxy_pass http://127.0.0.1:8000; }
 ```
 
@@ -27,7 +27,10 @@ location /ws/  { proxy_pass http://127.0.0.1:8000; }
    `/var/www/elume-system-pages/`.
 2. Review the example against the active nginx server block. Keep the SPA
    fallback intact; add the static-asset 404 location and the narrowly scoped
-   maintenance check only.
+   maintenance check only. Ensure the existing API proxy uses
+   `location ^~ /api/`: this prevents the generic static-extension regex from
+   treating API-served uploads (for example, `.jpg` school logos) as missing
+   frontend files.
 3. Validate with `nginx -t` before any reload.
 4. Test a missing static asset (bundle, image, font, manifest/data file, PDF,
    spreadsheet, or audio file) returns the branded 404 with HTTP 404, while
