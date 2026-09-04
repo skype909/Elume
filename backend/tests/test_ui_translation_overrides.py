@@ -106,7 +106,7 @@ class UiTranslationOverrideTests(unittest.TestCase):
         self.assertEqual(self.put(self.reviewer, base_value="a" * 501).status_code, 400)
         self.assertEqual(self.db.query(models.UiTranslationOverrideModel).count(), 0)
 
-    def test_dashboard_and_class_reviewer_keys_are_allowlisted_without_expanding_reviewer_emails(self):
+    def test_dashboard_and_class_reviewer_keys_are_allowlisted_for_all_pilot_reviewers(self):
         expected = {
             "nav.admin", "nav.calendar", "dashboard.timetable", "dashboard.createResources",
             "class.whiteboard", "class.collaboration", "class.liveQuiz", "class.classAdmin",
@@ -116,7 +116,12 @@ class UiTranslationOverrideTests(unittest.TestCase):
         self.assertTrue(expected.issubset(main.GAEILGE_REVIEWABLE_KEYS))
         self.assertEqual(authorization.GAEILGE_REVIEWER_EMAILS, {
             "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",
+            "emma@elume.ie", "sdb@elume.ie", "jskelton@elume.ie",
+            "lmulcahy@preskilkenny.ie", "nbrennan@preskilkenny.ie",
         })
+        for email in authorization.GAEILGE_REVIEWER_EMAILS:
+            self.assertTrue(authorization.is_gaeilge_reviewer(SimpleNamespace(email=email)))
+        self.assertFalse(authorization.is_gaeilge_reviewer(SimpleNamespace(email="teacher@example.test")))
         self.assertEqual(self.put(self.reviewer, key="dashboard.createResources", value="Cruthaigh acmhainní").status_code, 200)
         self.assertEqual(self.put(self.reviewer, key="not.reviewable", value="Ní hea").status_code, 400)
 

@@ -15,6 +15,11 @@ import schemas
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+EXPECTED_GAEILGE_REVIEWERS = {
+    "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",
+    "emma@elume.ie", "sdb@elume.ie", "jskelton@elume.ie",
+    "lmulcahy@preskilkenny.ie", "nbrennan@preskilkenny.ie",
+}
 
 
 class GaeilgeRecoveryTests(unittest.TestCase):
@@ -24,9 +29,12 @@ class GaeilgeRecoveryTests(unittest.TestCase):
         self.assertIn("/ui-translations/ga/{translation_key}", route_paths)
         self.assertEqual(
             authorization.GAEILGE_REVIEWER_EMAILS,
-            {"admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie"},
+            EXPECTED_GAEILGE_REVIEWERS,
         )
-        self.assertTrue(authorization.is_gaeilge_reviewer(type("User", (), {"email": "peter@elume.ie"})()))
+        for email in EXPECTED_GAEILGE_REVIEWERS:
+            self.assertTrue(authorization.is_gaeilge_reviewer(type("User", (), {"email": email})()))
+        self.assertTrue(authorization.is_gaeilge_reviewer(type("User", (), {"email": "  EMMA@ELUME.IE  "})()))
+        self.assertFalse(authorization.is_gaeilge_reviewer(type("User", (), {"email": "teacher@example.test"})()))
         self.assertIn("/auth/me", route_paths)
         self.assertIn("/classes/{class_id}/student-access-code", route_paths)
         self.assertIn("/student/join/class", route_paths)

@@ -11,12 +11,17 @@ ROLE_PLATFORM_ADMIN = "platform_admin"
 
 _LEGACY_PLATFORM_ADMIN_EMAIL = "admin@elume.ie"
 
-# Private Gaeilge-review pilot. Keep this deliberately small until the
-# recovered reviewer runtime has proven stable in production.
+# Gaeilge-review pilot identities. Access is based only on the current
+# normalised login email; update these explicitly if beta accounts migrate.
 GAEILGE_REVIEWER_EMAILS = {
     "admin@elume.ie",
     "peter@elume.ie",
     "pfitzgerald@preskilkenny.ie",
+    "emma@elume.ie",
+    "sdb@elume.ie",
+    "jskelton@elume.ie",
+    "lmulcahy@preskilkenny.ie",
+    "nbrennan@preskilkenny.ie",
 }
 
 

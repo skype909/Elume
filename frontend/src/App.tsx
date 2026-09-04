@@ -2244,8 +2244,12 @@ export default function App() {
   const userLabel = userEmail ?? "";
   const pilotUsers = new Set(["admin@elume.ie", "rob@elume.ie", "emma@elume.ie", "gillian@elume.ie"]);
   const isPilotUser = userEmail ? pilotUsers.has(userEmail.toLowerCase()) : false;
-  // Temporary UI-preview gate only. Add the remaining approved Gaeilge reviewers here.
-  const gaeilgePreviewEmails = new Set(["peter@elume.ie", "pfitzgerald@preskilkenny.ie", "admin@elume.ie"]);
+  // Temporary UI-preview gate mirrors the backend Gaeilge reviewer pilot list.
+  const gaeilgePreviewEmails = new Set([
+    "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",
+    "emma@elume.ie", "sdb@elume.ie", "jskelton@elume.ie",
+    "lmulcahy@preskilkenny.ie", "nbrennan@preskilkenny.ie",
+  ]);
   const isGaeilgePreviewUser = userEmail ? gaeilgePreviewEmails.has(userEmail.toLowerCase()) : false;
   const location = useLocation();
   const navigate = useNavigate();

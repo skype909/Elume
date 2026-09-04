@@ -75,8 +75,8 @@ function setAuthenticatedTeacher() {
   localStorage.setItem("elume_token", `header.${payload}.signature`);
 }
 
-function setAuthenticatedGaeilgeReviewer() {
-  const payload = btoa(JSON.stringify({ email: "peter@elume.ie" }));
+function setAuthenticatedGaeilgeReviewer(email = "peter@elume.ie") {
+  const payload = btoa(JSON.stringify({ email }));
   localStorage.setItem("elume_token", `header.${payload}.signature`);
 }
 
@@ -100,6 +100,36 @@ beforeEach(() => {
 });
 
 describe("class-first onboarding integration", () => {
+  test.each([
+    "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",
+    "emma@elume.ie", "sdb@elume.ie", "jskelton@elume.ie",
+    "lmulcahy@preskilkenny.ie", "nbrennan@preskilkenny.ie",
+  ])("%s can enter Gaeilge reviewer mode and see Dashboard edit controls", async (email) => {
+    setAuthenticatedGaeilgeReviewer(email);
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === "/classes") return Promise.resolve([]);
+      if (path === "/teacher-admin/state") return Promise.resolve({ state: null });
+      if (path === "/auth/me") return Promise.resolve({ role: "teacher" });
+      if (path === "/billing/me") return Promise.resolve({});
+      if (path === "/ui-translations/ga") return Promise.resolve({ overrides: {}, is_gaeilge_reviewer: true });
+      return Promise.resolve({});
+    });
+
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Gaeilge" }));
+
+    const reviewerControls = await screen.findAllByLabelText("Review Gaeilge translation: nav.admin");
+    expect(reviewerControls.length).toBeGreaterThan(0);
+  });
+
+  test("non-reviewers cannot enter the Gaeilge reviewer UI", async () => {
+    setApiResponses([]);
+    renderApp();
+
+    expect(screen.queryByRole("button", { name: "Gaeilge" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Review Gaeilge translation: nav.admin")).not.toBeInTheDocument();
+  });
+
   test("Dashboard passes Gaeilge language state through to the date-card locale", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date(2026, 8, 4, 12, 0, 0));
