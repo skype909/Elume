@@ -75,6 +75,11 @@ function setAuthenticatedTeacher() {
   localStorage.setItem("elume_token", `header.${payload}.signature`);
 }
 
+function setAuthenticatedGaeilgeReviewer() {
+  const payload = btoa(JSON.stringify({ email: "peter@elume.ie" }));
+  localStorage.setItem("elume_token", `header.${payload}.signature`);
+}
+
 function setApiResponses(classes: unknown | Promise<unknown>, state: unknown = { state: null }) {
   mockApiFetch.mockImplementation((path: string) => {
     if (path === "/classes") return Promise.resolve(classes);
@@ -95,6 +100,35 @@ beforeEach(() => {
 });
 
 describe("class-first onboarding integration", () => {
+  test("Dashboard passes Gaeilge language state through to the date-card locale", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(2026, 8, 4, 12, 0, 0));
+    setAuthenticatedGaeilgeReviewer();
+    setApiResponses([]);
+
+    const fixedDate = new Date();
+    const englishDay = new Intl.DateTimeFormat("en-IE", { weekday: "long" }).format(fixedDate);
+    const englishDate = new Intl.DateTimeFormat("en-IE", { day: "numeric", month: "long", year: "numeric" }).format(fixedDate);
+    const irishDay = new Intl.DateTimeFormat("ga-IE", { weekday: "long" }).format(fixedDate);
+    const irishDate = new Intl.DateTimeFormat("ga-IE", { day: "numeric", month: "long", year: "numeric" }).format(fixedDate);
+
+    try {
+      renderApp();
+
+      expect(await screen.findByText(englishDay)).toBeInTheDocument();
+      expect(screen.getByText(englishDate)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Gaeilge" }));
+
+      expect(await screen.findByText(irishDay)).toBeInTheDocument();
+      expect(screen.getByText(irishDate)).toBeInTheDocument();
+      expect(screen.queryByText(englishDay)).not.toBeInTheDocument();
+      expect(screen.queryByText(englishDate)).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test("renders the real Dashboard welcome card only for a successful empty class list", async () => {
     setApiResponses(Promise.resolve([]));
     renderApp();
