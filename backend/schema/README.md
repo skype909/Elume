@@ -61,6 +61,35 @@ must complete before the application is started. The legacy `seed_classes()`
 and class-access backfill helpers remain maintenance-only code; they are never
 called automatically during application startup.
 
+## Account-entitlement migration 012
+
+Migration `012` follows exactly ledgered `001`–`011` and creates only the
+auditable `school_email_domains` and `user_access_grants` tables. It is
+explicit, transactional and never runs at application startup. Existing users
+are not linked automatically. Domain linking is a separately approved,
+admin-controlled operation and must check a verified email, active school and
+available teacher seat before it writes anything.
+
+### Explicit school-domain linking
+
+The linker is never run by application startup. Its read-only report and its
+separately approved write operation are:
+
+```powershell
+python -m schema.link_school_domains --check --school-id 123 --domain school.example `
+  --expected-database elume --database-url-env DATABASE_URL
+python -m schema.link_school_domains --apply --confirm-school-domain-link `
+  --school-id 123 --domain school.example --actor-user-id 456 `
+  --expected-database elume --database-url-env DATABASE_URL
+```
+
+The URL is accepted only through the named environment variable and is never
+printed. Apply locks the domain and school, verifies the active verified
+platform-admin actor, refuses conflicts or capacity shortfalls atomically, and
+records one `school_domain_linked` audit entry per newly attached teacher.
+Registering a real school domain is a separate production operation requiring
+explicit approval.
+
 ## CAT4 cohort migration 011
 
 `20260905_011_cat4_cohort_schema` is the first ledger-aware forward migration.
