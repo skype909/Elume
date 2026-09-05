@@ -11811,37 +11811,12 @@ def seed_classes(db: Session):
 
 
 @app.on_event("startup")
-
 def on_startup():
     startup_started_at = time.monotonic()
     logger.info("Elume startup: begin")
-
-    logger.info("Elume startup: create_all begin")
-    phase_started_at = time.monotonic()
-    Base.metadata.create_all(bind=engine)
-    logger.info("Elume startup: create_all complete (%.3fs)", time.monotonic() - phase_started_at)
-
-    db = SessionLocal()
-
-    try:
-
-        logger.info("Elume startup: seed_classes begin")
-        phase_started_at = time.monotonic()
-        seed_classes(db)
-        logger.info("Elume startup: seed_classes complete (%.3fs)", time.monotonic() - phase_started_at)
-
-        logger.info("Elume startup: class access backfill begin")
-        phase_started_at = time.monotonic()
-        _backfill_class_access_details(db)
-        logger.info(
-            "Elume startup: class access backfill complete (%.3fs)",
-            time.monotonic() - phase_started_at,
-        )
-
-    finally:
-
-        db.close()
-
+    logger.info(
+        "Elume startup: database initialization is external; no database work is performed"
+    )
     logger.info("Elume startup: complete (%.3fs)", time.monotonic() - startup_started_at)
 
 # =========================================================

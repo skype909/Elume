@@ -54,9 +54,12 @@ Workflow:
   approved adoption → ledger `001`–`010` → explicit migration `011+`; and
 - unknown/non-matching DB → refuse and investigate manually.
 
-The bootstrap deliberately contains no application or sample data. The legacy
-`seed_classes()` behavior remains separate application-startup behavior until
-the later startup-hardening phase removes it.
+The bootstrap deliberately contains no application or sample data. Normal
+FastAPI startup performs no schema DDL, seeding, backfill, database query, or
+database connection. Bootstrap/adoption and all applicable explicit migrations
+must complete before the application is started. The legacy `seed_classes()`
+and class-access backfill helpers remain maintenance-only code; they are never
+called automatically during application startup.
 
 ## CAT4 cohort migration 011
 

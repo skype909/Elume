@@ -1,8 +1,12 @@
 import ast
+import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -39,53 +43,56 @@ class _CreateAllLocationVisitor(ast.NodeVisitor):
 
 
 class StartupInitializationTests(unittest.TestCase):
-    def test_create_all_is_not_called_at_module_import_scope(self):
+    def test_main_contains_no_create_all_call(self):
         tree = ast.parse((BACKEND_DIR / "main.py").read_text(encoding="utf-8"))
         visitor = _CreateAllLocationVisitor()
         visitor.visit(tree)
 
-        self.assertEqual(visitor.locations, [("on_startup",)])
+        self.assertEqual(visitor.locations, [])
 
-    def test_startup_keeps_schema_seed_and_backfill_phases(self):
-        db = Mock()
+    def test_import_succeeds_with_an_unreachable_database(self):
+        environment = os.environ.copy()
+        environment["DATABASE_URL"] = "postgresql+psycopg2://unused:unused@127.0.0.1:1/elume?connect_timeout=1"
+        environment["PYTHONIOENCODING"] = "utf-8"
+        environment["PYTHONPATH"] = str(BACKEND_DIR)
+        result = subprocess.run(
+            [sys.executable, "-c", "import main; assert main.app is not None"],
+            cwd=BACKEND_DIR,
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_fastapi_startup_performs_no_database_access_or_maintenance(self):
         with (
-            patch.object(main.Base.metadata, "create_all") as create_all,
-            patch.object(main, "SessionLocal", return_value=db),
-            patch.object(main, "seed_classes") as seed_classes,
-            patch.object(main, "_backfill_class_access_details") as backfill,
+            patch.object(main.Base.metadata, "create_all", side_effect=AssertionError("DDL attempted")) as create_all,
+            patch.object(main.engine, "connect", side_effect=AssertionError("connection attempted")) as connect,
+            patch.object(main.engine, "begin", side_effect=AssertionError("transaction attempted")) as begin,
+            patch.object(main, "SessionLocal", side_effect=AssertionError("session attempted")) as session_local,
+            patch.object(main, "seed_classes", side_effect=AssertionError("seed attempted")) as seed_classes,
+            patch.object(main, "_backfill_class_access_details", side_effect=AssertionError("backfill attempted")) as backfill,
             self.assertLogs(main.logger, level="INFO") as logs,
         ):
-            main.on_startup()
+            with TestClient(main.app) as client:
+                self.assertEqual(client.get("/openapi.json").status_code, 200)
 
-        create_all.assert_called_once_with(bind=main.engine)
-        seed_classes.assert_called_once_with(db)
-        backfill.assert_called_once_with(db)
-        db.close.assert_called_once_with()
+        create_all.assert_not_called()
+        connect.assert_not_called()
+        begin.assert_not_called()
+        session_local.assert_not_called()
+        seed_classes.assert_not_called()
+        backfill.assert_not_called()
         output = "\n".join(logs.output)
         for phase in (
             "Elume startup: begin",
-            "Elume startup: create_all begin",
-            "Elume startup: create_all complete",
-            "Elume startup: seed_classes begin",
-            "Elume startup: seed_classes complete",
-            "Elume startup: class access backfill begin",
-            "Elume startup: class access backfill complete",
+            "Elume startup: database initialization is external; no database work is performed",
             "Elume startup: complete",
         ):
             self.assertIn(phase, output)
-
-    def test_startup_exceptions_are_not_swallowed(self):
-        db = Mock()
-        expected = RuntimeError("schema unavailable")
-        with (
-            patch.object(main.Base.metadata, "create_all", side_effect=expected),
-            patch.object(main, "SessionLocal", return_value=db) as session_local,
-        ):
-            with self.assertRaisesRegex(RuntimeError, "schema unavailable"):
-                main.on_startup()
-
-        session_local.assert_not_called()
-        db.close.assert_not_called()
 
 
 if __name__ == "__main__":

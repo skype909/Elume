@@ -255,7 +255,7 @@ class FinalV010BootstrapTests(unittest.TestCase):
         finally:
             engine.dispose()
 
-    def test_02_application_startup_does_not_need_schema_repair(self):
+    def test_02_application_startup_is_database_neutral_after_bootstrap(self):
         target_url = self._test_url(self.test_name)
         environment = os.environ.copy()
         environment["DATABASE_URL"] = target_url
@@ -275,9 +275,7 @@ class FinalV010BootstrapTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for phase in (
-            "Elume startup: create_all complete",
-            "Elume startup: seed_classes complete",
-            "Elume startup: class access backfill complete",
+            "Elume startup: database initialization is external; no database work is performed",
             "Elume startup: complete",
         ):
             self.assertIn(phase, result.stderr + result.stdout)
@@ -301,9 +299,9 @@ class FinalV010BootstrapTests(unittest.TestCase):
                     )
                 }
                 self.assertEqual(len(tables - {"schema_migrations"}), 42)
-                # Current legacy behavior seeds four classes on an empty DB;
-                # they are not part of the bootstrap SQL itself.
-                self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM classes")).scalar_one(), 4)
+                # Bootstrap is schema-only and normal application startup no
+                # longer adds legacy sample classes.
+                self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM classes")).scalar_one(), 0)
         finally:
             engine.dispose()
 
