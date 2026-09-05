@@ -395,7 +395,8 @@ class SchoolAdminAuditLogModel(Base):
         CheckConstraint(
             "action IN ('invitation_created', 'invitation_resent', 'invitation_revoked', "
             "'invitation_accepted', 'teacher_deactivated', 'teacher_reactivated', "
-            "'school_admin_invitation_created', 'school_admin_invitation_accepted')",
+            "'school_admin_invitation_created', 'school_admin_invitation_accepted', "
+            "'school_domain_linked')",
             name="ck_school_admin_audit_log_action",
         ),
     )

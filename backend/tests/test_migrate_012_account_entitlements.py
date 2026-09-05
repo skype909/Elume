@@ -81,8 +81,20 @@ class Migration012Tests(unittest.TestCase):
    with self.assertRaises(MigrationRefused):verify_applied_migration(url,expected_database=name)
    with e.begin() as c:c.execute(text('CREATE INDEX ix_school_email_domains_school_active ON school_email_domains (school_id,is_active)'))
   finally:e.dispose()
-  apply_down_migration(url,expected_database=name,confirm_migration_012_down=True)
-  e=create_engine(url)
+ def test_audit_action_constraint_and_down_history_guard(self):
+  name,url=self.new();apply_migration(url,expected_database=name,confirm_migration_012=True);e=create_engine(url)
+  try:
+   with e.begin() as c:
+    uid=c.execute(text("INSERT INTO users(email,password_hash,role,is_active,email_verified,subscription_status,created_at,launch_offer_applied,billing_onboarding_required,ai_daily_limit,ai_prompt_count,storage_used_bytes) VALUES('audit@example.test','x','teacher',TRUE,TRUE,'inactive',CURRENT_TIMESTAMP,FALSE,FALSE,0,0,0) RETURNING id")).scalar_one();sid=c.execute(text("INSERT INTO schools(name,status,seat_limit,created_at,updated_at) VALUES('Audit','active',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING id")).scalar_one()
+    for action in ('invitation_created','invitation_resent','invitation_revoked','invitation_accepted','teacher_deactivated','teacher_reactivated','school_admin_invitation_created','school_admin_invitation_accepted','school_domain_linked'): c.execute(text("INSERT INTO school_admin_audit_log(school_id,actor_user_id,target_user_id,action,created_at) VALUES(:s,:u,:u,:a,CURRENT_TIMESTAMP)"),{'s':sid,'u':uid,'a':action})
+    nested=c.begin_nested()
+    with self.assertRaises(Exception): c.execute(text("INSERT INTO school_admin_audit_log(school_id,actor_user_id,action,created_at) VALUES(:s,:u,'invalid',CURRENT_TIMESTAMP)"),{'s':sid,'u':uid})
+    nested.rollback()
+   with self.assertRaises(Exception):apply_down_migration(url,expected_database=name,confirm_migration_012_down=True)
+   with e.connect() as c:self.assertIn('school_email_domains',self.tables(c));self.assertEqual(tuple(x[0] for x in c.execute(text('SELECT version FROM schema_migrations ORDER BY version'))),V012);self.assertEqual(c.execute(text("SELECT count(*) FROM school_admin_audit_log WHERE action='school_domain_linked'")).scalar_one(),1)
+  finally:e.dispose()
+ def test_guarded_down_restores_v011_without_domain_history(self):
+  name,url=self.new();apply_migration(url,expected_database=name,confirm_migration_012=True);apply_down_migration(url,expected_database=name,confirm_migration_012_down=True);e=create_engine(url)
   try:
    with e.connect() as c:self.assertEqual(tuple(x[0] for x in c.execute(text('SELECT version FROM schema_migrations ORDER BY version'))),V011);self.assertFalse({'school_email_domains','user_access_grants'} & self.tables(c))
   finally:e.dispose()

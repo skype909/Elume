@@ -1,3 +1,11 @@
+ALTER TABLE school_admin_audit_log DROP CONSTRAINT ck_school_admin_audit_log_action;
+ALTER TABLE school_admin_audit_log ADD CONSTRAINT ck_school_admin_audit_log_action CHECK (action IN (
+    'invitation_created', 'invitation_resent', 'invitation_revoked',
+    'invitation_accepted', 'teacher_deactivated', 'teacher_reactivated',
+    'school_admin_invitation_created', 'school_admin_invitation_accepted',
+    'school_domain_linked'
+));
+
 CREATE TABLE school_email_domains (
     id SERIAL PRIMARY KEY,
     school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE RESTRICT,

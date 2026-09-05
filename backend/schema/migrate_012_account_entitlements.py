@@ -19,6 +19,11 @@ def _lock(c):
     if not c.execute(text('SELECT pg_try_advisory_xact_lock(:key)'), {'key':MIGRATION_ADVISORY_LOCK_KEY}).scalar_one(): raise MigrationRefused('Migration 012 refused: another migration-012 transaction is active.')
 def _sql(c,path):
     script='\n'.join(x for x in path.read_text(encoding='utf-8').splitlines() if not x.lstrip().startswith('--'))
+    if 'DO $$' in script:
+        before,after=script.split('DO $$',1); block,script=after.split('$$;',1)
+        for statement in before.split(';'):
+            if statement.strip(): c.execute(text(statement))
+        c.execute(text('DO $$'+block+'$$'))
     for statement in script.split(';'):
         if statement.strip(): c.execute(text(statement))
 def _pre(c):
@@ -34,6 +39,9 @@ def _verify_definition(c):
     cons={r[0]:r[1] for r in c.execute(text("SELECT conname,pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid=ANY(ARRAY['school_email_domains'::regclass,'user_access_grants'::regclass])"))}
     for n in ('school_email_domains_pkey','user_access_grants_pkey','uq_school_email_domains_domain','ck_school_email_domains_domain_canonical','ck_school_email_domains_revocation','ck_user_access_grants_type','ck_user_access_grants_window','ck_user_access_grants_revocation'):
         if n not in cons: bad.append('constraint '+n)
+    audit=c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='school_admin_audit_log'::regclass AND conname='ck_school_admin_audit_log_action'")).scalar_one_or_none()
+    audit_actions=('invitation_created','invitation_resent','invitation_revoked','invitation_accepted','teacher_deactivated','teacher_reactivated','school_admin_invitation_created','school_admin_invitation_accepted','school_domain_linked')
+    if audit is None or any("'%s'" % action not in audit for action in audit_actions) or audit.count("'") != len(audit_actions)*2: bad.append('constraint ck_school_admin_audit_log_action')
     for needle in ('FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE RESTRICT','FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT','FOREIGN KEY (revoked_by_user_id) REFERENCES users(id) ON DELETE RESTRICT','FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT','FOREIGN KEY (granted_by_user_id) REFERENCES users(id) ON DELETE RESTRICT'):
         if not any(needle in x for x in cons.values()): bad.append('foreign key '+needle)
     ind={r[0]:r[1] for r in c.execute(text("SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename=ANY(:t)"),{'t':list(TABLES)})}
