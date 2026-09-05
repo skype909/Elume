@@ -70,10 +70,10 @@ concurrent runner to refuse before waiting on migration DDL:
 ```powershell
 cd backend
 python -m schema.migrate_011_cat4_cohort_schema --check `
-  --expected-database "elume" --database-url "postgresql+psycopg2://..."
+  --expected-database "elume" --database-url-env DATABASE_URL
 python -m schema.migrate_011_cat4_cohort_schema --apply `
   --confirm-migration-011 --expected-database "elume" `
-  --database-url "postgresql+psycopg2://..."
+  --database-url-env DATABASE_URL
 ```
 
 The columns are backfilled as `default` / `Default Cohort`, become `NOT NULL`,

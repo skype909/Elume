@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
@@ -17,6 +18,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from schema.bootstrap_v010 import EXPECTED_VERSIONS, apply_bootstrap  # noqa: E402
+import schema.migrate_011_cat4_cohort_schema as migration_011  # noqa: E402
 from schema.migrate_011_cat4_cohort_schema import (  # noqa: E402
     EXPECTED_POST_MIGRATION_VERSIONS,
     MIGRATION_ADVISORY_LOCK_KEY,
@@ -176,6 +178,26 @@ class Cat4CohortMigrationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(MigrationRefused, "expected ledger versions"):
             check_migration(target_url, expected_database=database_name)
+
+    def test_cli_can_read_database_url_from_named_environment(self):
+        with (
+            patch.dict(os.environ, {"ELUME_TEST_DATABASE_URL": "postgresql://not-printed"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "migrate_011_cat4_cohort_schema",
+                    "--check",
+                    "--expected-database",
+                    "elume",
+                    "--database-url-env",
+                    "ELUME_TEST_DATABASE_URL",
+                ],
+            ),
+            patch.object(migration_011, "check_migration") as check,
+        ):
+            self.assertEqual(migration_011.main(), 0)
+        check.assert_called_once_with("postgresql://not-printed", expected_database="elume")
 
     def test_second_apply_and_divergent_states_refuse_without_change(self):
         database_name, target_url = self._new_database()

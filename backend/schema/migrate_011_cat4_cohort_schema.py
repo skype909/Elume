@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 from pathlib import Path
 from typing import Any
 
@@ -194,7 +195,8 @@ def apply_down_migration(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Apply or reverse ledger-gated CAT4 cohort migration 011")
-    parser.add_argument("--database-url", required=True)
+    parser.add_argument("--database-url", help="Target PostgreSQL URL")
+    parser.add_argument("--database-url-env", help="Environment variable containing the target PostgreSQL URL")
     parser.add_argument("--expected-database", required=True)
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--apply", action="store_true")
@@ -202,20 +204,25 @@ def main() -> int:
     parser.add_argument("--confirm-migration-011", action="store_true")
     parser.add_argument("--confirm-migration-011-down", action="store_true")
     args = parser.parse_args()
+    if bool(args.database_url) == bool(args.database_url_env):
+        parser.error("provide exactly one of --database-url or --database-url-env")
+    database_url = args.database_url or os.getenv(args.database_url_env)
+    if not database_url:
+        parser.error(f"environment variable {args.database_url_env!r} is empty or unset")
     if sum((args.check, args.apply, args.down)) != 1:
         parser.error("choose exactly one of --check, --apply, or --down")
     if args.check:
-        check_migration(args.database_url, expected_database=args.expected_database)
+        check_migration(database_url, expected_database=args.expected_database)
         print("Migration 011 preflight passed: exact historical-v010 ledger and schema are present.")
     elif args.apply:
         apply_migration(
-            args.database_url,
+            database_url,
             expected_database=args.expected_database,
             confirm_migration_011=args.confirm_migration_011,
         )
     else:
         apply_down_migration(
-            args.database_url,
+            database_url,
             expected_database=args.expected_database,
             confirm_migration_011_down=args.confirm_migration_011_down,
         )
