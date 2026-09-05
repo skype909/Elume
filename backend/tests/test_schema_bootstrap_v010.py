@@ -22,6 +22,7 @@ from schema.bootstrap_v010 import (  # noqa: E402
     BootstrapRefused,
     apply_bootstrap,
 )
+from schema.adopt_existing_v010 import FINGERPRINT_PATH, _fingerprint  # noqa: E402
 from schema.schema_signature import database_signature, metadata_signature  # noqa: E402
 
 
@@ -104,9 +105,15 @@ class FinalV010BootstrapTests(unittest.TestCase):
                 )
                 tables = {row[0] for row in table_rows}
                 historical_tables = tables - {"schema_migrations"}
+                historical_v010_tables = set(_fingerprint(FINGERPRINT_PATH)["tables"])
+                self.assertEqual(historical_tables, historical_v010_tables)
                 self.assertEqual(len(historical_tables), 42)
-                self.assertTrue(historical_tables <= set(Base.metadata.tables))
-                self.assertEqual(len(set(Base.metadata.tables)), 44)
+                self.assertNotIn("school_email_domains", historical_tables)
+                self.assertNotIn("user_access_grants", historical_tables)
+                current_orm_tables = set(Base.metadata.tables)
+                self.assertEqual(len(current_orm_tables), 44)
+                self.assertIn("school_email_domains", current_orm_tables)
+                self.assertIn("user_access_grants", current_orm_tables)
                 self.assertIn("teacher_planner_state", tables)
 
                 versions = tuple(
@@ -123,6 +130,8 @@ class FinalV010BootstrapTests(unittest.TestCase):
                     )
 
                 expected = metadata_signature(Base.metadata)
+                for table_name in current_orm_tables - historical_v010_tables:
+                    expected.pop(table_name)
                 # Historical v010 deliberately predates the current ORM's
                 # unversioned CAT4 cohort fields.  It also retains two legacy
                 # storage compatibility columns no longer mapped by the ORM.
@@ -154,7 +163,7 @@ class FinalV010BootstrapTests(unittest.TestCase):
                             "server_default": "0",
                         },
                     )
-                actual = database_signature(connection, set(Base.metadata.tables))
+                actual = database_signature(connection, historical_v010_tables)
                 # The final schema intentionally replaces the ORM's broad
                 # schools.slug unique/index hint with a reviewed partial index.
                 expected = deepcopy(expected)
