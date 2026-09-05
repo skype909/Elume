@@ -1,6 +1,6 @@
 """Core mode/dependency tests; no network or Stripe SDK calls."""
 from __future__ import annotations
-import os, sys, unittest
+import ast, inspect, os, sys, unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,3 +47,103 @@ class Core(unittest.TestCase):
    def first(self):return user(is_active=False)
   with self.assertRaises(HTTPException) as err:main.get_authenticated_user('Bearer x',SimpleNamespace(query=lambda *_:Q()))
   self.assertEqual(err.exception.status_code,401)
+
+ def test_route_classification_inventory(self):
+  platform = (
+   ('GET', '/platform-admin/schools', 'platform_admin_list_schools', 'require_platform_admin'),
+   ('POST', '/platform-admin/schools', 'platform_admin_create_school', 'require_platform_admin'),
+   ('GET', '/platform-admin/schools/{school_id}', 'platform_admin_school_detail', 'require_platform_admin'),
+   ('PATCH', '/platform-admin/schools/{school_id}/branding', 'platform_admin_update_school_branding', 'require_platform_admin'),
+   ('POST', '/platform-admin/schools/{school_id}/logo', 'platform_admin_upload_school_logo', 'require_platform_admin'),
+   ('POST', '/platform-admin/schools/{school_id}/assign-admin', 'platform_admin_assign_school_admin', 'require_platform_admin'),
+   ('POST', '/platform-admin/schools/{school_id}/admin-invitations', 'platform_admin_create_school_admin_invitation', 'require_platform_admin'),
+   ('GET', '/admin/users/export.csv', 'export_users_csv', '_require_super_admin'),
+   ('GET', '/admin/users', 'admin_list_users', 'require_super_admin'),
+   ('POST', '/admin/users', 'admin_create_user', 'require_super_admin'),
+   ('POST', '/admin/users/reset-password', 'admin_reset_password', 'require_super_admin'),
+   ('POST', '/admin/users/rename', 'admin_rename_user', 'require_super_admin'),
+   ('DELETE', '/admin/users', 'admin_delete_user', 'require_super_admin'),
+   ('POST', '/admin/classes/transfer', 'admin_transfer_class', 'require_super_admin'),
+   ('POST', '/classes/{class_id}/cat4/baselines/{baseline_id}/reset', 'reset_cat4_baseline', 'require_super_admin'),
+  )
+  identity = (
+   ('GET', '/auth/me', 'auth_me'),
+   ('POST', '/billing/create-checkout-session', 'create_checkout_session'),
+   ('POST', '/billing/create-portal-session', 'create_portal_session'),
+   ('POST', '/billing/confirm-checkout-session', 'confirm_checkout_session'),
+   ('POST', '/billing/start-trial', 'start_billing_trial'),
+   ('GET', '/billing/me', 'billing_me'),
+  )
+  product = (
+   ('GET', '/classes', 'get_classes'), ('PUT', '/classes/dashboard-order', 'update_dashboard_order'),
+   ('GET', '/notes/{class_id}', 'list_notes'),
+   ('GET', '/calendar-events', 'list_calendar_events'), ('POST', '/whiteboards', 'save_whiteboard_state'),
+   ('POST', '/collab/create', 'collab_create'), ('POST', '/livequiz/create', 'livequiz_create'),
+   ('GET', '/classes/{class_id}/cat4/meta', 'cat4_meta'), ('POST', '/ai/create-resources', 'ai_create_resources'),
+   ('GET', '/storage/me', 'storage_me'), ('GET', '/school-resources', 'school_resources'),
+   ('GET', '/teacher-admin/state', 'get_teacher_admin_state'), ('GET', '/student-access/{class_id}', 'get_student_access'),
+  )
+  school_admin = (
+   ('GET', '/school-admin/departments', 'school_admin_list_departments'),
+   ('POST', '/school-admin/invitations', 'school_admin_create_invitation'),
+  )
+  public_or_student = (
+   ('POST', '/auth/login', 'auth_login'), ('POST', '/auth/register', 'auth_register'),
+   ('POST', '/student/join/class', 'join_class_by_code'), ('POST', '/livequiz/{code}/join', 'livequiz_join'),
+   ('POST', '/collab/{code}/join', 'collab_join'),
+  )
+  routes = {(method, route.path, route.endpoint.__name__): route
+            for route in main.app.routes for method in getattr(route, 'methods', set())}
+
+  def direct_dependencies(method, path, name):
+   return [dep.call for dep in routes[(method, path, name)].dependant.dependencies]
+
+  def all_dependencies(route):
+   pending = list(route.dependant.dependencies)
+   calls = []
+   while pending:
+    dependency = pending.pop()
+    calls.append(dependency.call)
+    pending.extend(dependency.dependencies)
+   return calls
+
+  for method, path, name, role_check in platform:
+   deps = direct_dependencies(method, path, name)
+   self.assertIn(main.get_authenticated_user, deps)
+   self.assertNotIn(main.get_current_user, deps)
+   self.assertNotIn(main.get_current_user, all_dependencies(routes[(method, path, name)]))
+   self.assertIn(role_check, inspect.getsource(routes[(method, path, name)].endpoint))
+  for method, path, name in identity:
+   deps = direct_dependencies(method, path, name)
+   self.assertIn(main.get_authenticated_user, deps)
+   self.assertNotIn(main.get_current_user, deps)
+   self.assertNotIn(main.get_current_user, all_dependencies(routes[(method, path, name)]))
+  for method, path, name in product:
+   self.assertIn(main.get_current_user, direct_dependencies(method, path, name))
+  for method, path, name in school_admin:
+   route = routes[(method, path, name)]
+   self.assertIn(main.get_current_user, direct_dependencies(method, path, name))
+   self.assertIn('_require_school_admin_school_id', inspect.getsource(route.endpoint))
+  for method, path, name in public_or_student:
+   deps = direct_dependencies(method, path, name)
+   self.assertNotIn(main.get_current_user, deps)
+   self.assertNotIn(main.get_authenticated_user, deps)
+
+  websocket = next(route for route in main.app.routes
+                   if route.path == '/ws/collab/{session_code}/{room_key}' and route.endpoint.__name__ == 'collab_ws')
+  self.assertNotIn(main.get_current_user, [dep.call for dep in websocket.dependant.dependencies])
+  self.assertNotIn(main.get_authenticated_user, [dep.call for dep in websocket.dependant.dependencies])
+
+  source = inspect.getsource(main)
+  tree = ast.parse(source)
+  endpoint_names = {route.endpoint.__name__ for route in main.app.routes}
+  platform_checked = set()
+  for node in ast.walk(tree):
+   if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name not in endpoint_names:
+    continue
+   if any(isinstance(call, ast.Call) and getattr(call.func, 'id', None) in
+          {'require_platform_admin', 'require_super_admin', '_require_super_admin'} for call in ast.walk(node)):
+    platform_checked.add(node.name)
+  self.assertEqual(platform_checked, {item[2] for item in platform})
+  self.assertEqual(source.count('Depends(get_current_user)'), 146)
+  self.assertEqual(source.count('Depends(get_authenticated_user)'), 22)

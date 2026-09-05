@@ -3199,7 +3199,7 @@ def platform_admin_update_school_branding(
     school_id: int,
     payload: schemas.PlatformSchoolBrandingUpdate,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_platform_admin(user)
     school = db.query(models.SchoolModel).filter(models.SchoolModel.id == school_id).with_for_update().first()
@@ -11924,7 +11924,7 @@ def create_class(
 def update_dashboard_order(
     payload: schemas.ClassDashboardOrderUpdate,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_authenticated_user),
+    user: models.UserModel = Depends(get_current_user),
 ):
     class_ids = payload.class_ids
     if not class_ids or any(not isinstance(class_id, int) or class_id <= 0 for class_id in class_ids):
