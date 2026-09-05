@@ -103,8 +103,10 @@ class FinalV010BootstrapTests(unittest.TestCase):
                     )
                 )
                 tables = {row[0] for row in table_rows}
-                self.assertEqual(tables - {"schema_migrations"}, set(Base.metadata.tables))
-                self.assertEqual(len(tables - {"schema_migrations"}), 42)
+                historical_tables = tables - {"schema_migrations"}
+                self.assertEqual(len(historical_tables), 42)
+                self.assertTrue(historical_tables <= set(Base.metadata.tables))
+                self.assertEqual(len(set(Base.metadata.tables)), 44)
                 self.assertIn("teacher_planner_state", tables)
 
                 versions = tuple(

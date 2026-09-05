@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import relationship
 
 
@@ -85,6 +85,49 @@ class UserModel(Base):
 
     classes = relationship("ClassModel", back_populates="owner")
     school = relationship("SchoolModel", back_populates="users")
+
+
+class SchoolEmailDomainModel(Base):
+    """An explicitly administered, verified school email-domain mapping."""
+    __tablename__ = "school_email_domains"
+    __table_args__ = (
+        UniqueConstraint("domain", name="uq_school_email_domains_domain"),
+        CheckConstraint("domain = lower(btrim(domain)) AND position('@' IN domain) = 0 AND position(' ' IN domain) = 0", name="ck_school_email_domains_domain_canonical"),
+        CheckConstraint("(revoked_at IS NULL AND revoked_by_user_id IS NULL) OR (revoked_at IS NOT NULL AND revoked_by_user_id IS NOT NULL)", name="ck_school_email_domains_revocation"),
+        Index("ix_school_email_domains_school_active", "school_id", "is_active"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="RESTRICT"), nullable=False, index=True)
+    domain = Column(String(253), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+
+
+class UserAccessGrantModel(Base):
+    """Auditable manual/pilot/promotional entitlement; never implicit reviewer access."""
+    __tablename__ = "user_access_grants"
+    __table_args__ = (
+        CheckConstraint("grant_type IN ('pilot', 'reviewer', 'internal', 'complimentary', 'promotional_annual')", name="ck_user_access_grants_type"),
+        CheckConstraint("expires_at IS NULL OR expires_at > starts_at", name="ck_user_access_grants_window"),
+        CheckConstraint("(revoked_at IS NULL AND revoked_by_user_id IS NULL AND revocation_reason IS NULL) OR (revoked_at IS NOT NULL AND revoked_by_user_id IS NOT NULL AND revocation_reason IS NOT NULL)", name="ck_user_access_grants_revocation"),
+        Index("ix_user_access_grants_user_active", "user_id", "starts_at", "expires_at", postgresql_where=text("revoked_at IS NULL")),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    grant_type = Column(String(64), nullable=False)
+    reason = Column(Text, nullable=False)
+    starts_at = Column(DateTime, default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+    expires_at = Column(DateTime, nullable=True)
+    granted_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    revocation_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
 
 
 class UiTranslationOverrideModel(Base):
