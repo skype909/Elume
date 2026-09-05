@@ -560,6 +560,42 @@ class CollabParticipantOut(BaseModel):
     is_online: bool = True
 
 
+# -------------------------
+# Platform entitlement administration
+# -------------------------
+
+class AccessGrantCreate(BaseModel):
+    grant_type: str
+    reason: str
+    starts_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+
+
+class AccessGrantRevoke(BaseModel):
+    reason: str
+
+
+class AccessGrantOut(BaseModel):
+    id: int
+    grant_type: str
+    reason: str
+    starts_at: datetime
+    expires_at: Optional[datetime] = None
+    granted_by_user_id: int
+    revoked_at: Optional[datetime] = None
+    revoked_by_user_id: Optional[int] = None
+    revocation_reason: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AccessGrantMutationOut(BaseModel):
+    changed: bool
+    grant: AccessGrantOut
+
+
 class CollabStatusResponse(BaseModel):
     session_code: str
     title: str

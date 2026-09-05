@@ -57,6 +57,10 @@ class Core(unittest.TestCase):
    ('POST', '/platform-admin/schools/{school_id}/logo', 'platform_admin_upload_school_logo', 'require_platform_admin'),
    ('POST', '/platform-admin/schools/{school_id}/assign-admin', 'platform_admin_assign_school_admin', 'require_platform_admin'),
    ('POST', '/platform-admin/schools/{school_id}/admin-invitations', 'platform_admin_create_school_admin_invitation', 'require_platform_admin'),
+   ('GET', '/platform-admin/entitlements', 'platform_admin_entitlement_report', 'require_platform_admin'),
+   ('GET', '/platform-admin/users/{user_id}/access-grants', 'platform_admin_list_access_grants', 'require_platform_admin'),
+   ('POST', '/platform-admin/users/{user_id}/access-grants', 'platform_admin_create_access_grant', 'require_platform_admin'),
+   ('POST', '/platform-admin/access-grants/{grant_id}/revoke', 'platform_admin_revoke_access_grant', 'require_platform_admin'),
    ('GET', '/admin/users/export.csv', 'export_users_csv', '_require_super_admin'),
    ('GET', '/admin/users', 'admin_list_users', 'require_super_admin'),
    ('POST', '/admin/users', 'admin_create_user', 'require_super_admin'),
@@ -146,4 +150,4 @@ class Core(unittest.TestCase):
     platform_checked.add(node.name)
   self.assertEqual(platform_checked, {item[2] for item in platform})
   self.assertEqual(source.count('Depends(get_current_user)'), 146)
-  self.assertEqual(source.count('Depends(get_authenticated_user)'), 22)
+  self.assertEqual(source.count('Depends(get_authenticated_user)'), 26)

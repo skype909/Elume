@@ -123,6 +123,7 @@ from models import (
 
 )
 from entitlements import decide_entitlement
+from entitlement_admin import EntitlementAdminError, create_grant, entitlement_report, grant_summary, revoke_grant
 
 CLASS_COLOUR_KEYS = frozenset({
     "emerald", "teal", "cyan", "sky", "blue", "indigo",
@@ -3098,6 +3099,89 @@ def platform_admin_list_schools(
     require_platform_admin(user)
     rows = _platform_school_summary_query(db).order_by(models.SchoolModel.created_at.desc(), models.SchoolModel.id.desc()).all()
     return [_platform_school_summary_payload(row) for row in rows]
+
+
+def _entitlement_admin_http(error: EntitlementAdminError):
+    raise HTTPException(status_code=error.status_code, detail={"code": error.code})
+
+
+@app.get("/platform-admin/entitlements")
+def platform_admin_entitlement_report(
+    access: str = "all",
+    page: int = 1,
+    page_size: int = 50,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_authenticated_user),
+):
+    """Local persisted-state view; it deliberately never reconciles with Stripe."""
+    require_platform_admin(user)
+    try:
+        return entitlement_report(db, access_filter=access, page=page, page_size=page_size)
+    except EntitlementAdminError as error:
+        _entitlement_admin_http(error)
+
+
+@app.get("/platform-admin/users/{user_id}/access-grants")
+def platform_admin_list_access_grants(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_authenticated_user),
+):
+    require_platform_admin(user)
+    target = db.query(models.UserModel.id).filter(models.UserModel.id == user_id).first()
+    if target is None:
+        raise HTTPException(status_code=404, detail={"code": "user_not_found"})
+    grants = (db.query(models.UserAccessGrantModel)
+              .filter(models.UserAccessGrantModel.user_id == user_id)
+              .order_by(models.UserAccessGrantModel.created_at.desc(), models.UserAccessGrantModel.id.desc()).all())
+    return {"user_id": user_id, "grants": [grant_summary(grant) for grant in grants]}
+
+
+@app.post("/platform-admin/users/{user_id}/access-grants", response_model=schemas.AccessGrantMutationOut)
+def platform_admin_create_access_grant(
+    user_id: int,
+    payload: schemas.AccessGrantCreate,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_authenticated_user),
+):
+    require_platform_admin(user)
+    try:
+        grant, changed = create_grant(
+            db, actor_id=user.id, user_id=user_id, grant_type=payload.grant_type,
+            reason=payload.reason, starts_at=payload.starts_at, expires_at=payload.expires_at,
+        )
+        if changed:
+            db.commit()
+            db.refresh(grant)
+        return {"changed": changed, "grant": grant_summary(grant)}
+    except EntitlementAdminError as error:
+        db.rollback()
+        _entitlement_admin_http(error)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@app.post("/platform-admin/access-grants/{grant_id}/revoke", response_model=schemas.AccessGrantMutationOut)
+def platform_admin_revoke_access_grant(
+    grant_id: int,
+    payload: schemas.AccessGrantRevoke,
+    db: Session = Depends(get_db),
+    user: models.UserModel = Depends(get_authenticated_user),
+):
+    require_platform_admin(user)
+    try:
+        grant, changed = revoke_grant(db, actor_id=user.id, grant_id=grant_id, reason=payload.reason)
+        if changed:
+            db.commit()
+            db.refresh(grant)
+        return {"changed": changed, "grant": grant_summary(grant)}
+    except EntitlementAdminError as error:
+        db.rollback()
+        _entitlement_admin_http(error)
+    except Exception:
+        db.rollback()
+        raise
 
 
 @app.post("/platform-admin/schools", response_model=schemas.PlatformSchoolSummaryOut, status_code=201)
