@@ -23,6 +23,7 @@ from schema.migrate_011_cat4_cohort_schema import (  # noqa: E402
     MigrationRefused,
     apply_down_migration,
     apply_migration,
+    check_migration,
 )
 
 
@@ -131,6 +132,7 @@ class Cat4CohortMigrationTests(unittest.TestCase):
     def test_upgrade_backfills_rows_and_records_011(self):
         database_name, target_url = self._new_database()
         self._populate_cat4_rows(target_url)
+        check_migration(target_url, expected_database=database_name)
         self._apply(database_name, target_url)
         engine = self._engine(target_url)
         try:
@@ -171,6 +173,9 @@ class Cat4CohortMigrationTests(unittest.TestCase):
                     self.assertEqual(column[1:], ("integer", "NO", "0"))
         finally:
             engine.dispose()
+
+        with self.assertRaisesRegex(MigrationRefused, "expected ledger versions"):
+            check_migration(target_url, expected_database=database_name)
 
     def test_second_apply_and_divergent_states_refuse_without_change(self):
         database_name, target_url = self._new_database()

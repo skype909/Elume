@@ -151,6 +151,23 @@ def apply_migration(
         engine.dispose()
 
 
+def check_migration(
+    database_url: str | URL,
+    *,
+    expected_database: str,
+    fingerprint_path: Path = FINGERPRINT_PATH,
+) -> None:
+    """Read-only eligibility check for a future migration-011 apply."""
+    _check_database_name(database_url, expected_database)
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            _require_versions(connection, EXPECTED_PRE_MIGRATION_VERSIONS)
+            _require_schema(connection, _fingerprint(fingerprint_path), "preflight")
+    finally:
+        engine.dispose()
+
+
 def apply_down_migration(
     database_url: str | URL,
     *,
@@ -179,14 +196,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Apply or reverse ledger-gated CAT4 cohort migration 011")
     parser.add_argument("--database-url", required=True)
     parser.add_argument("--expected-database", required=True)
+    parser.add_argument("--check", action="store_true")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--down", action="store_true")
     parser.add_argument("--confirm-migration-011", action="store_true")
     parser.add_argument("--confirm-migration-011-down", action="store_true")
     args = parser.parse_args()
-    if args.apply == args.down:
-        parser.error("choose exactly one of --apply or --down")
-    if args.apply:
+    if sum((args.check, args.apply, args.down)) != 1:
+        parser.error("choose exactly one of --check, --apply, or --down")
+    if args.check:
+        check_migration(args.database_url, expected_database=args.expected_database)
+        print("Migration 011 preflight passed: exact historical-v010 ledger and schema are present.")
+    elif args.apply:
         apply_migration(
             args.database_url,
             expected_database=args.expected_database,

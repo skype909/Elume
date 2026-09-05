@@ -69,6 +69,8 @@ concurrent runner to refuse before waiting on migration DDL:
 
 ```powershell
 cd backend
+python -m schema.migrate_011_cat4_cohort_schema --check `
+  --expected-database "elume" --database-url "postgresql+psycopg2://..."
 python -m schema.migrate_011_cat4_cohort_schema --apply `
   --confirm-migration-011 --expected-database "elume" `
   --database-url "postgresql+psycopg2://..."
