@@ -19,6 +19,7 @@ EXPECTED_GAEILGE_REVIEWERS = {
     "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",
     "emma@elume.ie", "sdb@elume.ie", "jskelton@elume.ie",
     "lmulcahy@preskilkenny.ie", "nbrennan@preskilkenny.ie",
+    "rgalway@preskilkenny.ie",
 }
 
 

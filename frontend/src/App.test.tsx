@@ -104,6 +104,7 @@ describe("class-first onboarding integration", () => {
     "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",
     "emma@elume.ie", "sdb@elume.ie", "jskelton@elume.ie",
     "lmulcahy@preskilkenny.ie", "nbrennan@preskilkenny.ie",
+    "rgalway@preskilkenny.ie",
   ])("%s can enter Gaeilge reviewer mode and see Dashboard edit controls", async (email) => {
     setAuthenticatedGaeilgeReviewer(email);
     mockApiFetch.mockImplementation((path: string) => {

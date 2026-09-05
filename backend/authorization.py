@@ -22,6 +22,7 @@ GAEILGE_REVIEWER_EMAILS = {
     "jskelton@elume.ie",
     "lmulcahy@preskilkenny.ie",
     "nbrennan@preskilkenny.ie",
+    "rgalway@preskilkenny.ie",
 }
 
 

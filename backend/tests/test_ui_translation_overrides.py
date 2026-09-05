@@ -118,6 +118,7 @@ class UiTranslationOverrideTests(unittest.TestCase):
             "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",
             "emma@elume.ie", "sdb@elume.ie", "jskelton@elume.ie",
             "lmulcahy@preskilkenny.ie", "nbrennan@preskilkenny.ie",
+            "rgalway@preskilkenny.ie",
         })
         for email in authorization.GAEILGE_REVIEWER_EMAILS:
             self.assertTrue(authorization.is_gaeilge_reviewer(SimpleNamespace(email=email)))
