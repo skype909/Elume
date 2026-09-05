@@ -3093,7 +3093,7 @@ def _platform_school_summary_payload(row) -> dict:
 @app.get("/platform-admin/schools", response_model=List[schemas.PlatformSchoolSummaryOut])
 def platform_admin_list_schools(
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_platform_admin(user)
     rows = _platform_school_summary_query(db).order_by(models.SchoolModel.created_at.desc(), models.SchoolModel.id.desc()).all()
@@ -3104,7 +3104,7 @@ def platform_admin_list_schools(
 def platform_admin_create_school(
     payload: schemas.PlatformSchoolCreate,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_platform_admin(user)
     name = (payload.name or "").strip()
@@ -3162,7 +3162,7 @@ def platform_admin_create_school(
 def platform_admin_school_detail(
     school_id: int,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_platform_admin(user)
     row = _platform_school_summary_query(db).filter(models.SchoolModel.id == school_id).first()
@@ -3224,7 +3224,7 @@ async def platform_admin_upload_school_logo(
     school_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_platform_admin(user)
     school = db.query(models.SchoolModel).filter(models.SchoolModel.id == school_id).with_for_update().first()
@@ -3292,7 +3292,7 @@ def platform_admin_assign_school_admin(
     school_id: int,
     payload: schemas.PlatformSchoolAdminAssignment,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_platform_admin(user)
     email = (payload.email or "").strip().lower()
@@ -3616,7 +3616,7 @@ def platform_admin_create_school_admin_invitation(
     school_id: int,
     payload: schemas.SchoolInvitationCreate,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     """Invite a brand-new School Admin; existing accounts use assign-admin instead."""
     require_platform_admin(user)
@@ -4545,7 +4545,7 @@ def storage_me(user: models.UserModel = Depends(get_current_user)):
 @app.get("/admin/users/export.csv")
 def export_users_csv(
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     _require_super_admin(user)
 
@@ -8183,7 +8183,7 @@ def save_teacher_admin_state(
 @app.get("/admin/users")
 def admin_list_users(
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_super_admin(user)
 
@@ -8210,7 +8210,7 @@ def admin_list_users(
 def admin_create_user(
     payload: AdminCreateUser,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_super_admin(user)
 
@@ -8256,7 +8256,7 @@ def admin_create_user(
 def admin_reset_password(
     payload: AdminResetPassword,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_super_admin(user)
 
@@ -8283,7 +8283,7 @@ def admin_reset_password(
 def admin_rename_user(
     payload: AdminRenameUser,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_super_admin(user)
 
@@ -8316,7 +8316,7 @@ def admin_rename_user(
 def admin_delete_user(
     payload: AdminDeleteUser,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_super_admin(user)
 
@@ -8539,7 +8539,7 @@ def _delete_class_dependencies(
 def admin_transfer_class(
     payload: AdminTransferClassPayload,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_super_admin(user)
 
@@ -11924,7 +11924,7 @@ def create_class(
 def update_dashboard_order(
     payload: schemas.ClassDashboardOrderUpdate,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     class_ids = payload.class_ids
     if not class_ids or any(not isinstance(class_id, int) or class_id <= 0 for class_id in class_ids):
@@ -14754,7 +14754,7 @@ def reset_cat4_baseline(
     class_id: int,
     baseline_id: int,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     require_super_admin(user)
 
