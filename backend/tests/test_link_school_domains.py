@@ -1,6 +1,8 @@
 """Opt-in loopback PostgreSQL tests for the explicit school-domain linker."""
 from __future__ import annotations
 import os, sys, unittest, uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
@@ -63,4 +65,36 @@ class DomainLinkTests(unittest.TestCase):
    with e.begin() as c:uid=self.user(c,'x@example.test');other=c.execute(text("INSERT INTO schools(name,status,seat_limit,created_at,updated_at) VALUES('O','active',2,now(),now()) RETURNING id")).scalar_one();self.user(c,'y@example.test',school=other)
    with self.assertRaises(LinkRefused):apply(u,expected_database=n,school_id=s,domain='example.test',actor_user_id=a,confirm_school_domain_link=True)
    with e.connect() as c:self.assertEqual(c.execute(text('SELECT count(*) FROM school_email_domains')).scalar_one(),0);self.assertIsNone(c.execute(text('SELECT school_id FROM users WHERE id=:i'),{'i':uid}).scalar_one())
+  finally:e.dispose()
+ def _concurrent(self,u,n,s,a,domains):
+  barrier=Barrier(2)
+  def runner(domain):
+   barrier.wait(timeout=5)
+   try:return ('ok',apply(u,expected_database=n,school_id=s,domain=domain,actor_user_id=a,confirm_school_domain_link=True))
+   except LinkRefused as exc:return ('refused',str(exc))
+  with ThreadPoolExecutor(max_workers=2) as pool:
+   futures=[pool.submit(runner,d) for d in domains]
+   return [f.result(timeout=10) for f in futures]
+ def test_concurrent_same_domain_is_idempotent(self):
+  n,u=self.new();a,s=self.ids(u,1);e=create_engine(u)
+  try:
+   with e.begin() as c:teacher=self.user(c,'teacher@same.test')
+   outcomes=self._concurrent(u,n,s,a,['same.test','same.test'])
+   self.assertTrue(all(kind in {'ok','refused'} for kind,_ in outcomes))
+   with e.connect() as c:
+    self.assertEqual(c.execute(text("SELECT count(*) FROM school_email_domains WHERE domain='same.test' AND is_active")).scalar_one(),1)
+    self.assertEqual(c.execute(text("SELECT count(*) FROM school_admin_audit_log WHERE action='school_domain_linked' AND target_user_id=:u"),{'u':teacher}).scalar_one(),1)
+    self.assertEqual(c.execute(text('SELECT school_id FROM users WHERE id=:u'),{'u':teacher}).scalar_one(),s)
+  finally:e.dispose()
+ def test_concurrent_competing_seats_never_overallocates(self):
+  n,u=self.new();a,s=self.ids(u,1);e=create_engine(u)
+  try:
+   with e.begin() as c:first=self.user(c,'first@one.test');second=self.user(c,'second@two.test')
+   outcomes=self._concurrent(u,n,s,a,['one.test','two.test'])
+   self.assertEqual(len(outcomes),2)
+   with e.connect() as c:
+    linked=c.execute(text('SELECT count(*) FROM users WHERE school_id=:s AND role=\'teacher\' AND is_active'),{'s':s}).scalar_one()
+    self.assertLessEqual(linked,1);self.assertEqual(c.execute(text('SELECT count(*) FROM school_email_domains')).scalar_one(),1);self.assertEqual(c.execute(text("SELECT count(*) FROM school_admin_audit_log WHERE action='school_domain_linked'")).scalar_one(),1)
+    self.assertEqual(c.execute(text("SELECT count(*) FROM schema_migrations WHERE version='012'")).scalar_one(),1)
+    self.assertEqual(c.execute(text('SELECT count(*) FROM users WHERE id IN (:a,:b) AND school_id IS NOT NULL'),{'a':first,'b':second}).scalar_one(),1)
   finally:e.dispose()
