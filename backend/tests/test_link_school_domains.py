@@ -47,8 +47,8 @@ class DomainLinkTests(unittest.TestCase):
   for x in ('@x.test','https://x.test','x.test/a','*.x.test','bad domain','x'): self.assertRaises(LinkRefused,canonical_domain,x)
   n,u=self.new();a,s=self.ids(u);e=create_engine(u)
   try:
-   with e.begin() as c:self.user(c,'one@evilpreskilkenny.ie');self.user(c,'two@subdomain.preskilkenny.ie');eligible=self.user(c,'ok@preskilkenny.ie')
-   r=check(u,expected_database=n,school_id=s,domain='PRESKILKENNY.IE');self.assertEqual(r['eligible'],[eligible]);self.assertIsNone(r['mapping'])
+   with e.begin() as c:self.user(c,'one@school.example.attacker.test');self.user(c,'two@sub.school.example');eligible=self.user(c,'teacher1@school.example')
+   r=check(u,expected_database=n,school_id=s,domain='SCHOOL.EXAMPLE');self.assertEqual(r['eligible'],[eligible]);self.assertIsNone(r['mapping'])
    with e.connect() as c:self.assertEqual(c.execute(text('SELECT count(*) FROM school_email_domains')).scalar_one(),0)
   finally:e.dispose()
  def test_apply_idempotency_capacity_and_audit(self):
