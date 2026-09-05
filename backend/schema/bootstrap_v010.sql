@@ -231,8 +231,6 @@ CREATE TABLE calendar_events (
 CREATE TABLE cat4_baseline_sets (
 	id SERIAL NOT NULL,
 	class_id INTEGER NOT NULL,
-	cohort_key VARCHAR NOT NULL,
-	cohort_name VARCHAR NOT NULL,
 	title VARCHAR NOT NULL,
 	test_date TIMESTAMP WITHOUT TIME ZONE,
 	is_locked BOOLEAN NOT NULL,
@@ -246,8 +244,6 @@ CREATE TABLE cat4_baseline_sets (
 CREATE TABLE cat4_term_result_sets (
 	id SERIAL NOT NULL,
 	class_id INTEGER NOT NULL,
-	cohort_key VARCHAR NOT NULL,
-	cohort_name VARCHAR NOT NULL,
 	title VARCHAR NOT NULL,
 	academic_year VARCHAR,
 	term_key VARCHAR,
@@ -260,8 +256,6 @@ CREATE TABLE cat4_term_result_sets (
 CREATE TABLE cat4_workbook_versions (
 	id SERIAL NOT NULL,
 	class_id INTEGER NOT NULL,
-	cohort_key VARCHAR NOT NULL,
-	cohort_name VARCHAR NOT NULL,
 	version_number INTEGER NOT NULL,
 	workbook_name VARCHAR NOT NULL,
 	uploaded_by_email VARCHAR NOT NULL,
@@ -575,6 +569,7 @@ CREATE TABLE notes (
 	topic_id INTEGER NOT NULL,
 	filename VARCHAR NOT NULL,
 	stored_path VARCHAR NOT NULL,
+	size_bytes INTEGER NOT NULL DEFAULT 0,
 	whiteboard_state_id INTEGER,
 	uploaded_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (id),
@@ -609,6 +604,7 @@ CREATE TABLE tests (
 	description TEXT,
 	filename VARCHAR NOT NULL,
 	stored_path VARCHAR NOT NULL,
+	size_bytes INTEGER NOT NULL DEFAULT 0,
 	uploaded_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (id),
 	FOREIGN KEY(class_id) REFERENCES classes (id),
@@ -730,19 +726,13 @@ CREATE INDEX ix_calendar_events_owner_user_id ON calendar_events (owner_user_id)
 
 CREATE INDEX ix_cat4_baseline_sets_class_id ON cat4_baseline_sets (class_id);
 
-CREATE INDEX ix_cat4_baseline_sets_cohort_key ON cat4_baseline_sets (cohort_key);
-
 CREATE INDEX ix_cat4_baseline_sets_id ON cat4_baseline_sets (id);
 
 CREATE INDEX ix_cat4_term_result_sets_class_id ON cat4_term_result_sets (class_id);
 
-CREATE INDEX ix_cat4_term_result_sets_cohort_key ON cat4_term_result_sets (cohort_key);
-
 CREATE INDEX ix_cat4_term_result_sets_id ON cat4_term_result_sets (id);
 
 CREATE INDEX ix_cat4_workbook_versions_class_id ON cat4_workbook_versions (class_id);
-
-CREATE INDEX ix_cat4_workbook_versions_cohort_key ON cat4_workbook_versions (cohort_key);
 
 CREATE INDEX ix_cat4_workbook_versions_id ON cat4_workbook_versions (id);
 
@@ -759,6 +749,10 @@ CREATE INDEX ix_collab_templates_id ON collab_templates (id);
 CREATE INDEX ix_collab_templates_owner_user_id ON collab_templates (owner_user_id);
 
 CREATE INDEX ix_collab_templates_source_class_id ON collab_templates (source_class_id);
+
+CREATE INDEX ix_collab_templates_owner_updated ON collab_templates (owner_user_id, updated_at DESC);
+
+CREATE INDEX ix_collab_templates_source_class ON collab_templates (source_class_id);
 
 CREATE INDEX ix_livequiz_sessions_id ON livequiz_sessions (id);
 
@@ -802,6 +796,10 @@ CREATE INDEX ix_ui_translation_override_revisions_override_id ON ui_translation_
 
 CREATE INDEX ix_ui_translation_override_revisions_reviewed_by_user_id ON ui_translation_override_revisions (reviewed_by_user_id);
 
+CREATE INDEX ix_ui_translation_override_revisions_override_created_at ON ui_translation_override_revisions (override_id, created_at DESC);
+
+CREATE INDEX ix_ui_translation_override_revisions_reviewer_user_id ON ui_translation_override_revisions (reviewed_by_user_id);
+
 CREATE INDEX ix_whiteboard_states_class_id ON whiteboard_states (class_id);
 
 CREATE INDEX ix_whiteboard_states_id ON whiteboard_states (id);
@@ -840,6 +838,8 @@ CREATE INDEX ix_department_collab_template_shares_shared_by_user_id ON departmen
 
 CREATE INDEX ix_department_collab_template_shares_template_id ON department_collab_template_shares (template_id);
 
+CREATE INDEX ix_department_collab_template_shares_template ON department_collab_template_shares (template_id);
+
 CREATE INDEX ix_department_saved_quiz_shares_department_id ON department_saved_quiz_shares (department_id);
 
 CREATE INDEX ix_department_saved_quiz_shares_id ON department_saved_quiz_shares (id);
@@ -847,6 +847,10 @@ CREATE INDEX ix_department_saved_quiz_shares_id ON department_saved_quiz_shares 
 CREATE INDEX ix_department_saved_quiz_shares_saved_quiz_id ON department_saved_quiz_shares (saved_quiz_id);
 
 CREATE INDEX ix_department_saved_quiz_shares_shared_by_user_id ON department_saved_quiz_shares (shared_by_user_id);
+
+CREATE INDEX ix_department_saved_quiz_shares_quiz ON department_saved_quiz_shares (saved_quiz_id);
+
+CREATE INDEX ix_school_department_memberships_school_user ON school_department_memberships (school_id, user_id);
 
 CREATE INDEX ix_livequiz_participants_id ON livequiz_participants (id);
 

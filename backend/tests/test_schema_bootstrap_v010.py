@@ -121,6 +121,37 @@ class FinalV010BootstrapTests(unittest.TestCase):
                     )
 
                 expected = metadata_signature(Base.metadata)
+                # Historical v010 deliberately predates the current ORM's
+                # unversioned CAT4 cohort fields.  It also retains two legacy
+                # storage compatibility columns no longer mapped by the ORM.
+                for table_name in (
+                    "cat4_baseline_sets",
+                    "cat4_term_result_sets",
+                    "cat4_workbook_versions",
+                ):
+                    expected[table_name]["columns"] = [
+                        column
+                        for column in expected[table_name]["columns"]
+                        if column["name"] not in {"cohort_key", "cohort_name"}
+                    ]
+                    expected[table_name]["indexes"] = [
+                        index
+                        for index in expected[table_name]["indexes"]
+                        if index[0] != f"ix_{table_name}_cohort_key"
+                    ]
+                for table_name in ("notes", "tests"):
+                    columns = expected[table_name]["columns"]
+                    position = next(index for index, column in enumerate(columns) if column["name"] == "stored_path")
+                    columns.insert(
+                        position + 1,
+                        {
+                            "name": "size_bytes",
+                            "type": "INTEGER",
+                            "nullable": False,
+                            "primary_key": False,
+                            "server_default": "0",
+                        },
+                    )
                 actual = database_signature(connection, set(Base.metadata.tables))
                 # The final schema intentionally replaces the ORM's broad
                 # schools.slug unique/index hint with a reviewed partial index.
@@ -157,6 +188,13 @@ class FinalV010BootstrapTests(unittest.TestCase):
                             "uq_school_invitations_open_school_email",
                             "ix_school_admin_audit_log_school_created_at",
                             "uq_school_departments_school_name_ci",
+                            "ix_collab_templates_owner_updated",
+                            "ix_collab_templates_source_class",
+                            "ix_department_collab_template_shares_template",
+                            "ix_department_saved_quiz_shares_quiz",
+                            "ix_school_department_memberships_school_user",
+                            "ix_ui_translation_override_revisions_override_created_at",
+                            "ix_ui_translation_override_revisions_reviewer_user_id",
                         }
                     ]
                     self.assertEqual(actual_indexes, expected_indexes, table_name)
@@ -167,11 +205,22 @@ class FinalV010BootstrapTests(unittest.TestCase):
                 self.assertIn("ix_classes_class_code", indexes)
                 self.assertIn("ix_classes_owner_active_dashboard_order", indexes)
 
+                for table_name in (
+                    "cat4_baseline_sets",
+                    "cat4_term_result_sets",
+                    "cat4_workbook_versions",
+                ):
+                    self.assertNotIn("cohort_key", {column["name"] for column in actual[table_name]["columns"]})
+                    self.assertNotIn("cohort_name", {column["name"] for column in actual[table_name]["columns"]})
+                    self.assertNotIn(f"ix_{table_name}_cohort_key", {index[0] for index in actual[table_name]["indexes"]})
+
                 defaults = {
                     (table_name, column["name"]): column["server_default"]
                     for table_name, table in actual.items()
                     for column in table["columns"]
                 }
+                self.assertEqual(defaults[("notes", "size_bytes")], "0")
+                self.assertEqual(defaults[("tests", "size_bytes")], "0")
                 for table_name, column_name, expected_fragment in (
                     ("schools", "status", "active"),
                     ("schools", "created_at", "CURRENT_TIMESTAMP"),
@@ -196,6 +245,13 @@ class FinalV010BootstrapTests(unittest.TestCase):
                 self.assertIn("WHERE ((accepted_at IS NULL) AND (revoked_at IS NULL))", definitions["uq_school_invitations_open_school_email"])
                 self.assertIn("lower(", definitions["uq_school_departments_school_name_ci"])
                 self.assertIn("WHERE (slug IS NOT NULL)", definitions["uq_schools_slug"])
+                self.assertIn("owner_user_id, updated_at DESC", definitions["ix_collab_templates_owner_updated"])
+                self.assertIn("source_class_id", definitions["ix_collab_templates_source_class"])
+                self.assertIn("template_id", definitions["ix_department_collab_template_shares_template"])
+                self.assertIn("saved_quiz_id", definitions["ix_department_saved_quiz_shares_quiz"])
+                self.assertIn("school_id, user_id", definitions["ix_school_department_memberships_school_user"])
+                self.assertIn("override_id, created_at DESC", definitions["ix_ui_translation_override_revisions_override_created_at"])
+                self.assertIn("reviewed_by_user_id", definitions["ix_ui_translation_override_revisions_reviewer_user_id"])
         finally:
             engine.dispose()
 

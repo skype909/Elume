@@ -1,0 +1,3921 @@
+{
+  "application_table_count": 42,
+  "extra_constraint_requirements": {
+    "ck_schools_slug_format": [
+      "slug",
+      "~"
+    ]
+  },
+  "extra_index_requirements": {
+    "ix_collab_templates_owner_updated": [
+      "owner_user_id",
+      "updated_at desc"
+    ],
+    "ix_collab_templates_source_class": [
+      "source_class_id"
+    ],
+    "ix_department_collab_template_shares_template": [
+      "template_id"
+    ],
+    "ix_department_saved_quiz_shares_quiz": [
+      "saved_quiz_id"
+    ],
+    "ix_school_admin_audit_log_school_created_at": [
+      "school_id",
+      "created_at desc"
+    ],
+    "ix_school_department_memberships_school_user": [
+      "school_id",
+      "user_id"
+    ],
+    "ix_ui_translation_override_revisions_override_created_at": [
+      "override_id",
+      "created_at desc"
+    ],
+    "ix_ui_translation_override_revisions_reviewer_user_id": [
+      "reviewed_by_user_id"
+    ],
+    "uq_school_departments_school_name_ci": [
+      "school_id",
+      "lower("
+    ],
+    "uq_school_invitations_open_school_email": [
+      "school_id",
+      "normalized_email",
+      "accepted_at is null",
+      "revoked_at is null"
+    ],
+    "uq_schools_slug": [
+      "slug",
+      "where",
+      "is not null"
+    ]
+  },
+  "important_defaults": {
+    "ai_usage_events": {
+      "created_at": "timezone"
+    },
+    "collab_templates": {
+      "created_at": "timezone",
+      "updated_at": "timezone"
+    },
+    "department_collab_template_shares": {
+      "created_at": "timezone"
+    },
+    "department_saved_quiz_shares": {
+      "created_at": "timezone"
+    },
+    "notes": {
+      "size_bytes": "0"
+    },
+    "school_admin_audit_log": {
+      "created_at": "current_timestamp"
+    },
+    "school_department_memberships": {
+      "created_at": "timezone"
+    },
+    "school_departments": {
+      "created_at": "timezone",
+      "updated_at": "timezone"
+    },
+    "school_invitations": {
+      "created_at": "current_timestamp",
+      "intended_role": "teacher"
+    },
+    "schools": {
+      "created_at": "current_timestamp",
+      "seat_limit": "0",
+      "status": "active",
+      "updated_at": "current_timestamp"
+    },
+    "tests": {
+      "size_bytes": "0"
+    },
+    "ui_translation_override_revisions": {
+      "created_at": "timezone"
+    },
+    "ui_translation_overrides": {
+      "created_at": "timezone",
+      "updated_at": "timezone"
+    },
+    "users": {
+      "is_active": "true",
+      "role": "teacher"
+    }
+  },
+  "non_fingerprint_index_names": [
+    "ix_ai_usage_events_user_id",
+    "ix_collab_templates_owner_user_id",
+    "ix_collab_templates_source_class_id",
+    "ix_department_collab_template_shares_department_id",
+    "ix_department_collab_template_shares_shared_by_user_id",
+    "ix_department_collab_template_shares_template_id",
+    "ix_department_saved_quiz_shares_department_id",
+    "ix_department_saved_quiz_shares_saved_quiz_id",
+    "ix_department_saved_quiz_shares_shared_by_user_id",
+    "ix_school_department_memberships_department_id",
+    "ix_school_department_memberships_school_id",
+    "ix_school_department_memberships_user_id",
+    "ix_ui_translation_override_revisions_language_code",
+    "ix_ui_translation_override_revisions_override_id",
+    "ix_ui_translation_override_revisions_reviewed_by_user_id"
+  ],
+  "special_index_names": [
+    "uq_schools_slug",
+    "uq_school_invitations_open_school_email",
+    "ix_school_admin_audit_log_school_created_at",
+    "uq_school_departments_school_name_ci",
+    "ix_collab_templates_owner_updated",
+    "ix_collab_templates_source_class",
+    "ix_department_collab_template_shares_template",
+    "ix_department_saved_quiz_shares_quiz",
+    "ix_school_department_memberships_school_user",
+    "ix_ui_translation_override_revisions_override_created_at",
+    "ix_ui_translation_override_revisions_reviewer_user_id"
+  ],
+  "tables": {
+    "ai_usage_events": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "feature",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(64)"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "model",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(128)"
+        },
+        {
+          "name": "input_tokens",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "output_tokens",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "total_tokens",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "user_id"
+          ],
+          [
+            "users.id"
+          ],
+          "RESTRICT"
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_ai_usage_events_created_at",
+          [
+            "created_at"
+          ],
+          false
+        ],
+        [
+          "ix_ai_usage_events_user_feature_created",
+          [
+            "user_id",
+            "feature",
+            "created_at"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "assessment_results": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "assessment_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "student_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "score_percent",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "absent",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "assessment_id"
+          ],
+          [
+            "class_assessments.id"
+          ],
+          null
+        ],
+        [
+          [
+            "student_id"
+          ],
+          [
+            "students.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "calendar_events": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "description",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "event_date",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "end_date",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "all_day",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "event_type",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "owner_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ],
+        [
+          [
+            "owner_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_calendar_events_owner_user_id",
+          [
+            "owner_user_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "cat4_baseline_sets": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "test_date",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "is_locked",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "locked_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_cat4_baseline_sets_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "cat4_student_baselines": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "baseline_set_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "student_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "raw_name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "matched_name",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "verbal_sas",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "quantitative_sas",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "non_verbal_sas",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "spatial_sas",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "overall_sas",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "profile_label",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "confidence_note",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "baseline_set_id"
+          ],
+          [
+            "cat4_baseline_sets.id"
+          ],
+          null
+        ],
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ],
+        [
+          [
+            "student_id"
+          ],
+          [
+            "students.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_cat4_student_baselines_baseline_set_id",
+          [
+            "baseline_set_id"
+          ],
+          false
+        ],
+        [
+          "ix_cat4_student_baselines_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ],
+        [
+          "ix_cat4_student_baselines_student_id",
+          [
+            "student_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "cat4_student_term_results": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "result_set_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "student_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "raw_name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "matched_name",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "average_percent",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "subject_count",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "raw_subjects_json",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "verbal_domain_score",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "quantitative_domain_score",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "non_verbal_domain_score",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "spatial_domain_score",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ],
+        [
+          [
+            "result_set_id"
+          ],
+          [
+            "cat4_term_result_sets.id"
+          ],
+          null
+        ],
+        [
+          [
+            "student_id"
+          ],
+          [
+            "students.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_cat4_student_term_results_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ],
+        [
+          "ix_cat4_student_term_results_result_set_id",
+          [
+            "result_set_id"
+          ],
+          false
+        ],
+        [
+          "ix_cat4_student_term_results_student_id",
+          [
+            "student_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "cat4_term_result_sets": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "academic_year",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "term_key",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_cat4_term_result_sets_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "cat4_workbook_versions": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "version_number",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "workbook_name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "uploaded_by_email",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "uploaded_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "is_active",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "validation_summary_json",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "parsed_payload_json",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_cat4_workbook_versions_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "class_assessments": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "assessment_date",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "classes": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "owner_user_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "subject",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "stream",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "color",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "dashboard_order",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "preferred_exam_subject",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "class_code",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "class_pin",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "is_archived",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "archived_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "owner_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_classes_class_code",
+          [
+            "class_code"
+          ],
+          true
+        ],
+        [
+          "ix_classes_owner_active_dashboard_order",
+          [
+            "owner_user_id",
+            "is_archived",
+            "dashboard_order",
+            "id"
+          ],
+          false
+        ],
+        [
+          "ix_classes_owner_user_id",
+          [
+            "owner_user_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "collab_participants": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "session_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "anon_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "room_number",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "joined_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "last_seen_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "is_online",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "session_id"
+          ],
+          [
+            "collab_sessions.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_collab_participants_anon_id",
+          [
+            "anon_id"
+          ],
+          false
+        ],
+        [
+          "ix_collab_participants_session_id",
+          [
+            "session_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "collab_sessions": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "session_code",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "state",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "room_count",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "timer_minutes",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "started_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "ended_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "breakout_started_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "board_round",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "clean_snapshot_json",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_collab_sessions_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ],
+        [
+          "ix_collab_sessions_session_code",
+          [
+            "session_code"
+          ],
+          true
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "collab_templates": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "owner_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "source_class_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(255)"
+        },
+        {
+          "name": "board_state_json",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "room_count",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "timer_minutes",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "owner_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          "RESTRICT"
+        ],
+        [
+          [
+            "source_class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          "SET NULL"
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "department_collab_template_shares": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "department_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "template_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "shared_by_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "department_id"
+          ],
+          [
+            "school_departments.id"
+          ],
+          "CASCADE"
+        ],
+        [
+          [
+            "shared_by_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          "RESTRICT"
+        ],
+        [
+          [
+            "template_id"
+          ],
+          [
+            "collab_templates.id"
+          ],
+          "CASCADE"
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": [
+        [
+          "department_id",
+          "template_id"
+        ]
+      ]
+    },
+    "department_saved_quiz_shares": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "department_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "saved_quiz_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "shared_by_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "department_id"
+          ],
+          [
+            "school_departments.id"
+          ],
+          "CASCADE"
+        ],
+        [
+          [
+            "saved_quiz_id"
+          ],
+          [
+            "saved_quizzes.id"
+          ],
+          "CASCADE"
+        ],
+        [
+          [
+            "shared_by_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          "RESTRICT"
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": [
+        [
+          "department_id",
+          "saved_quiz_id"
+        ]
+      ]
+    },
+    "email_verification_tokens": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "token_hash",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "expires_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "used_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "user_id"
+          ],
+          [
+            "users.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_email_verification_tokens_token_hash",
+          [
+            "token_hash"
+          ],
+          true
+        ],
+        [
+          "ix_email_verification_tokens_user_id",
+          [
+            "user_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "livequiz_answers": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "session_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "participant_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "question_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "choice",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "answered_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "participant_id"
+          ],
+          [
+            "livequiz_participants.id"
+          ],
+          null
+        ],
+        [
+          [
+            "session_id"
+          ],
+          [
+            "livequiz_sessions.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "livequiz_attempts": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "session_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "quiz_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "participant_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "student_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "participant_identifier",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "participant_display_name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "score",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "score_percent",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "total_questions",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "completed",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "scored_mode",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "excluded_from_average",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "submitted_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "finished_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ],
+        [
+          [
+            "participant_id"
+          ],
+          [
+            "livequiz_participants.id"
+          ],
+          null
+        ],
+        [
+          [
+            "session_id"
+          ],
+          [
+            "livequiz_sessions.id"
+          ],
+          null
+        ],
+        [
+          [
+            "student_id"
+          ],
+          [
+            "students.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_livequiz_attempts_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ],
+        [
+          "ix_livequiz_attempts_participant_id",
+          [
+            "participant_id"
+          ],
+          false
+        ],
+        [
+          "ix_livequiz_attempts_session_id",
+          [
+            "session_id"
+          ],
+          false
+        ],
+        [
+          "ix_livequiz_attempts_student_id",
+          [
+            "student_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "livequiz_participants": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "session_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "anon_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "nickname",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "joined_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "session_id"
+          ],
+          [
+            "livequiz_sessions.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "livequiz_sessions": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "session_code",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "anonymous",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "quiz_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "questions_json",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "state",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "current_index",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "seconds_per_question",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "shuffle_questions",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "auto_play",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "auto_end_when_all_answered",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "started_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "question_started_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "question_closed_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "ended_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_livequiz_sessions_session_code",
+          [
+            "session_code"
+          ],
+          true
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "notes": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "topic_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "filename",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "stored_path",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "size_bytes",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "whiteboard_state_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "uploaded_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ],
+        [
+          [
+            "topic_id"
+          ],
+          [
+            "topics.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_notes_whiteboard_state_id",
+          [
+            "whiteboard_state_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "password_reset_tokens": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "token_hash",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "expires_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "used_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "user_id"
+          ],
+          [
+            "users.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_password_reset_tokens_token_hash",
+          [
+            "token_hash"
+          ],
+          true
+        ],
+        [
+          "ix_password_reset_tokens_user_id",
+          [
+            "user_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "posts": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "author",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "content",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "links",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "created_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "saved_quiz_questions": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "quiz_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "prompt",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "choice_a",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "choice_b",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "choice_c",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "choice_d",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "correct_index",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "explanation",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "position",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "quiz_id"
+          ],
+          [
+            "saved_quizzes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_saved_quiz_questions_quiz_id",
+          [
+            "quiz_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "saved_quizzes": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "owner_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "category",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "description",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "is_starred",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ],
+        [
+          [
+            "owner_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_saved_quizzes_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ],
+        [
+          "ix_saved_quizzes_owner_user_id",
+          [
+            "owner_user_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "school_admin_audit_log": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "school_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "actor_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "target_user_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "invitation_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "action",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(64)"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "actor_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          "RESTRICT"
+        ],
+        [
+          [
+            "invitation_id"
+          ],
+          [
+            "school_invitations.id"
+          ],
+          "RESTRICT"
+        ],
+        [
+          [
+            "school_id"
+          ],
+          [
+            "schools.id"
+          ],
+          "RESTRICT"
+        ],
+        [
+          [
+            "target_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          "RESTRICT"
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_school_admin_audit_log_actor_user_id",
+          [
+            "actor_user_id"
+          ],
+          false
+        ],
+        [
+          "ix_school_admin_audit_log_invitation_id",
+          [
+            "invitation_id"
+          ],
+          false
+        ],
+        [
+          "ix_school_admin_audit_log_target_user_id",
+          [
+            "target_user_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "school_days": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "date",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "unique_constraints": [
+        [
+          "date"
+        ]
+      ]
+    },
+    "school_department_memberships": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "department_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "school_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "department_id",
+            "school_id"
+          ],
+          [
+            "school_departments.id",
+            "school_departments.school_id"
+          ],
+          "CASCADE"
+        ],
+        [
+          [
+            "user_id",
+            "school_id"
+          ],
+          [
+            "users.id",
+            "users.school_id"
+          ],
+          "RESTRICT"
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": [
+        [
+          "department_id",
+          "user_id"
+        ]
+      ]
+    },
+    "school_departments": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "school_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(120)"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "school_id"
+          ],
+          [
+            "schools.id"
+          ],
+          "RESTRICT"
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_school_departments_school_id",
+          [
+            "school_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": [
+        [
+          "id",
+          "school_id"
+        ]
+      ]
+    },
+    "school_invitations": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "school_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "normalized_email",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(320)"
+        },
+        {
+          "name": "intended_role",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(32)"
+        },
+        {
+          "name": "token_hash",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(64)"
+        },
+        {
+          "name": "expires_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "accepted_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "revoked_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "invited_by_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "invited_by_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          "RESTRICT"
+        ],
+        [
+          [
+            "school_id"
+          ],
+          [
+            "schools.id"
+          ],
+          "RESTRICT"
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_school_invitations_normalized_email",
+          [
+            "normalized_email"
+          ],
+          false
+        ],
+        [
+          "ix_school_invitations_school_id",
+          [
+            "school_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": [
+        [
+          "token_hash"
+        ]
+      ]
+    },
+    "schools": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(255)"
+        },
+        {
+          "name": "slug",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(63)"
+        },
+        {
+          "name": "logo_storage_key",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(512)"
+        },
+        {
+          "name": "status",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(32)"
+        },
+        {
+          "name": "seat_limit",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "student_access_links": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "token",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "is_active",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_student_access_links_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ],
+        [
+          "ix_student_access_links_is_active",
+          [
+            "is_active"
+          ],
+          false
+        ],
+        [
+          "ix_student_access_links_token",
+          [
+            "token"
+          ],
+          true
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "students": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "first_name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "notes",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "active",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "teacher_admin_state": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "owner_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "state_json",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "owner_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_teacher_admin_state_owner_user_id",
+          [
+            "owner_user_id"
+          ],
+          true
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "teacher_planner_state": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "teacher_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "state_json",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "updated_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        [
+          "ix_teacher_planner_state_teacher_id",
+          [
+            "teacher_id"
+          ],
+          true
+        ]
+      ],
+      "unique_constraints": []
+    },
+    "test_categories": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "description",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "tests": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "category_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "description",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "filename",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "stored_path",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "size_bytes",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "uploaded_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "category_id"
+          ],
+          [
+            "test_categories.id"
+          ],
+          null
+        ],
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "topics": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "name",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "ui_translation_override_revisions": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "override_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "language_code",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(16)"
+        },
+        {
+          "name": "translation_key",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(160)"
+        },
+        {
+          "name": "previous_value",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "new_value",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "base_value_at_edit",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "reviewed_by_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "override_id"
+          ],
+          [
+            "ui_translation_overrides.id"
+          ],
+          "RESTRICT"
+        ],
+        [
+          [
+            "reviewed_by_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          "RESTRICT"
+        ]
+      ],
+      "indexes": [],
+      "unique_constraints": []
+    },
+    "ui_translation_overrides": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "language_code",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(16)"
+        },
+        {
+          "name": "translation_key",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(160)"
+        },
+        {
+          "name": "value",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "base_value_at_edit",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "updated_by_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "updated_by_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          "RESTRICT"
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_ui_translation_overrides_language_code",
+          [
+            "language_code"
+          ],
+          false
+        ],
+        [
+          "ix_ui_translation_overrides_updated_by_user_id",
+          [
+            "updated_by_user_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": [
+        [
+          "language_code",
+          "translation_key"
+        ]
+      ]
+    },
+    "users": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "email",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "password_hash",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "first_name",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "last_name",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "school_name",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "role",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR(32)"
+        },
+        {
+          "name": "school_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "is_active",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "email_verified",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "subscription_status",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "billing_interval",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "stripe_customer_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "stripe_subscription_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "stripe_checkout_session_id",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "subscription_started_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "current_period_end",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "subscription_expires_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "subscription_30_day_notice_sent_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "payment_failed_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "payment_recovery_deadline_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "payment_failed_notice_sent_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "payment_failed_final_notice_sent_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "launch_offer_applied",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "billing_onboarding_required",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "trial_started_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "trial_ends_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "ai_daily_limit",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "ai_prompt_count",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "ai_prompt_count_date",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "storage_used_bytes",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "storage_warning_sent_at",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "school_id"
+          ],
+          [
+            "schools.id"
+          ],
+          "RESTRICT"
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_users_email",
+          [
+            "email"
+          ],
+          true
+        ],
+        [
+          "ix_users_school_id",
+          [
+            "school_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": [
+        [
+          "id",
+          "school_id"
+        ]
+      ]
+    },
+    "whiteboard_states": {
+      "columns": [
+        {
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "class_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "owner_user_id",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "INTEGER"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "state_json",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TEXT"
+        },
+        {
+          "name": "preview_image_path",
+          "nullable": true,
+          "primary_key": false,
+          "server_default": null,
+          "type": "VARCHAR"
+        },
+        {
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "server_default": null,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "foreign_keys": [
+        [
+          [
+            "class_id"
+          ],
+          [
+            "classes.id"
+          ],
+          null
+        ],
+        [
+          [
+            "owner_user_id"
+          ],
+          [
+            "users.id"
+          ],
+          null
+        ]
+      ],
+      "indexes": [
+        [
+          "ix_whiteboard_states_class_id",
+          [
+            "class_id"
+          ],
+          false
+        ],
+        [
+          "ix_whiteboard_states_owner_user_id",
+          [
+            "owner_user_id"
+          ],
+          false
+        ]
+      ],
+      "unique_constraints": []
+    }
+  },
+  "version": "historical-010"
+}
