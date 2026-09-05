@@ -122,6 +122,7 @@ from models import (
     LiveQuizAttemptModel,
 
 )
+from entitlements import decide_entitlement
 
 CLASS_COLOUR_KEYS = frozenset({
     "emerald", "teal", "cyan", "sky", "blue", "indigo",
@@ -2741,7 +2742,7 @@ def _user_operational_status(user: models.UserModel) -> str:
     return getattr(user, "subscription_status", None) or "inactive"
 
 
-def get_current_user(
+def get_authenticated_user(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> models.UserModel:
@@ -2765,8 +2766,33 @@ def get_current_user(
     return user
 
 
+def get_current_user(
+    user: models.UserModel = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+    request: Request = None,
+) -> models.UserModel:
+    """Product dependency; keep account/billing endpoints on identity-only auth."""
+    raw_mode = os.getenv("ELUME_ENTITLEMENT_MODE")
+    mode = "off" if raw_mode is None or not raw_mode.strip() else raw_mode.strip().lower()
+    if mode not in {"off", "report", "enforce"}:
+        raise RuntimeError("Invalid ELUME_ENTITLEMENT_MODE; expected off, report, or enforce")
+    if mode == "off":
+        return user
+    grants = (
+        db.query(models.UserAccessGrantModel)
+        .filter(models.UserAccessGrantModel.user_id == user.id)
+        .all()
+    )
+    decision = decide_entitlement(user, getattr(user, "school", None), grants, now=_utcnow())
+    if mode == "report" and not decision.allowed:
+        logger.info("entitlement_would_deny user_id=%s method=%s path=%s mode=report reason=%s", user.id, getattr(request, "method", ""), getattr(getattr(request, "url", None), "path", ""), decision.code)
+    if mode == "enforce" and not decision.allowed:
+        raise HTTPException(status_code=403, detail={"code": "entitlement_required", "reason": decision.code})
+    return user
+
+
 @app.get("/auth/me", response_model=schemas.CurrentUserOut)
-def auth_me(user: models.UserModel = Depends(get_current_user)):
+def auth_me(user: models.UserModel = Depends(get_authenticated_user)):
     school = getattr(user, "school", None)
     role = ROLE_PLATFORM_ADMIN if is_platform_admin(user) else (getattr(user, "role", None) or ROLE_TEACHER)
     return {
@@ -4157,7 +4183,7 @@ def school_admin_reactivate_teacher(
 def create_checkout_session(
     payload: CreateCheckoutSessionRequest,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     _require_individual_billing_account(db, user)
     if not STRIPE_SECRET_KEY:
@@ -4233,7 +4259,7 @@ def create_checkout_session(
 @app.post("/billing/create-portal-session", response_model=CreatePortalSessionResponse)
 def create_portal_session(
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     _require_individual_billing_account(db, user)
     if not STRIPE_SECRET_KEY:
@@ -4264,7 +4290,7 @@ def create_portal_session(
 def confirm_checkout_session(
     session_id: str,
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     _require_individual_billing_account(db, user)
     if not STRIPE_SECRET_KEY:
@@ -4331,7 +4357,7 @@ def confirm_checkout_session(
 @app.post("/billing/start-trial", response_model=StartTrialResponse)
 def start_billing_trial(
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     _require_individual_billing_account(db, user)
     if not bool(user.email_verified):
@@ -4344,6 +4370,7 @@ def start_billing_trial(
     now = _utcnow()
     user.trial_started_at = now
     user.trial_ends_at = now + timedelta(days=14)
+    user.subscription_status = "trialing"
     user.ai_daily_limit = 5
     user.ai_prompt_count = 0
     user.ai_prompt_count_date = now
@@ -4503,7 +4530,7 @@ async def stripe_billing_webhook(request: Request, background_tasks: BackgroundT
 @app.get("/billing/me", response_model=schemas.BillingStatusOut)
 def billing_me(
     db: Session = Depends(get_db),
-    user: models.UserModel = Depends(get_current_user),
+    user: models.UserModel = Depends(get_authenticated_user),
 ):
     payload = _billing_status_payload(db, user)
     db.commit()
