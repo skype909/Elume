@@ -81,6 +81,33 @@ class Migration012Tests(unittest.TestCase):
    with self.assertRaises(MigrationRefused):verify_applied_migration(url,expected_database=name)
    with e.begin() as c:c.execute(text('CREATE INDEX ix_school_email_domains_school_active ON school_email_domains (school_id,is_active)'))
   finally:e.dispose()
+ def test_domain_constraint_tamper_matrix(self):
+  expressions={
+   'missing_nonempty':"domain=lower(domain) AND domain=trim(domain) AND domain NOT LIKE '%@%'",
+   'missing_lowercase':"domain<>'' AND domain=trim(domain) AND domain NOT LIKE '%@%'",
+   'missing_trim':"domain<>'' AND domain=lower(domain) AND domain NOT LIKE '%@%'",
+   'missing_at':"domain<>'' AND domain=lower(domain) AND domain=trim(domain)",
+   'or_weakened':"domain<>'' OR domain=lower(domain) OR domain=trim(domain) OR domain NOT LIKE '%@%'",
+   'wrong_column':"domain<>'' AND domain=lower(domain) AND domain=trim(domain) AND other_text NOT LIKE '%@%'",
+  }
+  for kind,expr in expressions.items():
+   with self.subTest(kind=kind):
+    name,url=self.new();apply_migration(url,expected_database=name,confirm_migration_012=True);e=create_engine(url)
+    try:
+     with e.begin() as c:
+      if kind=='wrong_column':c.execute(text('ALTER TABLE school_email_domains ADD COLUMN other_text VARCHAR NOT NULL DEFAULT \'x\''))
+      c.execute(text('ALTER TABLE school_email_domains DROP CONSTRAINT ck_school_email_domains_domain_canonical'));c.execute(text('ALTER TABLE school_email_domains ADD CONSTRAINT ck_school_email_domains_domain_canonical CHECK ('+expr+')'))
+     with self.assertRaisesRegex(MigrationRefused,'ck_school_email_domains_domain_canonical'):verify_applied_migration(url,expected_database=name)
+    finally:e.dispose()
+  for kind in ('missing','renamed','not_valid'):
+   with self.subTest(kind=kind):
+    name,url=self.new();apply_migration(url,expected_database=name,confirm_migration_012=True);e=create_engine(url)
+    try:
+     with e.begin() as c:
+      c.execute(text('ALTER TABLE school_email_domains DROP CONSTRAINT ck_school_email_domains_domain_canonical'))
+      if kind!='missing':c.execute(text("ALTER TABLE school_email_domains ADD CONSTRAINT "+('other_name' if kind=='renamed' else 'ck_school_email_domains_domain_canonical')+" CHECK (domain<>'' AND domain=lower(domain) AND domain=trim(domain) AND domain NOT LIKE '%@%')"+(' NOT VALID' if kind=='not_valid' else '')))
+     with self.assertRaisesRegex(MigrationRefused,'ck_school_email_domains_domain_canonical'):verify_applied_migration(url,expected_database=name)
+    finally:e.dispose()
  def test_audit_action_constraint_and_down_history_guard(self):
   name,url=self.new();apply_migration(url,expected_database=name,confirm_migration_012=True);e=create_engine(url)
   try:

@@ -17,7 +17,7 @@ CREATE TABLE school_email_domains (
     revoked_by_user_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
     CONSTRAINT uq_school_email_domains_domain UNIQUE (domain),
     CONSTRAINT ck_school_email_domains_domain_canonical CHECK (
-        domain = lower(btrim(domain)) AND position('@' IN domain) = 0 AND position(' ' IN domain) = 0
+        domain <> '' AND domain = lower(domain) AND domain = trim(domain) AND domain NOT LIKE '%@%'
     ),
     CONSTRAINT ck_school_email_domains_revocation CHECK (
         (revoked_at IS NULL AND revoked_by_user_id IS NULL) OR

@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse, os
 from pathlib import Path
+import re
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from schema.migrate_011_cat4_cohort_schema import EXPECTED_POST_MIGRATION_VERSIONS as V011, MigrationRefused, _public_base_tables, _require_schema, _require_versions, v011_fingerprint
@@ -39,6 +40,12 @@ def _verify_definition(c):
     cons={r[0]:r[1] for r in c.execute(text("SELECT conname,pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid=ANY(ARRAY['school_email_domains'::regclass,'user_access_grants'::regclass])"))}
     for n in ('school_email_domains_pkey','user_access_grants_pkey','uq_school_email_domains_domain','ck_school_email_domains_domain_canonical','ck_school_email_domains_revocation','ck_user_access_grants_type','ck_user_access_grants_window','ck_user_access_grants_revocation'):
         if n not in cons: bad.append('constraint '+n)
+    audit_domain=c.execute(text("SELECT contype,convalidated,pg_get_constraintdef(oid, true) FROM pg_constraint WHERE conrelid='school_email_domains'::regclass AND conname='ck_school_email_domains_domain_canonical'")).one_or_none()
+    canonical='' if audit_domain is None else audit_domain[2].lower()
+    normalized=re.sub(r'::text','',canonical); normalized=re.sub(r'\s+','',normalized)
+    normalized=normalized.replace('trim(bothfromdomain)','trim(domain)').replace('!~~','notlike').replace('(','').replace(')','')
+    expected="checkdomain<>''anddomain=lowerdomainanddomain=trimdomainanddomainnotlike'%@%'"
+    if audit_domain is None or audit_domain[0] != 'c' or not audit_domain[1] or normalized != expected: bad.append('constraint ck_school_email_domains_domain_canonical definition')
     audit=c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='school_admin_audit_log'::regclass AND conname='ck_school_admin_audit_log_action'")).scalar_one_or_none()
     audit_actions=('invitation_created','invitation_resent','invitation_revoked','invitation_accepted','teacher_deactivated','teacher_reactivated','school_admin_invitation_created','school_admin_invitation_accepted','school_domain_linked')
     if audit is None or any("'%s'" % action not in audit for action in audit_actions) or audit.count("'") != len(audit_actions)*2: bad.append('constraint ck_school_admin_audit_log_action')

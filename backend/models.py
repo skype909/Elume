@@ -92,7 +92,7 @@ class SchoolEmailDomainModel(Base):
     __tablename__ = "school_email_domains"
     __table_args__ = (
         UniqueConstraint("domain", name="uq_school_email_domains_domain"),
-        CheckConstraint("domain = lower(btrim(domain)) AND position('@' IN domain) = 0 AND position(' ' IN domain) = 0", name="ck_school_email_domains_domain_canonical"),
+        CheckConstraint("domain <> '' AND domain = lower(domain) AND domain = trim(domain) AND domain NOT LIKE '%@%'", name="ck_school_email_domains_domain_canonical"),
         CheckConstraint("(revoked_at IS NULL AND revoked_by_user_id IS NULL) OR (revoked_at IS NOT NULL AND revoked_by_user_id IS NOT NULL)", name="ck_school_email_domains_revocation"),
         Index("ix_school_email_domains_school_active", "school_id", "is_active"),
     )
