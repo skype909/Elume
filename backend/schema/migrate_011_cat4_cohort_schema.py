@@ -169,6 +169,23 @@ def check_migration(
         engine.dispose()
 
 
+def verify_applied_migration(
+    database_url: str | URL,
+    *,
+    expected_database: str,
+    fingerprint_path: Path = FINGERPRINT_PATH,
+) -> None:
+    """Read-only verification that exactly migration 011 is fully applied."""
+    _check_database_name(database_url, expected_database)
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            _require_versions(connection, EXPECTED_POST_MIGRATION_VERSIONS)
+            _require_schema(connection, v011_fingerprint(fingerprint_path), "verification")
+    finally:
+        engine.dispose()
+
+
 def apply_down_migration(
     database_url: str | URL,
     *,
@@ -199,6 +216,7 @@ def main() -> int:
     parser.add_argument("--database-url-env", help="Environment variable containing the target PostgreSQL URL")
     parser.add_argument("--expected-database", required=True)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--verify-applied", action="store_true")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--down", action="store_true")
     parser.add_argument("--confirm-migration-011", action="store_true")
@@ -209,11 +227,14 @@ def main() -> int:
     database_url = args.database_url or os.getenv(args.database_url_env)
     if not database_url:
         parser.error(f"environment variable {args.database_url_env!r} is empty or unset")
-    if sum((args.check, args.apply, args.down)) != 1:
-        parser.error("choose exactly one of --check, --apply, or --down")
+    if sum((args.check, args.verify_applied, args.apply, args.down)) != 1:
+        parser.error("choose exactly one of --check, --verify-applied, --apply, or --down")
     if args.check:
         check_migration(database_url, expected_database=args.expected_database)
         print("Migration 011 preflight passed: exact historical-v010 ledger and schema are present.")
+    elif args.verify_applied:
+        verify_applied_migration(database_url, expected_database=args.expected_database)
+        print("Migration 011 verification passed: exact 001–011 ledger and schema are present.")
     elif args.apply:
         apply_migration(
             database_url,

@@ -26,6 +26,7 @@ from schema.migrate_011_cat4_cohort_schema import (  # noqa: E402
     apply_down_migration,
     apply_migration,
     check_migration,
+    verify_applied_migration,
 )
 
 
@@ -136,6 +137,7 @@ class Cat4CohortMigrationTests(unittest.TestCase):
         self._populate_cat4_rows(target_url)
         check_migration(target_url, expected_database=database_name)
         self._apply(database_name, target_url)
+        verify_applied_migration(target_url, expected_database=database_name)
         engine = self._engine(target_url)
         try:
             with engine.connect() as connection:

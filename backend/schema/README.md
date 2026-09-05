@@ -74,6 +74,8 @@ python -m schema.migrate_011_cat4_cohort_schema --check `
 python -m schema.migrate_011_cat4_cohort_schema --apply `
   --confirm-migration-011 --expected-database "elume" `
   --database-url-env DATABASE_URL
+python -m schema.migrate_011_cat4_cohort_schema --verify-applied `
+  --expected-database "elume" --database-url-env DATABASE_URL
 ```
 
 The columns are backfilled as `default` / `Default Cohort`, become `NOT NULL`,
