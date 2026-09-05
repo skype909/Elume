@@ -57,3 +57,23 @@ Workflow:
 The bootstrap deliberately contains no application or sample data. The legacy
 `seed_classes()` behavior remains separate application-startup behavior until
 the later startup-hardening phase removes it.
+
+## CAT4 cohort migration 011
+
+`20260905_011_cat4_cohort_schema` is the first ledger-aware forward migration.
+It requires exactly tracked versions `001` through `010`, validates the full
+historical-v010 fingerprint, then atomically adds the three CAT4 cohort-key
+indexes and six cohort columns before recording `011`. It is never run by
+application startup:
+
+```powershell
+cd backend
+python -m schema.migrate_011_cat4_cohort_schema --apply `
+  --confirm-migration-011 --expected-database "elume" `
+  --database-url "postgresql+psycopg2://..."
+```
+
+The columns are backfilled as `default` / `Default Cohort`, become `NOT NULL`,
+and intentionally have no PostgreSQL server defaults. The explicit, guarded
+`--down --confirm-migration-011-down` path removes only those six columns,
+their three indexes, and ledger version `011`.

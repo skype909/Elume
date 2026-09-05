@@ -121,40 +121,30 @@ def _table_difference_details(expected: dict[str, Any], actual: dict[str, Any]) 
     return details
 
 
-def _check_connection(connection, fingerprint: dict[str, Any]) -> CheckResult:
-    identity_row = connection.execute(text("SELECT current_database(), current_user")).one()
+def validate_schema_fingerprint(
+    connection,
+    fingerprint: dict[str, Any],
+    *,
+    allowed_base_tables: set[str] | None = None,
+) -> tuple[str, ...]:
+    """Return all material differences from a reviewed schema fingerprint.
+
+    This deliberately has no migration-ledger policy.  It is shared by the
+    read-only v010 adopter and later explicit migration runners, which each
+    enforce their own ledger state separately.
+    """
+    allowed_base_tables = allowed_base_tables or set()
     actual_tables = _public_base_tables(connection)
     expected_tables = set(fingerprint["tables"])
-    identity = {
-        "database": identity_row[0],
-        "user": identity_row[1],
-        "application_table_count": len(actual_tables & expected_tables),
-        "public_base_table_count": len(actual_tables),
-    }
-
-    if "schema_migrations" in actual_tables:
-        versions = tuple(
-            row[0]
-            for row in connection.execute(text("SELECT version FROM schema_migrations ORDER BY version"))
-        )
-        return CheckResult("already_tracked", identity, (), versions)
-
-    if not actual_tables:
-        return CheckResult(
-            "empty",
-            identity,
-            ("Database is empty; use bootstrap_v010 instead of existing-database adoption.",),
-        )
-
     mismatches: list[str] = []
     missing_tables = sorted(expected_tables - actual_tables)
-    unexpected_tables = sorted(actual_tables - expected_tables)
+    unexpected_tables = sorted(actual_tables - expected_tables - allowed_base_tables)
     if missing_tables:
         mismatches.append("Missing application tables: " + ", ".join(missing_tables))
     if unexpected_tables:
         mismatches.append("Unexpected public base tables: " + ", ".join(unexpected_tables))
     if mismatches:
-        return CheckResult("incompatible", identity, tuple(mismatches))
+        return tuple(mismatches)
 
     actual = _without_special_indexes(
         _without_defaults(database_signature(connection, expected_tables)),
@@ -214,7 +204,36 @@ def _check_connection(connection, fingerprint: dict[str, Any]) -> CheckResult:
         elif any(fragment.lower() not in definition for fragment in fragments):
             mismatches.append(f"Incorrect required constraint definition: {constraint_name}")
 
-    return CheckResult("compatible" if not mismatches else "incompatible", identity, tuple(mismatches))
+    return tuple(mismatches)
+
+
+def _check_connection(connection, fingerprint: dict[str, Any]) -> CheckResult:
+    identity_row = connection.execute(text("SELECT current_database(), current_user")).one()
+    actual_tables = _public_base_tables(connection)
+    expected_tables = set(fingerprint["tables"])
+    identity = {
+        "database": identity_row[0],
+        "user": identity_row[1],
+        "application_table_count": len(actual_tables & expected_tables),
+        "public_base_table_count": len(actual_tables),
+    }
+
+    if "schema_migrations" in actual_tables:
+        versions = tuple(
+            row[0]
+            for row in connection.execute(text("SELECT version FROM schema_migrations ORDER BY version"))
+        )
+        return CheckResult("already_tracked", identity, (), versions)
+
+    if not actual_tables:
+        return CheckResult(
+            "empty",
+            identity,
+            ("Database is empty; use bootstrap_v010 instead of existing-database adoption.",),
+        )
+
+    mismatches = validate_schema_fingerprint(connection, fingerprint)
+    return CheckResult("compatible" if not mismatches else "incompatible", identity, mismatches)
 
 
 def check_database(database_url: str | URL, fingerprint_path: Path = FINGERPRINT_PATH) -> CheckResult:

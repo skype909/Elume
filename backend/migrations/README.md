@@ -2,7 +2,18 @@
 
 This directory contains explicit, reviewed PostgreSQL SQL migrations. They are **not** discovered or run automatically by Elume, SQLAlchemy, or application startup.
 
-Before applying a production migration, take and verify an AWS RDS snapshot, review the matching rollback file, and run the SQL through an approved manual deployment process. Apply each forward migration once and record the deployment externally until a migration runner is introduced.
+Before applying a production migration, take and verify an AWS RDS snapshot,
+review the matching rollback file, and use an approved deployment process.
+Historical migrations `001`â€“`010` remain manual reviewed SQL; migration `011`
+is the first explicit ledger-aware runner.
+
+`20260905_011_cat4_cohort_schema` is the exception: it is deliberately
+ledger-gated and must be run only through
+`python -m schema.migrate_011_cat4_cohort_schema`. The runner requires an
+exact tracked historical `001`â€“`010` state, validates the full v010 schema
+fingerprint, applies its SQL and ledger row `011` in one transaction, and
+refuses duplicate, partial, or divergent states. Its SQL files intentionally
+contain no `BEGIN`/`COMMIT`; the runner owns the transaction.
 
 Do not rely on `Base.metadata.create_all()` for changes to existing tables; it creates missing tables but does not alter an existing schema.
 
