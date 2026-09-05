@@ -20,6 +20,7 @@ from schema.bootstrap_v010 import EXPECTED_VERSIONS
 
 
 MIGRATION_VERSION = "011"
+MIGRATION_ADVISORY_LOCK_KEY = 81_102_011
 EXPECTED_PRE_MIGRATION_VERSIONS = EXPECTED_VERSIONS
 EXPECTED_POST_MIGRATION_VERSIONS = EXPECTED_VERSIONS + (MIGRATION_VERSION,)
 UP_SQL = Path(__file__).parents[1] / "migrations" / "20260905_011_cat4_cohort_schema.up.sql"
@@ -60,6 +61,16 @@ def _require_versions(connection, expected: tuple[str, ...]) -> None:
             "Migration 011 refused: expected ledger versions "
             f"{', '.join(expected)}, found {', '.join(actual) or '(empty)'}"
         )
+
+
+def _require_migration_lock(connection) -> None:
+    """Refuse a concurrent runner before it can wait on migration DDL locks."""
+    acquired = connection.execute(
+        text("SELECT pg_try_advisory_xact_lock(:lock_key)"),
+        {"lock_key": MIGRATION_ADVISORY_LOCK_KEY},
+    ).scalar_one()
+    if not acquired:
+        raise MigrationRefused("Migration 011 refused: another migration-011 transaction is active.")
 
 
 def v011_fingerprint(path: Path = FINGERPRINT_PATH) -> dict[str, Any]:
@@ -131,6 +142,7 @@ def apply_migration(
     engine = create_engine(database_url)
     try:
         with engine.begin() as connection:
+            _require_migration_lock(connection)
             _require_versions(connection, EXPECTED_PRE_MIGRATION_VERSIONS)
             _require_schema(connection, _fingerprint(fingerprint_path), "apply")
             _execute_script(connection, sql_path)
@@ -154,6 +166,7 @@ def apply_down_migration(
     engine = create_engine(database_url)
     try:
         with engine.begin() as connection:
+            _require_migration_lock(connection)
             _require_versions(connection, EXPECTED_POST_MIGRATION_VERSIONS)
             _require_schema(connection, v011_fingerprint(fingerprint_path), "down")
             _execute_script(connection, sql_path)

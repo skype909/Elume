@@ -19,6 +19,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 from schema.bootstrap_v010 import EXPECTED_VERSIONS, apply_bootstrap  # noqa: E402
 from schema.migrate_011_cat4_cohort_schema import (  # noqa: E402
     EXPECTED_POST_MIGRATION_VERSIONS,
+    MIGRATION_ADVISORY_LOCK_KEY,
     MigrationRefused,
     apply_down_migration,
     apply_migration,
@@ -218,6 +219,29 @@ class Cat4CohortMigrationTests(unittest.TestCase):
             engine.dispose()
         with self.assertRaisesRegex(MigrationRefused, "expected ledger versions"):
             self._apply(other_name, other_url)
+
+    def test_concurrent_runner_refuses_before_ddl(self):
+        database_name, target_url = self._new_database()
+        engine = self._engine(target_url)
+        connection = engine.connect()
+        transaction = connection.begin()
+        try:
+            connection.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": MIGRATION_ADVISORY_LOCK_KEY})
+            with self.assertRaisesRegex(MigrationRefused, "another migration-011 transaction is active"):
+                self._apply(database_name, target_url)
+        finally:
+            transaction.rollback()
+            connection.close()
+            engine.dispose()
+
+        engine = self._engine(target_url)
+        try:
+            with engine.connect() as connection:
+                self.assertNotIn("cohort_key", self._columns(connection, "cat4_baseline_sets"))
+                versions = tuple(row[0] for row in connection.execute(text("SELECT version FROM schema_migrations ORDER BY version")))
+                self.assertEqual(versions, EXPECTED_VERSIONS)
+        finally:
+            engine.dispose()
 
     def test_down_restores_historical_cat4_shape_and_ledger(self):
         database_name, target_url = self._new_database()

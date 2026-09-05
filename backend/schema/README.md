@@ -64,7 +64,8 @@ the later startup-hardening phase removes it.
 It requires exactly tracked versions `001` through `010`, validates the full
 historical-v010 fingerprint, then atomically adds the three CAT4 cohort-key
 indexes and six cohort columns before recording `011`. It is never run by
-application startup:
+application startup. A transaction-scoped PostgreSQL advisory lock causes a
+concurrent runner to refuse before waiting on migration DDL:
 
 ```powershell
 cd backend

@@ -12,7 +12,7 @@ ledger-gated and must be run only through
 `python -m schema.migrate_011_cat4_cohort_schema`. The runner requires an
 exact tracked historical `001`â€“`010` state, validates the full v010 schema
 fingerprint, applies its SQL and ledger row `011` in one transaction, and
-refuses duplicate, partial, or divergent states. Its SQL files intentionally
+refuses duplicate, concurrent, partial, or divergent states. Its SQL files intentionally
 contain no `BEGIN`/`COMMIT`; the runner owns the transaction.
 
 Do not rely on `Base.metadata.create_all()` for changes to existing tables; it creates missing tables but does not alter an existing schema.
