@@ -71,10 +71,11 @@ class WebhookIntegration(unittest.TestCase):
   main,models,maker,uid=self.setup_db()
   self.assertTrue(any(getattr(r,'path',None)=='/billing/webhook' and not r.dependant.dependencies for r in main.app.routes))
   self.assertEqual(self.call(main,maker,raw('customer.subscription.created',uid,sub='sub_new',created=200,period=9999999999)).status_code,200)
-  self.assertEqual(self.call(main,maker,raw('customer.subscription.deleted',uid,sub='sub_old',created=201)).status_code,200)
+  for kind in ('customer.subscription.updated','customer.subscription.deleted','invoice.paid','invoice.payment_failed'):
+   self.assertEqual(self.call(main,maker,raw(kind,uid,sub='sub_old',created=201)).status_code,200)
   with maker() as s:
    u=s.get(models.UserModel,uid);self.assertEqual(u.stripe_subscription_id,'sub_new');self.assertEqual(u.subscription_status,'active')
-   ignored=s.query(models.StripeWebhookEventModel).filter_by(processing_state='ignored').one();self.assertEqual(ignored.event_type,'customer.subscription.deleted')
+   self.assertEqual(s.query(models.StripeWebhookEventModel).filter_by(processing_state='ignored').count(),4)
   with patch.object(main,'STRIPE_SECRET_KEY','live'),patch.object(main,'STRIPE_WEBHOOK_SECRET','secret'),patch.object(main.stripe.Webhook,'construct_event',side_effect=ValueError('bad')):
    with self.assertRaises(main.HTTPException) as raised: asyncio.run(main.stripe_billing_webhook(Request()))
   self.assertEqual(raised.exception.status_code,400)

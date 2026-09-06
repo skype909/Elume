@@ -4528,7 +4528,10 @@ def _resolve_webhook_user(db: Session, envelope) -> models.UserModel | None:
 
 def _webhook_is_stale(db: Session, user: models.UserModel, envelope) -> bool:
     if envelope.stripe_subscription_id and user.stripe_subscription_id and envelope.stripe_subscription_id != user.stripe_subscription_id:
-        if envelope.event_type == "customer.subscription.deleted":
+        # A currently tracked live subscription is authoritative for this user.
+        # Never let a late event for a previous subscription overwrite it, even
+        # when the old event was created later than the newest inbox record.
+        if (user.subscription_status or "").lower() in {"active", "trialing", "past_due", "pending"}:
             return True
     previous = (db.query(models.StripeWebhookEventModel)
                 .filter(models.StripeWebhookEventModel.resolved_user_id == user.id,
