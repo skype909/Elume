@@ -44,7 +44,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 load_dotenv(BASE_DIR / ".env")
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -102,6 +102,15 @@ from ai_privacy import append_report_comment_sign_off, cat4_facts_for_ai, report
 from structured_documents import ValidationError as StructuredDocumentValidationError, normalise_create_resources_result, structured_lesson_plan_validation_summary, validate_structured_lesson_plan_document
 from lesson_plan_docx import render_structured_lesson_plan_docx
 from db import Base, SessionLocal, engine
+from stripe_webhook_inbox import (
+    InboxError as WebhookInboxError,
+    claim_event as claim_webhook_event,
+    compare_event_order,
+    mark_ignored as mark_webhook_ignored,
+    mark_processed as mark_webhook_processed,
+    project_event as project_webhook_event,
+    record_failure as record_webhook_failure,
+)
 
 from models import (
     ClassModel,
@@ -4466,122 +4475,130 @@ def start_billing_trial(
     }
 
 
-def _process_stripe_billing_webhook_event(event: dict[str, Any]) -> None:
+class _WebhookUserResolutionError(ValueError):
+    pass
+
+
+def _webhook_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _resolve_webhook_user(db: Session, envelope) -> models.UserModel | None:
+    data = envelope.event_data
+    metadata = data.get("metadata") or {}
+    explicit = metadata.get("elume_user_id") or metadata.get("user_id")
+    if explicit is not None:
+        try:
+            user = db.query(models.UserModel).filter(models.UserModel.id == int(explicit)).with_for_update().one_or_none()
+        except (TypeError, ValueError):
+            raise _WebhookUserResolutionError("invalid explicit user reference")
+        if not user:
+            raise _WebhookUserResolutionError("unknown explicit user reference")
+        return user
+
+    candidates = []
+    for column, value in (
+        (models.UserModel.stripe_subscription_id, envelope.stripe_subscription_id),
+        (models.UserModel.stripe_customer_id, envelope.stripe_customer_id),
+        (models.UserModel.stripe_checkout_session_id, data.get("checkout_id") if envelope.event_type == "checkout.session.completed" else None),
+    ):
+        if value:
+            rows = db.query(models.UserModel).filter(column == value).all()
+            if len(rows) > 1:
+                raise _WebhookUserResolutionError("ambiguous stored Stripe reference")
+            if rows:
+                candidates.append(rows[0])
+                break
+    if not candidates:
+        email = (metadata.get("elume_email") or metadata.get("email") or data.get("customer_email") or "").strip().lower()
+        if email:
+            rows = db.query(models.UserModel).filter(models.UserModel.email == email).all()
+            if len(rows) > 1:
+                raise _WebhookUserResolutionError("ambiguous email reference")
+            candidates = rows
+    if not candidates:
+        return None
+    return db.query(models.UserModel).filter(models.UserModel.id == candidates[0].id).with_for_update().one()
+
+
+def _webhook_is_stale(db: Session, user: models.UserModel, envelope) -> bool:
+    if envelope.stripe_subscription_id and user.stripe_subscription_id and envelope.stripe_subscription_id != user.stripe_subscription_id:
+        if envelope.event_type == "customer.subscription.deleted":
+            return True
+    previous = (db.query(models.StripeWebhookEventModel)
+                .filter(models.StripeWebhookEventModel.resolved_user_id == user.id,
+                        models.StripeWebhookEventModel.processing_state == "processed")
+                .order_by(models.StripeWebhookEventModel.stripe_created_at.desc(), models.StripeWebhookEventModel.id.desc()).first())
+    if previous:
+        return compare_event_order(envelope.event_type, envelope.stripe_created_at, previous.event_type, previous.stripe_created_at).stale
+    return False
+
+
+def _apply_webhook_billing_state(user: models.UserModel, envelope) -> bool:
+    """Apply only the verified minimized projection; return whether to send a failure notice."""
+    data = envelope.event_data
+    customer, subscription = envelope.stripe_customer_id, envelope.stripe_subscription_id
+    if customer:
+        user.stripe_customer_id = customer
+    if subscription:
+        user.stripe_subscription_id = subscription
+    if envelope.event_type == "checkout.session.completed":
+        user.stripe_checkout_session_id = data.get("checkout_id") or user.stripe_checkout_session_id
+        user.subscription_status = "pending" if data.get("payment_status") != "paid" else user.subscription_status
+        return False
+    if envelope.event_type in {"customer.subscription.created", "customer.subscription.updated"}:
+        status = (data.get("subscription_status") or "inactive").lower()
+        user.subscription_status = status
+        interval = data.get("recurring_interval")
+        user.billing_interval = "annual" if interval in {"annual", "year"} else "monthly" if interval == "month" else user.billing_interval
+        period_end = _webhook_datetime(data.get("current_period_end"))
+        user.current_period_end = period_end
+        if status == "trialing":
+            user.trial_ends_at = _webhook_datetime(data.get("trial_end")); user.subscription_expires_at = None
+        elif status == "active":
+            user.subscription_expires_at = period_end
+            user.trial_started_at = user.trial_ends_at = None; user.billing_onboarding_required = False; _clear_payment_recovery_state(user)
+        return False
+    if envelope.event_type == "customer.subscription.deleted":
+        user.subscription_status = "canceled"; user.current_period_end = None; user.subscription_expires_at = None
+        user.trial_ends_at = None; _clear_payment_recovery_state(user)
+        return False
+    if envelope.event_type == "invoice.paid":
+        period_end = _webhook_datetime(data.get("current_period_end"))
+        if not period_end:
+            raise _WebhookUserResolutionError("invoice paid lacks period end")
+        user.subscription_status = "active"; user.current_period_end = period_end; user.subscription_expires_at = period_end
+        user.trial_started_at = user.trial_ends_at = None; user.billing_onboarding_required = False; _clear_payment_recovery_state(user)
+        return False
+    if envelope.event_type == "invoice.payment_failed":
+        user.subscription_status = "past_due"; _set_payment_recovery_window(user)
+        return not bool(user.payment_failed_notice_sent_at)
+    return False
+
+
+def _send_payment_failed_notice_after_commit(user_id: int) -> None:
     db = SessionLocal()
     try:
-        event_type = (event.get("type") or "").strip()
-        logger.info("Stripe billing webhook event: %s", event_type)
-        stripe_obj = event.get("data", {}).get("object", {})
-
-        if event_type not in {
-            "checkout.session.completed",
-            "customer.subscription.created",
-            "customer.subscription.updated",
-            "customer.subscription.deleted",
-            "invoice.paid",
-            "invoice.payment_failed",
-        }:
+        user = db.query(models.UserModel).filter(models.UserModel.id == user_id).with_for_update().one_or_none()
+        if not user or user.payment_failed_notice_sent_at:
             return
-
-        user = _find_billing_user(db, stripe_obj)
-        if not user:
-            logger.warning("Stripe webhook could not match user for event %s", event_type)
-            return
-
-        if event_type == "checkout.session.completed":
-            session_customer = _stripe_obj_get(stripe_obj, "customer")
-            session_subscription = _stripe_obj_get(stripe_obj, "subscription")
-            session_status = (_stripe_obj_get(stripe_obj, "payment_status") or "").strip().lower()
-            billing_interval = _resolve_billing_interval(stripe_obj, user.billing_interval)
-            metadata = _stripe_obj_get(stripe_obj, "metadata") or {}
-
-            if session_customer:
-                user.stripe_customer_id = str(session_customer)
-            if session_subscription:
-                user.stripe_subscription_id = str(session_subscription)
-
-            user.stripe_checkout_session_id = str(_stripe_obj_get(stripe_obj, "id") or user.stripe_checkout_session_id or "")
-            user.billing_interval = billing_interval
-            user.subscription_status = "active" if session_status == "paid" else "pending"
-
-            if user.subscription_status == "active" and not user.subscription_started_at:
-                user.subscription_started_at = datetime.utcnow()
-            if user.subscription_status == "active":
-                user.trial_started_at = None
-                user.trial_ends_at = None
-                effective_start = user.subscription_started_at or datetime.utcnow()
-                user.subscription_expires_at = _calculate_subscription_expiry(effective_start, billing_interval)
-                _clear_payment_recovery_state(user)
-
-            if (metadata.get("launch_offer_candidate") or "").strip().lower() == "true" and user.subscription_status == "active":
-                user.launch_offer_applied = True
-
-        elif event_type in {"customer.subscription.created", "customer.subscription.updated"}:
-            _apply_subscription_update(user, stripe_obj)
-            if _is_paid_subscription_active(user):
-                user.trial_started_at = None
-                user.trial_ends_at = None
-                user.billing_onboarding_required = False
-                _clear_payment_recovery_state(user)
-
-        elif event_type == "customer.subscription.deleted":
-            _apply_subscription_update(user, stripe_obj)
-            user.subscription_status = "canceled"
-
-        elif event_type == "invoice.payment_failed":
-            customer_id = _stripe_obj_get(stripe_obj, "customer")
-            subscription_id = _stripe_obj_get(stripe_obj, "subscription")
-            if customer_id:
-                user.stripe_customer_id = str(customer_id)
-            if subscription_id:
-                user.stripe_subscription_id = str(subscription_id)
-            user.subscription_status = "past_due"
-            _set_payment_recovery_window(user)
-            _maybe_send_payment_failed_notice(user)
-
-        elif event_type == "invoice.paid":
-            customer_id = _stripe_obj_get(stripe_obj, "customer")
-            subscription_id = _stripe_obj_get(stripe_obj, "subscription")
-            if customer_id:
-                user.stripe_customer_id = str(customer_id)
-            if subscription_id:
-                user.stripe_subscription_id = str(subscription_id)
-
-            refreshed = False
-            if subscription_id:
-                try:
-                    subscription = stripe.Subscription.retrieve(str(subscription_id))
-                    _apply_subscription_update(user, subscription)
-                    refreshed = True
-                except Exception:
-                    logger.warning("Failed to refresh subscription %s after invoice.paid", subscription_id)
-
-            if not refreshed:
-                user.subscription_status = "active"
-                if not user.subscription_started_at:
-                    user.subscription_started_at = datetime.utcnow()
-                user.subscription_expires_at = _calculate_subscription_expiry(
-                    user.subscription_started_at or datetime.utcnow(),
-                    user.billing_interval,
-                )
-                _clear_payment_recovery_state(user)
-            if _is_paid_subscription_active(user):
-                user.trial_started_at = None
-                user.trial_ends_at = None
-                user.billing_onboarding_required = False
-                _clear_payment_recovery_state(user)
-
-        _refresh_ai_daily_limit(user)
+        _send_email(user.email, _payment_failed_email_subject(), _payment_failed_email_body(user))
+        user.payment_failed_notice_sent_at = _utcnow()
         db.commit()
     except Exception:
         db.rollback()
-        logger.exception("Stripe webhook background processing failed")
+        logger.warning("Stripe payment-failure notice delivery failed for user_id=%s", user_id)
     finally:
         db.close()
 
 
 @app.post("/billing/webhook")
-async def stripe_billing_webhook(request: Request, background_tasks: BackgroundTasks):
+async def stripe_billing_webhook(request: Request):
     if not STRIPE_SECRET_KEY or not STRIPE_WEBHOOK_SECRET:
         raise HTTPException(status_code=500, detail="Stripe webhook is not configured")
 
@@ -4602,12 +4619,45 @@ async def stripe_billing_webhook(request: Request, background_tasks: BackgroundT
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     event_payload = event.to_dict_recursive() if hasattr(event, "to_dict_recursive") else dict(event)
-    logger.info(
-        "Stripe billing webhook verified: id=%s type=%s",
-        event_payload.get("id"),
-        event_payload.get("type"),
-    )
-    background_tasks.add_task(_process_stripe_billing_webhook_event, event_payload)
+    try:
+        envelope = project_webhook_event(event_payload)
+    except WebhookInboxError:
+        raise HTTPException(status_code=400, detail="Invalid webhook event")
+    db = SessionLocal(); notification_user_id = None; claimed_id = None
+    try:
+        with db.begin():
+            user = _resolve_webhook_user(db, envelope) if envelope.supported else None
+            claim = claim_webhook_event(db, envelope, resolved_user_id=getattr(user, "id", None))
+            claimed_id = claim.event_id
+            if claim.outcome == "conflict":
+                raise HTTPException(status_code=409, detail="Webhook event identity conflict")
+            if claim.outcome == "duplicate":
+                return Response(content="ok", media_type="text/plain", status_code=200)
+            if claim.outcome == "in_progress":
+                raise HTTPException(status_code=409, detail="Webhook event is already processing")
+            if not envelope.supported or user is None or _webhook_is_stale(db, user, envelope):
+                mark_webhook_ignored(db, claim.event_id)
+            else:
+                notification = _apply_webhook_billing_state(user, envelope)
+                _refresh_ai_daily_limit(user)
+                mark_webhook_processed(db, claim.event_id)
+                notification_user_id = user.id if notification else None
+    except HTTPException:
+        db.rollback(); raise
+    except Exception:
+        db.rollback()
+        if claimed_id:
+            try:
+                with db.begin():
+                    record_webhook_failure(db, claimed_id, "handler_failed")
+            except Exception:
+                db.rollback()
+        logger.warning("Stripe webhook processing failed for event_id=%s", envelope.stripe_event_id)
+        raise HTTPException(status_code=500, detail="Webhook processing failed")
+    finally:
+        db.close()
+    if notification_user_id:
+        _send_payment_failed_notice_after_commit(notification_user_id)
     return Response(content="ok", media_type="text/plain", status_code=200)
 
 

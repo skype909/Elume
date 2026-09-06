@@ -138,6 +138,8 @@ def _customer_email(obj: Mapping[str, Any]) -> str | None:
 def _projection(event_type: str, obj: Mapping[str, Any]) -> dict[str, Any]:
     customer = _id(obj.get("customer"))
     subscription = _id(obj.get("subscription"))
+    if event_type.startswith("customer.subscription."):
+        subscription = _id(obj.get("id"))
     data: dict[str, Any] = {
         "object_id": _id(obj.get("id")), "customer_id": customer,
         "subscription_id": subscription, "metadata": _metadata(obj.get("metadata")),
@@ -181,6 +183,8 @@ def project_event(event: Any) -> WebhookEnvelope:
         data = {"object_id": data.get("object_id")} if data.get("object_id") else {}
     customer = _id(obj.get("customer"))
     subscription = _id(obj.get("subscription"))
+    if event_type.startswith("customer.subscription."):
+        subscription = _id(obj.get("id"))
     object_id = _id(obj.get("id"))
     entity_key = subscription or customer or object_id or event_id
     envelope = {
