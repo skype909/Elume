@@ -90,6 +90,34 @@ records one `school_domain_linked` audit entry per newly attached teacher.
 Registering a real school domain is a separate production operation requiring
 explicit approval.
 
+## Durable Stripe webhook inbox migration 013
+
+Migration `013` follows exactly ledgered `001`–`012` and creates the
+`stripe_webhook_events` durable inbox. It is schema-only: it does not enable
+Stripe events, process a webhook, contact Stripe, or alter an account. The
+inbox stores only an allowlisted minimized event projection and a SHA-256
+fingerprint; raw payloads, request headers, signatures, payment methods, card
+data and billing addresses must never be stored there.
+
+The runner uses a distinct transaction-scoped advisory lock, validates the
+complete v012 state before changing anything, and records `013` in the same
+transaction as the DDL. Its explicit operations are:
+
+```powershell
+cd backend
+python -m schema.migrate_013_stripe_webhook_inbox --check `
+  --expected-database elume --database-url-env DATABASE_URL
+python -m schema.migrate_013_stripe_webhook_inbox --apply `
+  --confirm-migration-013 --expected-database elume `
+  --database-url-env DATABASE_URL
+python -m schema.migrate_013_stripe_webhook_inbox --verify-applied `
+  --expected-database elume --database-url-env DATABASE_URL
+```
+
+The guarded `--down --confirm-migration-013-down` path is allowed only for an
+otherwise exact v013 database with an empty inbox. It refuses if any webhook
+history exists and never deletes webhook history.
+
 ## CAT4 cohort migration 011
 
 `20260905_011_cat4_cohort_schema` is the first ledger-aware forward migration.
