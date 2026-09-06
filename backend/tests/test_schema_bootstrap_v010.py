@@ -110,10 +110,12 @@ class FinalV010BootstrapTests(unittest.TestCase):
                 self.assertEqual(len(historical_tables), 42)
                 self.assertNotIn("school_email_domains", historical_tables)
                 self.assertNotIn("user_access_grants", historical_tables)
+                self.assertNotIn("stripe_webhook_events", historical_tables)
                 current_orm_tables = set(Base.metadata.tables)
-                self.assertEqual(len(current_orm_tables), 44)
+                self.assertEqual(len(current_orm_tables), 45)
                 self.assertIn("school_email_domains", current_orm_tables)
                 self.assertIn("user_access_grants", current_orm_tables)
+                self.assertIn("stripe_webhook_events", current_orm_tables)
                 self.assertIn("teacher_planner_state", tables)
 
                 versions = tuple(

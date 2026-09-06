@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, CHAR, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 
@@ -128,6 +129,72 @@ class UserAccessGrantModel(Base):
     revoked_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
     revocation_reason = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+
+
+class StripeWebhookEventModel(Base):
+    """Migration-013 durable inbox; event_data is an allowlisted projection only."""
+    __tablename__ = "stripe_webhook_events"
+
+    _postgres_json_object = CheckConstraint(
+        "jsonb_typeof(event_data) = 'object'",
+        name="ck_stripe_webhook_events_event_data_object",
+    ).ddl_if(dialect="postgresql")
+    __table_args__ = (
+        UniqueConstraint("stripe_event_id", name="uq_stripe_webhook_events_stripe_event_id"),
+        CheckConstraint(
+            "stripe_event_id <> '' AND stripe_event_id = btrim(stripe_event_id) AND "
+            "event_type <> '' AND event_type = btrim(event_type) AND "
+            "(entity_key IS NULL OR (entity_key <> '' AND entity_key = btrim(entity_key))) AND "
+            "(stripe_customer_id IS NULL OR (stripe_customer_id <> '' AND stripe_customer_id = btrim(stripe_customer_id))) AND "
+            "(stripe_subscription_id IS NULL OR (stripe_subscription_id <> '' AND stripe_subscription_id = btrim(stripe_subscription_id)))",
+            name="ck_stripe_webhook_events_identifiers",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint("payload_sha256 ~ '^[0-9a-f]{64}$'", name="ck_stripe_webhook_events_payload_sha256").ddl_if(dialect="postgresql"),
+        _postgres_json_object,
+        CheckConstraint("processing_state IN ('received', 'processing', 'processed', 'failed', 'ignored')", name="ck_stripe_webhook_events_state"),
+        CheckConstraint("attempt_count >= 0", name="ck_stripe_webhook_events_attempt_count"),
+        CheckConstraint(
+            "((processing_state = 'received' AND claimed_at IS NULL AND processed_at IS NULL AND "
+            "next_attempt_at IS NULL AND failure_code IS NULL AND failure_detail IS NULL AND last_failure_at IS NULL) OR "
+            "(processing_state = 'processing' AND claimed_at IS NOT NULL AND processed_at IS NULL AND "
+            "next_attempt_at IS NULL AND failure_code IS NULL AND failure_detail IS NULL AND last_failure_at IS NULL) OR "
+            "(processing_state IN ('processed', 'ignored') AND processed_at IS NOT NULL AND "
+            "next_attempt_at IS NULL AND failure_code IS NULL AND failure_detail IS NULL AND last_failure_at IS NULL) OR "
+            "(processing_state = 'failed' AND claimed_at IS NULL AND processed_at IS NULL AND "
+            "failure_code IS NOT NULL AND failure_code <> '' AND failure_code = trim(failure_code) AND "
+            "failure_code ~ '^[a-z0-9_:-]+$' AND "
+            "(failure_detail IS NULL OR (failure_detail <> '' AND failure_detail = trim(failure_detail))) AND "
+            "last_failure_at IS NOT NULL))",
+            name="ck_stripe_webhook_events_state_timestamps",
+        ).ddl_if(dialect="postgresql"),
+        Index("ix_stripe_webhook_events_queue", "processing_state", "next_attempt_at", "received_at", postgresql_where=text("processing_state IN ('received', 'failed')")),
+        Index("ix_stripe_webhook_events_subscription_created", "stripe_subscription_id", text("stripe_created_at DESC")),
+        Index("ix_stripe_webhook_events_customer_created", "stripe_customer_id", text("stripe_created_at DESC")),
+        Index("ix_stripe_webhook_events_user_received", "resolved_user_id", text("received_at DESC")),
+        Index("ix_stripe_webhook_events_entity_created", "entity_key", text("stripe_created_at DESC")),
+    )
+
+    id = Column(BigInteger, primary_key=True)
+    stripe_event_id = Column(String(255), nullable=False)
+    event_type = Column(String(128), nullable=False)
+    stripe_created_at = Column(DateTime(timezone=True), nullable=False)
+    received_at = Column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    stripe_api_version = Column(String(64), nullable=True)
+    livemode = Column(Boolean, nullable=False)
+    entity_key = Column(String(255), nullable=True)
+    stripe_customer_id = Column(String(255), nullable=True)
+    stripe_subscription_id = Column(String(255), nullable=True)
+    resolved_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    payload_sha256 = Column(CHAR(64), nullable=False)
+    event_data = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    processing_state = Column(String(16), nullable=False, server_default=text("'received'"), default="received")
+    attempt_count = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=True)
+    failure_code = Column(String(80), nullable=True)
+    failure_detail = Column(String(500), nullable=True)
+    last_failure_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class UiTranslationOverrideModel(Base):
