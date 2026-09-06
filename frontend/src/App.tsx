@@ -42,6 +42,7 @@ import SchoolAdminPage from "./SchoolAdminPage";
 import SchoolResourcesPage from "./SchoolResourcesPage";
 import SchoolInvitationPage from "./SchoolInvitationPage";
 import PlatformAdminSchoolsPage from "./PlatformAdminSchoolsPage";
+import PlatformAdminEntitlementsPage from "./PlatformAdminEntitlementsPage";
 import SchoolBrand from "./Components/SchoolBrand";
 import InlineNotice from "./Components/InlineNotice";
 import { userFacingError } from "./userFacingError";
@@ -2380,6 +2381,7 @@ export default function App() {
           </button>
           <div className="flex items-center gap-2">
             {currentRole === "platform_admin" && <button onClick={() => navigate("/platform-admin/schools")} className="rounded-xl border-2 border-violet-200 bg-violet-50 px-3 py-1 text-sm font-semibold text-violet-800 hover:bg-violet-100">{t("nav.platformAdmin")}</button>}
+            {currentRole === "platform_admin" && <button onClick={() => navigate("/platform-admin/entitlements")} className="rounded-xl border-2 border-cyan-200 bg-cyan-50 px-3 py-1 text-sm font-semibold text-cyan-800 hover:bg-cyan-100">Access &amp; Billing</button>}
             {currentRole === "school_admin" && <button onClick={() => navigate("/school-admin")} className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">{t("nav.schoolAdmin")}</button>}
             {(currentRole === "teacher" || currentRole === "school_admin") && <button onClick={() => navigate("/school-resources")} className="rounded-xl border-2 border-cyan-200 bg-cyan-50 px-3 py-1 text-sm font-semibold text-cyan-800 hover:bg-cyan-100">{t("nav.schoolResources")}</button>}
             {isGaeilgePreviewUser && <LanguageSwitch />}
@@ -2418,6 +2420,7 @@ export default function App() {
         <Route path="/school-admin" element={<SchoolAdminPage />} />
         <Route path="/school-resources" element={<SchoolResourcesPage />} />
         <Route path="/platform-admin/schools" element={<PlatformAdminSchoolsPage />} />
+        <Route path="/platform-admin/entitlements" element={<PlatformAdminEntitlementsPage />} />
         <Route path="/class/:id/report" element={<ClassReportPage />} />
         <Route path="/class/:id/student-report/:studentId" element={<StudentReportPage />} />
         <Route path="/collab/join/:code" element={<StudentCollabRoomPage />} />

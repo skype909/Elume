@@ -99,6 +99,31 @@ beforeEach(() => {
   window.matchMedia = jest.fn().mockReturnValue({ matches: false, addListener: jest.fn(), removeListener: jest.fn() });
 });
 
+describe("platform access navigation", () => {
+  function setRole(role: "platform_admin" | "teacher" | "school_admin") {
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === "/classes") return Promise.resolve([]);
+      if (path === "/teacher-admin/state") return Promise.resolve({ state: null });
+      if (path === "/auth/me") return Promise.resolve({ role });
+      if (path === "/billing/me") return Promise.resolve({});
+      return Promise.resolve({});
+    });
+  }
+
+  test("shows Access & Billing only to platform administrators", async () => {
+    setRole("platform_admin");
+    renderApp();
+    expect(await screen.findByRole("button", { name: "Access & Billing" })).toBeInTheDocument();
+  });
+
+  test.each(["teacher", "school_admin"] as const)("does not show Access & Billing to %s users", async (role) => {
+    setRole(role);
+    renderApp();
+    await waitFor(() => expect(mockApiFetch).toHaveBeenCalledWith("/auth/me"));
+    expect(screen.queryByRole("button", { name: "Access & Billing" })).not.toBeInTheDocument();
+  });
+});
+
 describe("class-first onboarding integration", () => {
   test.each([
     "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",
