@@ -87,9 +87,7 @@ def _user(**overrides):
 class BillingAccessPayloadTests(unittest.TestCase):
     def _payload(self, account, grants=()):
         db = _BillingDB(grants)
-        with mock.patch.object(main, "_reset_ai_prompt_counter_if_needed"), \
-             mock.patch.object(main, "_maybe_send_payment_failed_final_notice"), \
-             mock.patch.object(main, "_maybe_send_subscription_30_day_notice"):
+        with mock.patch.object(main, "_reset_ai_prompt_counter_if_needed"):
             payload = main.billing_me(db, account)
         self.assertEqual(db.commits, 1)
         return payload
@@ -124,6 +122,16 @@ class BillingAccessPayloadTests(unittest.TestCase):
         self.assertEqual((admin["access_allowed"], admin["access_reason"]), (True, "platform_admin"))
         self.assertEqual((trial["access_allowed"], trial["access_reason"]), (True, "trial_active"))
         self.assertEqual((paid["access_allowed"], paid["access_reason"]), (True, "paid_subscription_active"))
+
+    def test_billing_status_does_not_trigger_email_or_stripe_work(self):
+        urgent = _user(
+            subscription_status="past_due",
+            payment_recovery_deadline_at=datetime.utcnow() + timedelta(hours=1),
+        )
+        with mock.patch.object(main, "_maybe_send_payment_failed_final_notice", side_effect=AssertionError("email work")), \
+             mock.patch.object(main, "_maybe_send_subscription_30_day_notice", side_effect=AssertionError("email work")):
+            payload = self._payload(urgent)
+        self.assertEqual(payload["access_reason"], "payment_recovery_active")
 
     def test_expired_or_revoked_grants_remain_denied(self):
         now = datetime.utcnow()

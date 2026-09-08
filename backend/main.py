@@ -657,8 +657,6 @@ def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, An
         }
     expired = _is_subscription_expired(user)
     payment_overdue = _is_payment_recovery_overdue(user)
-    _maybe_send_payment_failed_final_notice(user)
-    _maybe_send_subscription_30_day_notice(user)
     return {
         "subscription_status": user.subscription_status or "inactive",
         "billing_interval": user.billing_interval,
