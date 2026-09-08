@@ -2331,15 +2331,16 @@ export default function App() {
           billing_onboarding_required?: boolean;
           subscription_expired?: boolean;
           requires_billing_redirect?: boolean;
+          access_allowed?: boolean;
         };
 
         if (cancelled) return;
 
-        if (
+        if (data?.access_allowed !== true && (
           data?.billing_onboarding_required ||
           data?.subscription_expired ||
           data?.requires_billing_redirect
-        ) {
+        )) {
           navigate("/onboarding/billing", { replace: true });
         }
       } catch {

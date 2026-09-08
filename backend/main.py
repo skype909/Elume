@@ -631,6 +631,10 @@ def _is_school_funded_user(db: Session, user: models.UserModel) -> bool:
 def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, Any]:
     _refresh_ai_daily_limit(user)
     _reset_ai_prompt_counter_if_needed(user)
+    grants = db.query(models.UserAccessGrantModel).filter(models.UserAccessGrantModel.user_id == user.id).all()
+    school = getattr(user, "school", None)
+    decision = decide_entitlement(user, school, grants, now=_utcnow())
+    access = {"access_allowed": decision.allowed, "access_reason": decision.code, "access_until": decision.access_until}
     if _is_school_funded_user(db, user):
         return {
             "subscription_status": "school_funded",
@@ -649,6 +653,7 @@ def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, An
             "trial_active": False,
             "prompt_usage_today": int(user.ai_prompt_count or 0),
             "prompt_limit_today": int(user.ai_daily_limit or 0),
+            **access,
         }
     expired = _is_subscription_expired(user)
     payment_overdue = _is_payment_recovery_overdue(user)
@@ -671,6 +676,7 @@ def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, An
         "trial_active": _is_trial_active(user),
         "prompt_usage_today": int(user.ai_prompt_count or 0),
         "prompt_limit_today": int(user.ai_daily_limit or 0),
+        **access,
     }
 
 
@@ -8470,6 +8476,20 @@ def admin_delete_user(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
+    retained_history = (
+        db.query(models.UserAccessGrantModel.id)
+        .filter((models.UserAccessGrantModel.granted_by_user_id == target.id) | (models.UserAccessGrantModel.revoked_by_user_id == target.id))
+        .first()
+        or db.query(models.SchoolEmailDomainModel.id)
+        .filter((models.SchoolEmailDomainModel.created_by_user_id == target.id) | (models.SchoolEmailDomainModel.revoked_by_user_id == target.id))
+        .first()
+        or db.query(models.SchoolAdminAuditLogModel.id)
+        .filter((models.SchoolAdminAuditLogModel.actor_user_id == target.id) | (models.SchoolAdminAuditLogModel.target_user_id == target.id))
+        .first()
+    )
+    if retained_history:
+        raise HTTPException(status_code=409, detail={"code": "USER_RETAINED_HISTORY", "message": "This account has retained administrative history and cannot be permanently deleted."})
+
     owned_classes = (
         db.query(ClassModel)
         .filter(ClassModel.owner_user_id == target.id)
@@ -8516,6 +8536,9 @@ def admin_delete_user(
         db.query(models.EmailVerificationTokenModel).filter(
             models.EmailVerificationTokenModel.user_id == target.id
         ).delete(synchronize_session=False)
+        db.query(models.UserAccessGrantModel).filter(
+            models.UserAccessGrantModel.user_id == target.id
+        ).delete(synchronize_session=False)
 
         target_email = target.email
         db.delete(target)
@@ -8523,6 +8546,9 @@ def admin_delete_user(
     except HTTPException:
         db.rollback()
         raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail={"code": "USER_RETAINED_HISTORY", "message": "This account has retained history and cannot be permanently deleted."})
     except Exception:
         db.rollback()
         logger.exception("Failed to delete user %s", email)

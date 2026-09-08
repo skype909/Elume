@@ -124,6 +124,50 @@ describe("platform access navigation", () => {
   });
 });
 
+describe("server-authoritative billing access", () => {
+  test("an allowed pilot, school, or administrator account is not sent to checkout", async () => {
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === "/classes") return Promise.resolve([]);
+      if (path === "/teacher-admin/state") return Promise.resolve({ state: null });
+      if (path === "/auth/me") return Promise.resolve({ role: "teacher" });
+      if (path === "/billing/me") {
+        return Promise.resolve({ access_allowed: true, billing_onboarding_required: true, subscription_expired: true });
+      }
+      return Promise.resolve({});
+    });
+
+    renderApp();
+    await waitFor(() => expect(mockApiFetch).toHaveBeenCalledWith("/billing/me"));
+    expect(router.__getLocation().pathname).toBe("/");
+  });
+
+  test("a denied account retains the existing billing route", async () => {
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === "/classes") return Promise.resolve([]);
+      if (path === "/teacher-admin/state") return Promise.resolve({ state: null });
+      if (path === "/auth/me") return Promise.resolve({ role: "teacher" });
+      if (path === "/billing/me") return Promise.resolve({ access_allowed: false, billing_onboarding_required: true });
+      return Promise.resolve({});
+    });
+
+    renderApp();
+    await waitFor(() => expect(router.__getLocation().pathname).toBe("/onboarding/billing"));
+  });
+
+  test("an older billing response without entitlement fields retains compatibility behavior", async () => {
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === "/classes") return Promise.resolve([]);
+      if (path === "/teacher-admin/state") return Promise.resolve({ state: null });
+      if (path === "/auth/me") return Promise.resolve({ role: "teacher" });
+      if (path === "/billing/me") return Promise.resolve({ billing_onboarding_required: true });
+      return Promise.resolve({});
+    });
+
+    renderApp();
+    await waitFor(() => expect(router.__getLocation().pathname).toBe("/onboarding/billing"));
+  });
+});
+
 describe("class-first onboarding integration", () => {
   test.each([
     "admin@elume.ie", "peter@elume.ie", "pfitzgerald@preskilkenny.ie",

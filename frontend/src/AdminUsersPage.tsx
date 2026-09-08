@@ -181,6 +181,10 @@ export default function AdminUsersPage() {
         };
       }
 
+      if (res.status === 409 && detail?.code === "USER_RETAINED_HISTORY") {
+        throw new Error("This account has retained administrative history and cannot be permanently deleted.");
+      }
+
       const message =
         (typeof detail === "string" && detail) ||
         detail?.detail ||
@@ -482,6 +486,7 @@ export default function AdminUsersPage() {
               </div>
               <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                 <span className="font-semibold text-slate-900">{deleteConflict.classCount}</span> class{deleteConflict.classCount === 1 ? "" : "es"} will be removed.
+                <p className="mt-2">Any access grants belonging to this account will also be permanently removed.</p>
               </div>
               {deleteConflict.classes.length > 0 && (
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">

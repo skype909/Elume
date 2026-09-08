@@ -18,6 +18,7 @@ type BillingStatus = {
   prompt_usage_today: number;
   prompt_limit_today: number;
   school_funded?: boolean;
+  access_allowed?: boolean;
 };
 
 function daysLeft(value: string | null) {
@@ -50,10 +51,17 @@ export default function BillingOnboardingPage() {
         setBilling(data);
         setError(null);
 
+        if (data?.access_allowed === true) {
+          navigate("/", { replace: true });
+          return;
+        }
+
         const onboardingRequired = !!data?.billing_onboarding_required;
         const nextStatus = (data?.subscription_status || "").toLowerCase();
-        const hasAccess = nextStatus === "active" || nextStatus === "trialing" || nextStatus === "school_funded" || !!data?.school_funded || !!data?.trial_active;
-        if (!onboardingRequired && !hasAccess) {
+        // Older rolling-deployment responses do not contain access_allowed. Keep
+        // their established route decision until the backend contract is present.
+        const hasLegacyAccess = nextStatus === "active" || nextStatus === "trialing" || nextStatus === "school_funded" || !!data?.school_funded || !!data?.trial_active;
+        if (data?.access_allowed === undefined && !onboardingRequired && !hasLegacyAccess) {
           navigate("/", { replace: true });
           return;
         }

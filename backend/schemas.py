@@ -488,6 +488,9 @@ class BillingStatusOut(BaseModel):
     trial_active: bool = False
     prompt_usage_today: int = 0
     prompt_limit_today: int = 0
+    access_allowed: Optional[bool] = None
+    access_reason: Optional[str] = None
+    access_until: Optional[datetime] = None
 
 # -------------------------
 # Teacher Admin State
