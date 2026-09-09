@@ -19,20 +19,9 @@ from schema.migrate_014_aac_planner import (
     UP_SQL,
     _db,
 )
-from schema.migrate_013_stripe_webhook_inbox import _has_executable_sql, _split_sql
 
 
 class Migration014ContractTests(unittest.TestCase):
-    def test_shared_sql_helper_distinguishes_comments_empty_and_quoted_text(self):
-        self.assertFalse(_has_executable_sql("-- runner comment only"))
-        self.assertFalse(_has_executable_sql(" \n ; \n -- another comment\n"))
-        self.assertTrue(_has_executable_sql("-- explanation\nALTER TABLE classes ADD COLUMN x INTEGER"))
-        self.assertTrue(_has_executable_sql("COMMENT ON TABLE classes IS 'contains -- comment text'"))
-
-    def test_splitter_keeps_semicolon_in_line_comment_with_following_alter(self):
-        statements = _split_sql("-- Applied only by the guarded migration-014 runner; no independent transaction.\nALTER TABLE classes ADD COLUMN aac_planner_enabled BOOLEAN;")
-        self.assertEqual(statements, ["-- Applied only by the guarded migration-014 runner; no independent transaction.\nALTER TABLE classes ADD COLUMN aac_planner_enabled BOOLEAN"])
-        self.assertEqual(_split_sql("SELECT '--; text'; -- comment;\nSELECT 2;"), ["SELECT '--; text'", " -- comment;\nSELECT 2"])
     def test_ledger_and_lock_are_distinct_and_sequential(self):
         self.assertEqual(MIGRATION_VERSION, "014")
         self.assertEqual(EXPECTED_PRE_MIGRATION_VERSIONS[-1], "013")

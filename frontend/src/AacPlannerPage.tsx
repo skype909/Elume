@@ -808,7 +808,13 @@ export default function AacPlannerPage({
                 ))
               )}
             </div>
-            {!AAC_REVIEWER_PILOT_DRAFT_ONLY && <button disabled={busy || !selectedDocs.length} onClick={generate} className="mt-4 rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50">{busy ? "Working…" : "Generate draft suggestions"}</button>}
+            <button
+              disabled={AAC_REVIEWER_PILOT_DRAFT_ONLY || busy || !selectedDocs.length}
+              onClick={generate}
+              className="mt-4 rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50"
+            >
+              {busy ? "Working…" : "Generate draft suggestions"}
+            </button>
           </section>
           <section className="order-5 rounded-3xl bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between gap-3">
@@ -1016,14 +1022,14 @@ export default function AacPlannerPage({
                   {reviewStale && <p className="mt-3 text-sm text-red-800">Refresh the saved draft before approving again.</p>}
                   {blockingWarnings.length > 0 && <p className="mt-3 text-sm text-amber-900">Resolve the scheduling warnings shown above before approval.</p>}
                   <div className="mt-4 flex flex-wrap gap-3">
-                    {!AAC_REVIEWER_PILOT_DRAFT_ONLY && <button
+                    <button
                       type="button"
                       disabled={AAC_REVIEWER_PILOT_DRAFT_ONLY || !canApprove}
                       onClick={approve}
                       className="rounded-xl bg-emerald-700 px-4 py-2 font-bold text-white disabled:opacity-50"
                     >
                       {approving ? "Approving…" : "Approve plan and update my calendars"}
-                    </button>}
+                    </button>
                     {reviewStale && <button type="button" disabled={approving || busy || saving} onClick={() => void load()} className="rounded-xl border border-amber-300 bg-white px-4 py-2 font-bold text-amber-900 disabled:opacity-50">Refresh review</button>}
                   </div>
                 </>
