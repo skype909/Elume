@@ -2406,6 +2406,7 @@ export default function App() {
         <Route path="/class/:id/calendar" element={<CalendarPage />} />
         <Route path="/class/:id/admin" element={<ClassAdminPage />} />
         <Route path="/class/:id/admin/cat4" element={<Cat4InsightsPage />} />
+        <Route path="/class/:id/admin/aac" element={<ClassAdminPage />} />
         <Route path="/demo/cat4-analysis" element={<Cat4DemoPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/student" element={<StudentPage />} />

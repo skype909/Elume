@@ -277,6 +277,10 @@ export default function CalendarPage() {
 
   function openEdit(ev: CalendarEvent) {
     setErr(null);
+    if (ev.event_type === "aac" || (ev.description || "").startsWith("[aac:")) {
+      if (ev.class_id) navigate(`/class/${ev.class_id}/admin/aac`);
+      return;
+    }
     setAiPreview(null);
     setEditingEventId(ev.id);
 

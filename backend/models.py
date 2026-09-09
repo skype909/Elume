@@ -369,6 +369,7 @@ class ClassModel(Base):
     class_pin = Column(String, nullable=True)
     is_archived = Column(Boolean, nullable=False, default=False)
     archived_at = Column(DateTime, nullable=True)
+    aac_planner_enabled = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     owner = relationship("UserModel", back_populates="classes")
 
@@ -626,6 +627,106 @@ class CalendarEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+
+# AAC planning is deliberately private and teacher-led.  Draft/revision JSON keeps
+# extracted source facts, AI suggestions and teacher decisions distinct until approval.
+class AacProjectModel(Base):
+    __tablename__ = "aac_projects"
+    __table_args__ = (
+        UniqueConstraint("class_id", name="uq_aac_projects_class"),
+        CheckConstraint("weekly_minutes BETWEEN 5 AND 600", name="ck_aac_projects_weekly_minutes"),
+        CheckConstraint("current_year_stage IN ('fifth_year', 'sixth_year', 'underway')", name="ck_aac_projects_year_stage"),
+        CheckConstraint("status IN ('draft', 'revision_pending', 'approved', 'archived')", name="ck_aac_projects_status"),
+    )
+    id = Column(Integer, primary_key=True)
+    class_id = Column(Integer, ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    subject = Column(String(120), nullable=False)
+    examination_year = Column(Integer, nullable=True)
+    current_year_stage = Column(String(32), nullable=False, default="fifth_year")
+    weekly_minutes = Column(Integer, nullable=False, default=30)
+    status = Column(String(16), nullable=False, default="draft")
+    approved_revision_id = Column(Integer, ForeignKey("aac_plan_revisions.id", ondelete="RESTRICT", use_alter=True, name="fk_aac_projects_approved_revision"), nullable=True)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+
+
+class AacPlanRevisionModel(Base):
+    __tablename__ = "aac_plan_revisions"
+    __table_args__ = (
+        UniqueConstraint("project_id", "version", name="uq_aac_plan_revisions_version"),
+        CheckConstraint("version > 0", name="ck_aac_plan_revisions_version"),
+        CheckConstraint("state IN ('draft', 'approved', 'superseded')", name="ck_aac_plan_revisions_state"),
+        CheckConstraint("(state = 'approved') = (approved_at IS NOT NULL AND approved_by_user_id IS NOT NULL)", name="ck_aac_plan_revisions_approval"),
+    )
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("aac_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    state = Column(String(16), nullable=False, default="draft")
+    source_requirements_json = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
+    plan_json = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict, server_default=text("'{}'"))
+    assumptions_json = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
+    source_document_ids_json = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
+    planning_inputs_json = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict, server_default=text("'{}'"))
+    approved_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+
+
+class AacStudentProgressModel(Base):
+    __tablename__ = "aac_student_progress"
+    __table_args__ = (UniqueConstraint("project_id", "student_id", name="uq_aac_student_progress"),)
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("aac_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    current_stage = Column(String(200), nullable=True)
+    checkpoints_json = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
+    observation = Column(String(500), nullable=True)
+    next_action = Column(String(500), nullable=True)
+    next_check_in_at = Column(DateTime(timezone=True), nullable=True)
+    last_checked_in_at = Column(DateTime(timezone=True), nullable=True)
+    updated_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+
+
+class AacSourceDocumentModel(Base):
+    __tablename__ = "aac_source_documents"
+    __table_args__ = (
+        CheckConstraint("purpose IN ('specification', 'fifth_year_calendar', 'sixth_year_calendar')", name="ck_aac_source_documents_purpose"),
+        CheckConstraint("size_bytes > 0 AND size_bytes <= 15728640", name="ck_aac_source_documents_size"),
+        CheckConstraint("extraction_state IN ('pending', 'extracted', 'unreadable', 'replaced')", name="ck_aac_source_documents_extraction_state"),
+        Index("ix_aac_source_documents_project_purpose", "project_id", "purpose", "created_at"),
+    )
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("aac_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    purpose = Column(String(32), nullable=False)
+    academic_year = Column(String(32), nullable=True)
+    display_filename = Column(String(255), nullable=False)
+    storage_key = Column(String(512), nullable=False, unique=True)
+    content_type = Column(String(100), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    sha256 = Column(CHAR(64), nullable=False)
+    extraction_state = Column(String(16), nullable=False, default="pending", server_default=text("'pending'"))
+    extraction_error = Column(String(300), nullable=True)
+    extracted_sections_json = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
+
+
+class AacPracticalSessionModel(Base):
+    __tablename__ = "aac_practical_sessions"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("aac_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_date = Column(DateTime(timezone=True), nullable=False)
+    stage_name = Column(String(200), nullable=True)
+    logistics_notes = Column(String(1000), nullable=True)
+    allocations_json = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False)
 
 
 class SchoolDay(Base):

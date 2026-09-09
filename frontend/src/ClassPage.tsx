@@ -16,6 +16,7 @@ import UiText from "./Components/UiText";
 import { classColourBackgroundClass } from "./classAppearance";
 import { resolveClassPageColourKey } from "./classAppearanceViews";
 import { formatDublinDateCardParts } from "./dashboardDateFormat";
+import { calendarEventDestination } from "./calendarNavigation";
 
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
@@ -1625,7 +1626,7 @@ export default function ClassPage() {
                           <div
                             key={e.id}
                             className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-100 cursor-pointer"
-                            onClick={() => navigate(`/class/${classId}/calendar`)}
+                            onClick={() => navigate(calendarEventDestination(classId, e))}
                           >
                             <div className="font-semibold">{e.title}</div>
                             <div className="text-xs text-slate-600">

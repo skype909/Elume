@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "./api";
 import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 import InlineNotice from "./Components/InlineNotice";
 import { userFacingError } from "./userFacingError";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
+import AacPlannerPage from "./AacPlannerPage";
 
 const API_BASE = "/api";
 
@@ -96,13 +97,16 @@ const REPORT_INDICATORS = [
 export default function ClassAdminPage() {
     const { t, language } = useUiLanguage();
     const { id } = useParams<{ id: string }>();
+    const location = useLocation();
     const classId = useMemo(() => Number(id), [id]);
     const validClassId = Number.isFinite(classId) && classId > 0;
     const [studentToken, setStudentToken] = useState<string | null>(null);
 
     const navigate = useNavigate();
 
-    const [tab, setTab] = useState<"students" | "tests" | "insights" | "reports">("students");
+    const [tab, setTab] = useState<"students" | "tests" | "insights" | "reports">(
+        location.pathname.endsWith("/admin/aac") ? "insights" : "students"
+    );
 
     const [students, setStudents] = useState<Student[]>([]);
     const [tests, setTests] = useState<Assessment[]>([]);
@@ -1201,6 +1205,10 @@ export default function ClassAdminPage() {
                                 className="mt-4"
                             />
                         )}
+
+                        <section className="mt-5 border-t border-slate-200 pt-5" aria-label="AAC Planner in Class Insights">
+                            <AacPlannerPage embedded />
+                        </section>
 
                         <div className="mt-5 grid gap-4 md:grid-cols-3">
                             <div className="rounded-3xl border-2 border-slate-200 bg-white p-4">

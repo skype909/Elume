@@ -1,0 +1,1125 @@
+import React, {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { apiFetch } from "./api";
+
+const API = "/api";
+type Project = {
+  id: number;
+  title: string;
+  subject: string;
+  weekly_minutes: number;
+  status: string;
+};
+
+/* Historical pre-Insights prototype retained only as review context; it is not a component or route. */
+/*
+  const { id } = useParams(); const classId = Number(id); const navigate = useNavigate();
+  const [enabled, setEnabled] = useState<boolean | null>(null); const [project, setProject] = useState<Project | null>(null);
+  const [title, setTitle] = useState("Physics in Practice"); const [subject, setSubject] = useState("Physics"); const [weekly, setWeekly] = useState(30);
+  const [saving, setSaving] = useState(false); const [error, setError] = useState<string | null>(null);
+  const load = async () => { try { const data = await apiFetch(`${API}/classes/${classId}/aac`); setEnabled(data.enabled === true); setProject(data.project ?? null); } catch (e: any) { setError(e?.message || "We couldn’t load AAC Planner."); } };
+  useEffect(() => { if (Number.isInteger(classId)) void load(); }, [classId]);
+  const warnings = project?.revision?.warnings ?? []; const stages = project?.revision?.plan?.stages ?? [];
+  const create = async () => { setSaving(true); setError(null); try { setProject(await apiFetch(`${API}/classes/${classId}/aac/projects`, { method:"POST", body: JSON.stringify({title, subject, weekly_minutes: weekly, current_year_stage:"fifth_year"}) })); } catch (e:any) { setError(e?.message || "We couldn’t create the AAC draft."); } finally { setSaving(false); } };
+  const approve = async () => { setSaving(true); setError(null); try { setProject(await apiFetch(`${API}/classes/${classId}/aac/approve`, {method:"POST"})); } catch (e:any) { setError(e?.message || "Resolve the planning checks before approval."); } finally { setSaving(false); } };
+  return <main className="min-h-screen bg-gradient-to-b from-cyan-50 via-white to-emerald-50 p-5 text-slate-800"><section className="mx-auto max-w-5xl space-y-5">
+    <button className="text-sm font-semibold text-teal-700" onClick={() => navigate(`/class/${classId}/admin/cat4`)}>← Back to Class Insights</button>
+    <header className="rounded-3xl border border-cyan-100 bg-white p-6 shadow-sm"><p className="text-sm font-bold text-teal-700">Class Insights · optional</p><h1 className="mt-1 text-3xl font-black">AAC Planner</h1><p className="mt-2 max-w-3xl text-slate-600">Teacher-led planning for Additional Assessment Component coursework. Suggestions and extracted information remain drafts until you explicitly approve a plan.</p></header>
+    {error && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800">{error}</div>}
+    {enabled === false && <section className="rounded-3xl bg-white p-6 shadow-sm"><h2 className="text-xl font-extrabold">Enable AAC Planner for this class</h2><p className="mt-2 text-slate-600">AAC is off by default. Enabling it does not create calendar entries or share individual student information.</p><button disabled={saving} className="mt-4 rounded-xl bg-teal-600 px-4 py-2 font-bold text-white disabled:opacity-60" onClick={async()=>{setSaving(true); await apiFetch(`${API}/classes/${classId}/aac/enabled`,{method:"PUT",body:JSON.stringify({enabled:true})}); setSaving(false); void load();}}>Enable AAC Planner</button></section>}
+    {enabled && !project && <section className="rounded-3xl bg-white p-6 shadow-sm"><h2 className="text-xl font-extrabold">Start a teacher draft</h2><div className="mt-4 grid gap-3 md:grid-cols-3"><input aria-label="Project title" value={title} onChange={e=>setTitle(e.target.value)} className="rounded-xl border p-3"/><input aria-label="Subject" value={subject} onChange={e=>setSubject(e.target.value)} className="rounded-xl border p-3"/><label className="rounded-xl border p-2 text-sm">Weekly AAC minutes<input aria-label="Weekly AAC minutes" type="number" min="5" max="600" value={weekly} onChange={e=>setWeekly(Number(e.target.value))} className="ml-2 w-20 p-1"/></label></div><p className="mt-3 text-sm text-slate-600">Physics starts with a planning template only; it is not verified specification guidance. Add official documents and confirm requirements/deadlines before approval.</p><button disabled={saving} onClick={create} className="mt-4 rounded-xl bg-teal-600 px-4 py-2 font-bold text-white">Create draft</button></section>}
+    {project && <><section className="rounded-3xl bg-white p-6 shadow-sm"><p className="text-sm font-bold text-teal-700">{project.status === "approved" ? "Approved plan" : "Teacher draft"}</p><h2 className="text-2xl font-black">{project.title}</h2><p>{project.subject} · {project.weekly_minutes} minutes weekly</p><p className="mt-4 text-sm text-slate-600">Source requirements, AI suggestions and teacher decisions are kept separate. No plan is published to the calendar until approval.</p></section><section className="rounded-3xl bg-white p-6 shadow-sm"><h3 className="font-extrabold">Proposed stages</h3>{stages.length ? <ol className="mt-3 space-y-2">{stages.map((s:any,i:number)=><li key={i} className="rounded-xl bg-slate-50 p-3"><b>{i+1}. {s.name}</b><span className="ml-2 text-sm text-slate-500">{s.estimated_minutes ? `${s.estimated_minutes} minutes` : "Time to confirm"} · {s.completion_date || "Date to confirm"}</span></li>)}</ol> : <p className="mt-2 text-slate-600">Add reviewed stages and checkpoints before approval.</p>}</section><section className="rounded-3xl border border-amber-200 bg-amber-50 p-6"><h3 className="font-extrabold">Review before approval</h3>{warnings.length ? <ul className="mt-2 list-disc pl-5">{warnings.map(w=><li key={w}>{w}</li>)}</ul> : <p className="mt-2">Deadline, 14-day buffer and capacity checks are ready. Approval will create or update linked class calendar milestones.</p>}<button disabled={saving || warnings.length>0} onClick={approve} className="mt-4 rounded-xl bg-emerald-700 px-4 py-2 font-bold text-white disabled:opacity-50">Approve plan</button></section></>}
+  </section></main>;
+*/
+
+type SourceDocument = {
+  id: number;
+  purpose: string;
+  display_filename: string;
+  extraction_state: string;
+  extraction_error?: string | null;
+  sections: { reference: string; text: string }[];
+};
+type DeadlineCandidate = {
+  source_document_id: number;
+  source_reference: string;
+  date: string;
+  meaning: string;
+  supporting_excerpt: string;
+};
+type DeadlineReview = {
+  status: "specification_needed" | "extraction_pending" | "extraction_failed" | "no_clear_deadline" | "conflicting_candidates" | "candidate";
+  candidates: DeadlineCandidate[];
+  specifications: { id: number; display_filename: string; extraction_state: string; extraction_error?: string | null }[];
+  stage_structure?: { source_document_id: number; source_reference: string; number: number; name: string }[];
+  source_tasks?: { source_document_id: number; source_reference: string; name: string }[];
+};
+type Checkpoint = { id: string; text: string };
+type Stage = {
+  id: string;
+  name: string;
+  estimated_minutes?: number | null;
+  completion_date?: string | null;
+  checkpoints: Checkpoint[];
+};
+type Revision = {
+  id: number;
+  state: string;
+  review_token?: string;
+  source_requirements: any[];
+  assumptions: string[];
+  source_document_ids: number[];
+  planning_inputs: Record<string, any>;
+  schedule?: { capacity_minutes?: number; estimated_minutes?: number; completion_target?: string; warnings?: string[]; stages?: { id: string; name: string; completion_date?: string | null; proposed_completion_date?: string | null }[] };
+  plan: { stages?: any[]; candidate_deadlines?: any[]; interruptions?: any[] };
+};
+type WorkspaceProject = Project & {
+  examination_year?: number | null;
+  current_year_stage?: string;
+  approved_revision?: Revision | null;
+  revision?: Revision | null;
+};
+export type AacPlannerPageProps = { embedded?: boolean };
+
+const sourcePurpose: Record<string, string> = {
+  specification: "AAC specification / brief / guidance",
+  fifth_year_calendar: "Fifth Year school calendar",
+  sixth_year_calendar: "Sixth Year school calendar",
+};
+const stableId = () =>
+  globalThis.crypto?.randomUUID?.() ||
+  `aac-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const AAC_REVIEWER_PILOT_DRAFT_ONLY = true;
+const defaultInputs = () => ({
+  weekly_minutes: 30,
+  fifth_year_aac_minutes: 30,
+  sixth_year_aac_minutes: 30,
+  fifth_year_lessons_per_week: "",
+  fifth_year_minutes_per_lesson: "",
+  sixth_year_lessons_per_week: "",
+  sixth_year_minutes_per_lesson: "",
+  fifth_year_end: "",
+  sixth_year_restart: "",
+  planned_start: "",
+  normal_finish_target: "",
+  final_classroom_deadline: "",
+  controlling_deadline: "",
+  school_submission_window: "",
+  internal_completion_target: "",
+  sixth_year_calendar_status: "provisional",
+});
+const normalizeStages = (value: any): Stage[] =>
+  Array.isArray(value)
+    ? value.map((stage) => ({
+        id: stage.id || stableId(),
+        name: stage.name || "Untitled stage",
+        estimated_minutes: stage.estimated_minutes ?? null,
+        completion_date: stage.completion_date || "",
+        checkpoints: Array.isArray(stage.checkpoints)
+          ? stage.checkpoints.map((item: any) => ({
+              id: item.id || stableId(),
+              text: typeof item === "string" ? item : item.text || "",
+            }))
+          : [],
+      }))
+    : [];
+
+/** A class-scoped private workspace; it can be embedded in ordinary Class Admin. */
+export default function AacPlannerPage({
+  embedded = false,
+}: AacPlannerPageProps) {
+  const { id } = useParams();
+  const classId = Number(id);
+  const navigate = useNavigate();
+  const requestVersion = useRef(0);
+  const currentClassId = useRef(classId);
+  currentClassId.current = classId;
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [pilotAccess, setPilotAccess] = useState<boolean | null>(null);
+  const [project, setProject] = useState<WorkspaceProject | null>(null);
+  const [documents, setDocuments] = useState<SourceDocument[]>([]);
+  const [deadlineReview, setDeadlineReview] = useState<DeadlineReview | null>(null);
+  const [suggestedDeadline, setSuggestedDeadline] = useState<DeadlineCandidate | null>(null);
+  const [title, setTitle] = useState("Physics in Practice");
+  const [subject, setSubject] = useState("Physics");
+  const [examYear, setExamYear] = useState("");
+  const [currentStage, setCurrentStage] = useState("fifth_year");
+  const [inputs, setInputs] = useState<Record<string, any>>(defaultInputs);
+  const [stages, setStages] = useState<Stage[]>([]);
+  const [requirements, setRequirements] = useState<any[]>([]);
+  const [assumptions, setAssumptions] = useState<string[]>([]);
+  const [selectedDocs, setSelectedDocs] = useState<number[]>([]);
+  const [file, setFile] = useState<File | null>(null);
+  const [purpose, setPurpose] = useState("specification");
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [reviewStale, setReviewStale] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
+  const [showSourceStagesDialog, setShowSourceStagesDialog] = useState(false);
+  const [removeDocument, setRemoveDocument] = useState<SourceDocument | null>(null);
+  const hydrate = useCallback((next: WorkspaceProject | null) => {
+    setProject(next);
+    const revision = next?.revision;
+    if (!revision) return;
+    setStages(normalizeStages(revision.plan?.stages));
+    setRequirements(revision.source_requirements || []);
+    setAssumptions(revision.assumptions || []);
+    setSelectedDocs(revision.source_document_ids || []);
+    setInputs({
+      ...defaultInputs(),
+      weekly_minutes: next?.weekly_minutes || 30,
+      ...(revision.planning_inputs || {}),
+      // Old drafts used this as the final classroom deadline. Keep that value
+      // and make it visible rather than changing its meaning.
+      final_classroom_deadline: revision.planning_inputs?.final_classroom_deadline || revision.planning_inputs?.internal_completion_target || "",
+    });
+    setDirty(false);
+    setReviewStale(false);
+  }, []);
+  const applyDeadlineReview = useCallback((review: DeadlineReview | null) => {
+    const candidates = review && Array.isArray(review.candidates) ? review.candidates : [];
+    setDeadlineReview(review ? { ...review, candidates, stage_structure: Array.isArray(review.stage_structure) ? review.stage_structure : [], source_tasks: Array.isArray(review.source_tasks) ? review.source_tasks : [] } : null);
+    setSuggestedDeadline(review?.status === "candidate" && candidates.length ? candidates[0] : null);
+  }, []);
+  const load = useCallback(async () => {
+    const version = ++requestVersion.current;
+    setError(null);
+    applyDeadlineReview(null);
+    try {
+      const response = await apiFetch(`${API}/classes/${classId}/aac`);
+      if (version !== requestVersion.current) return;
+      setPilotAccess(true);
+      const nextDocuments =
+        response.enabled && response.project
+          ? await apiFetch(`${API}/classes/${classId}/aac/documents`)
+          : [];
+      if (version !== requestVersion.current) return;
+      setEnabled(response.enabled === true);
+      hydrate(response.project || null);
+      setDocuments(nextDocuments);
+      if (response.enabled && response.project) {
+        try {
+          const review = await apiFetch(`${API}/classes/${classId}/aac/deadline-candidates`);
+          if (version === requestVersion.current) applyDeadlineReview(review);
+        } catch (err: any) {
+          if (version === requestVersion.current) {
+            applyDeadlineReview(null);
+            setError(err?.message || "We couldn't check the extracted specification for a deadline.");
+          }
+        }
+      } else {
+        applyDeadlineReview(null);
+      }
+    } catch (err: any) {
+      if (version === requestVersion.current)
+        setError(err?.message || "We couldn’t load AAC Planner.");
+    }
+  }, [applyDeadlineReview, classId, hydrate]);
+  const refreshDeadlineReview = async () => {
+    const review = await apiFetch(`${API}/classes/${classId}/aac/deadline-candidates`);
+    if (currentClassId.current === classId) applyDeadlineReview(review);
+  };
+  useEffect(() => {
+    if (Number.isFinite(classId) && classId > 0) void load();
+  }, [classId, load]);
+  const changeInput = (key: string, value: any) => {
+    setInputs((current) => ({ ...current, [key]: value }));
+    setDirty(true);
+  };
+  const enable = async () => {
+    setBusy(true);
+    try {
+      await apiFetch(`${API}/classes/${classId}/aac/enabled`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled: true }),
+      });
+      await load();
+    } catch (err: any) {
+      setError(err?.message || "AAC Planner couldn’t be enabled.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await apiFetch(`${API}/classes/${classId}/aac/projects`, {
+        method: "POST",
+        body: JSON.stringify({
+          title,
+          subject,
+          examination_year: examYear ? Number(examYear) : null,
+          current_year_stage: currentStage,
+          weekly_minutes: Number(inputs.weekly_minutes) || 30,
+        }),
+      });
+      hydrate(next);
+      setNotice("Private draft created. Add sources or edit it manually.");
+    } catch (err: any) {
+      setError(err?.message || "We couldn’t create the AAC draft.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const save = async () => {
+    if (!project?.revision) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await apiFetch(`${API}/classes/${classId}/aac/revision`, {
+        method: "PUT",
+        body: JSON.stringify({
+          source_requirements: requirements,
+          plan: {
+            stages,
+            candidate_deadlines:
+              project.revision.plan?.candidate_deadlines || [],
+            interruptions: project.revision.plan?.interruptions || [],
+          },
+          assumptions,
+          source_document_ids: selectedDocs,
+          planning_inputs: inputs,
+        }),
+      });
+      hydrate(next);
+      setNotice(
+        "Draft saved. The approved plan and calendar remain unchanged.",
+      );
+    } catch (err: any) {
+      setError(err?.message || "Your draft wasn’t saved. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const approve = async () => {
+    const revision = project?.revision;
+    if (!revision?.review_token || revision.state !== "draft" || dirty || reviewStale) return;
+    const approvalClassId = classId;
+    const approvalVersion = ++requestVersion.current;
+    setApproving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const next = await apiFetch(`${API}/classes/${approvalClassId}/aac/approve`, {
+        method: "POST",
+        body: JSON.stringify({ revision_id: revision.id, review_token: revision.review_token }),
+      });
+      if (approvalVersion !== requestVersion.current || currentClassId.current !== approvalClassId) return;
+      hydrate(next);
+      await load();
+      if (currentClassId.current !== approvalClassId) return;
+      setNotice("Plan approved. Milestones are now in your teacher class and all-events calendars; students cannot view this plan.");
+    } catch (err: any) {
+      if (approvalVersion !== requestVersion.current || currentClassId.current !== approvalClassId) return;
+      if (err?.status === 409) {
+        setReviewStale(true);
+        setError("This review is no longer current. Refresh the saved draft, review it again, then approve.");
+      } else {
+        setError(err?.message || "The plan could not be approved. Your saved draft and existing approved plan are unchanged.");
+      }
+    } finally {
+      setApproving(false);
+    }
+  };
+  const applySuggestedDates = () => {
+    if (dirty) { setError("Save or refresh your edited draft before applying schedule suggestions."); return; }
+    const scheduleStages = project?.revision?.schedule?.stages || [];
+    const proposedById = new Map(scheduleStages.map((stage) => [stage.id, stage.proposed_completion_date]));
+    const nextStages = stages.map((stage) => {
+      const suggested = proposedById.get(stage.id);
+      if (!stage.completion_date && suggested) return { ...stage, completion_date: suggested };
+      return stage;
+    });
+    const applied = nextStages.filter((stage, index) => stage.completion_date !== stages[index].completion_date).length;
+    setStages(nextStages);
+    if (applied) { setDirty(true); setNotice("Suggested dates are now in your editable draft. Save draft to keep them."); }
+    else setNotice("There are no current suggested dates to apply.");
+  };
+  const confirmOfficialDeadline = (candidate?: any) => {
+    const value = candidate?.date || inputs.controlling_deadline;
+    if (!value) { setError("Enter an SEC completion / hand-in deadline before confirming it."); return; }
+    setInputs((current) => ({ ...current, controlling_deadline: value, official_deadline_confirmed: true, official_deadline_source: candidate ? { source_document_id: candidate.source_document_id, source_reference: candidate.source_reference, supporting_excerpt: candidate.supporting_excerpt } : null }));
+    setSuggestedDeadline(null);
+    setDirty(true); setReviewStale(true); setNotice("Deadline confirmed in this editable draft. Save it before approval.");
+  };
+  const upload = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    const form = new FormData();
+    form.append("purpose", purpose);
+    form.append(
+      "academic_year",
+      purpose === "fifth_year_calendar"
+        ? "fifth_year"
+        : purpose === "sixth_year_calendar"
+          ? "sixth_year"
+          : "",
+    );
+    form.append("file", file);
+    try {
+      await apiFetch(`${API}/classes/${classId}/aac/documents`, {
+        method: "POST",
+        body: form,
+      });
+      setFile(null);
+      setDocuments(await apiFetch(`${API}/classes/${classId}/aac/documents`));
+      await refreshDeadlineReview();
+      setNotice(
+        "Document extracted privately. Select it when you are ready for suggestions.",
+      );
+    } catch (err: any) {
+      setError(
+        err?.message ||
+          "Use a text-readable PDF or DOCX under 15 MB, or enter information manually.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const removeSource = async () => {
+    if (!removeDocument) return;
+    setBusy(true); setError(null);
+    try { const result = await apiFetch(`${API}/classes/${classId}/aac/documents/${removeDocument.id}`, { method: "DELETE" }); setDocuments(await apiFetch(`${API}/classes/${classId}/aac/documents`)); await refreshDeadlineReview(); setSelectedDocs((items) => items.filter((id) => id !== removeDocument.id)); setDirty(true); setReviewStale(true); setNotice(result.message); }
+    catch (err: any) { setError(err?.message || "The source was kept. Please try again."); }
+    finally { setBusy(false); setRemoveDocument(null); }
+  };
+  const generate = async () => {
+    if (!selectedDocs.length) {
+      setError("Choose at least one readable source document first.");
+      return;
+    }
+    if (dirty) { setShowSuggestionDialog(true); return; }
+    await runGenerate();
+  };
+  const runGenerate = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await apiFetch(`${API}/classes/${classId}/aac/proposals`, {
+        method: "POST",
+        body: JSON.stringify({
+          document_ids: selectedDocs,
+          planning_inputs: inputs,
+        }),
+      });
+      hydrate(next);
+      setNotice(
+        "Suggestions are ready for review. Nothing has been approved or added to the calendar.",
+      );
+    } catch (err: any) {
+      setError(
+        err?.message ||
+          "Suggestions aren’t available right now. Your manual draft is still available.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const updateStage = (id: string, patch: Partial<Stage>) => {
+    setStages((current) =>
+      current.map((stage) =>
+        stage.id === id ? { ...stage, ...patch } : stage,
+      ),
+    );
+    setDirty(true);
+  };
+  const moveStage = (index: number, by: -1 | 1) => {
+    const target = index + by;
+    if (target < 0 || target >= stages.length) return;
+    const next = [...stages];
+    [next[index], next[target]] = [next[target], next[index]];
+    setStages(next);
+    setDirty(true);
+  };
+  const finalClassroomDeadline = inputs.final_classroom_deadline || inputs.internal_completion_target;
+  // A source finding is shown in the field for review, but does not become a
+  // planning input until the teacher explicitly confirms it.
+  const displayedControllingDeadline = inputs.controlling_deadline || (!inputs.official_deadline_confirmed ? suggestedDeadline?.date || "" : "");
+  const buffer =
+    inputs.controlling_deadline && finalClassroomDeadline
+      ? Math.round(
+          (new Date(inputs.controlling_deadline).getTime() -
+            new Date(finalClassroomDeadline).getTime()) /
+            86400000,
+        )
+      : null;
+  const catchUpDays = inputs.normal_finish_target && finalClassroomDeadline
+    ? Math.round((new Date(finalClassroomDeadline).getTime() - new Date(inputs.normal_finish_target).getTime()) / 86400000)
+    : null;
+  const revision = project?.revision;
+  const blockingWarnings = revision?.schedule?.warnings || [];
+  const canApprove = Boolean(
+    revision &&
+      revision.state === "draft" &&
+      revision.review_token &&
+      !dirty &&
+      !reviewStale &&
+      !blockingWarnings.length &&
+      !busy &&
+      !saving &&
+      !approving,
+  );
+  const page = (
+    <>
+      {!embedded && (
+        <button
+          onClick={() => navigate(`/class/${classId}/admin`)}
+          className="text-sm font-bold text-teal-700"
+        >
+          ← Back to Class Insights
+        </button>
+      )}
+      <header className="rounded-3xl border border-cyan-100 bg-white p-6 shadow-sm">
+        <p className="text-sm font-bold text-teal-700">
+          Class Insights · optional
+        </p>
+        <h1 className="mt-1 text-3xl font-black">AAC Planner</h1>
+        <p className="mt-2 max-w-3xl text-slate-600">
+          Teacher-led coursework planning. Sources and suggestions stay private
+          drafts until a later explicit approval step.
+        </p>
+      </header>
+      {error && (
+        <div
+          role="alert"
+          className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800"
+        >
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div
+          role="status"
+          className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900"
+        >
+          {notice}
+        </div>
+      )}
+      {showSuggestionDialog && <div role="dialog" aria-modal="true" aria-labelledby="suggestion-dialog-title" className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm"><h2 id="suggestion-dialog-title" className="text-lg font-extrabold">Update draft suggestions?</h2><p className="mt-2 text-sm">Updating will replace the current unapproved source requirements, suggested dates and stages. Unsaved teacher edits in that draft may be lost. Your approved plan is not changed.</p><div className="mt-4 flex gap-3"><button type="button" onClick={() => setShowSuggestionDialog(false)} className="rounded-xl border px-4 py-2 font-bold">Keep current draft</button><button type="button" onClick={() => { setShowSuggestionDialog(false); void runGenerate(); }} className="rounded-xl bg-violet-700 px-4 py-2 font-bold text-white">Update suggestions</button></div></div>}
+      {removeDocument && <div role="dialog" aria-modal="true" aria-labelledby="remove-document-title" className="rounded-3xl border border-red-200 bg-red-50 p-5 shadow-sm"><h2 id="remove-document-title" className="text-lg font-extrabold">Remove this source?</h2><p className="mt-2 text-sm">{removeDocument.display_filename} will no longer support new suggestions. If it is used by an approved plan, it will be removed from active sources but retained for that history.</p><div className="mt-4 flex gap-3"><button type="button" onClick={() => setRemoveDocument(null)} className="rounded-xl border px-4 py-2 font-bold">Cancel</button><button type="button" disabled={busy} onClick={() => void removeSource()} className="rounded-xl bg-red-700 px-4 py-2 font-bold text-white">Remove source</button></div></div>}
+      {enabled === false && (
+        <section className="rounded-3xl bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-extrabold">
+            Enable AAC Planner for this class
+          </h2>
+          <p className="mt-2 text-slate-600">
+            AAC is off by default. It does not create calendar entries or share
+            individual student information.
+          </p>
+          <button
+            disabled={busy}
+            onClick={enable}
+            className="mt-4 rounded-xl bg-teal-600 px-4 py-2 font-bold text-white disabled:opacity-60"
+          >
+            Enable AAC Planner
+          </button>
+        </section>
+      )}
+      {enabled && !project && (
+        <section className="rounded-3xl bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-extrabold">
+            Set up a private teacher draft
+          </h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <input
+              aria-label="Project title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="rounded-xl border p-3"
+            />
+            <input
+              aria-label="Subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              className="rounded-xl border p-3"
+            />
+            <input
+              aria-label="Examination year"
+              value={examYear}
+              onChange={(e) => setExamYear(e.target.value)}
+              placeholder="Examination year (optional)"
+              className="rounded-xl border p-3"
+            />
+            <select
+              aria-label="Current project stage"
+              value={currentStage}
+              onChange={(e) => setCurrentStage(e.target.value)}
+              className="rounded-xl border p-3"
+            >
+              <option value="fifth_year">Fifth Year</option>
+              <option value="sixth_year">Sixth Year</option>
+              <option value="already_underway">Already underway</option>
+            </select>
+            <label className="rounded-xl border p-3 text-sm">
+              Weekly AAC minutes{" "}
+              <input
+                aria-label="Weekly AAC minutes"
+                type="number"
+                min="5"
+                max="600"
+                value={inputs.weekly_minutes}
+                onChange={(e) =>
+                  changeInput("weekly_minutes", Number(e.target.value))
+                }
+                className="ml-2 w-20"
+              />
+            </label>
+          </div>
+          <p className="mt-3 text-sm text-slate-600">
+            30 minutes is the editable default. Physics starts with a planning
+            template only, not verified official requirements.
+          </p>
+          <button
+            disabled={busy || !title.trim() || !subject.trim()}
+            onClick={create}
+            className="mt-4 rounded-xl bg-teal-600 px-4 py-2 font-bold text-white disabled:opacity-60"
+          >
+            Create private draft
+          </button>
+        </section>
+      )}
+      {project && (
+        <div className="flex flex-col gap-5">
+          <section className="order-6 rounded-3xl border border-violet-100 bg-violet-50 p-6">
+            <h3 className="text-lg font-extrabold">Schedule preview</h3>
+            <p className="mt-1 text-sm text-slate-700">Estimated workload: {project.revision?.schedule?.estimated_minutes ?? "—"} minutes. Available estimated capacity: {project.revision?.schedule?.capacity_minutes ?? "—"} minutes.</p>
+            <p className="mt-1 text-sm text-slate-700">Internal target: {project.revision?.schedule?.completion_target || "Confirm a target"}. {buffer === null ? "Confirm the 14-day buffer." : `${buffer}-day buffer.`}</p>
+            {dirty ? <p className="mt-3 text-sm text-amber-900">Schedule suggestions are stale after your edits. Save draft to refresh them.</p> : <>{project.revision?.schedule?.warnings?.length ? <ul className="mt-3 list-disc pl-5 text-sm text-amber-900">{project.revision.schedule.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
+            <div className="mt-3 space-y-1 text-sm text-slate-700">{(project.revision?.schedule?.stages || []).map((stage) => <div key={stage.id}>{stage.name}: {stage.completion_date || stage.proposed_completion_date || "No feasible proposed date"}</div>)}</div></>}
+            <button type="button" disabled={busy || saving || dirty} onClick={applySuggestedDates} className="mt-4 rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50">Apply suggested dates to draft</button>
+            <p className="mt-2 text-xs text-slate-600">This changes only the editable draft. It does not approve a plan or write calendar events.</p>
+          </section>
+          <section className="order-2 rounded-3xl bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold text-teal-700">
+                  {project.approved_revision
+                    ? "Proposed revision"
+                    : "Unapproved teacher draft"}
+                </p>
+                <h2 className="text-2xl font-black">{project.title}</h2>
+                <p className="text-slate-600">
+                  {project.subject} · {inputs.weekly_minutes || 30} minutes
+                  weekly
+                </p>
+              </div>
+              <button
+                disabled={!dirty || saving || busy}
+                onClick={save}
+                className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save draft"}
+              </button>
+            </div>
+            <p className="mt-3 text-sm text-slate-600">
+              Saving never replaces the approved plan or creates calendar
+              events.
+            </p>
+          </section>
+          <section className="order-3 rounded-3xl bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-extrabold">Key dates</h3>
+            <p className="mt-1 text-sm text-slate-600">Teacher choices are editable and never silently moved.</p>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <DateField emphasis label="SEC completion / hand-in deadline" help="The confirmed official deadline for students to complete or hand in this AAC. Check the specification or brief before confirming it." value={displayedControllingDeadline} onChange={(value) => { setSuggestedDeadline(null); changeInput("controlling_deadline", value); changeInput("official_deadline_confirmed", false); }} />
+              <DateField label="When will you start?" help="The date you plan to begin AAC work with this class." value={inputs.planned_start} onChange={(value) => changeInput("planned_start", value)} />
+              <DateField label="When should students aim to finish?" help="Your normal classroom finish date, leaving time for students who need to catch up before your final classroom deadline." value={inputs.normal_finish_target} onChange={(value) => changeInput("normal_finish_target", value)} />
+              <DateField label="Final classroom deadline" help="Your latest classroom deadline for outstanding work and catch-up. Leave at least 14 calendar days before the SEC deadline." value={finalClassroomDeadline} onChange={(value) => { changeInput("final_classroom_deadline", value); changeInput("internal_completion_target", value); }} />
+            </div>
+            <aside className="mt-3 rounded-2xl border border-teal-100 bg-teal-50 p-4 text-sm" aria-live="polite">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="font-extrabold text-teal-950">Document deadline review</h4>
+                <button type="button" disabled={busy} onClick={async () => { try { setError(null); await refreshDeadlineReview(); } catch (err: any) { setError(err?.message || "We couldn't check the extracted specification for a deadline."); } }} className="rounded-lg border border-teal-300 bg-white px-3 py-1 font-bold text-teal-900 disabled:opacity-50">Check document for deadline</button>
+              </div>
+              {deadlineReview === null && <p className="mt-2 text-slate-600">Checking extracted specifications. This does not change stages or generate suggestions.</p>}
+              {deadlineReview?.status === "specification_needed" && <p className="mt-2 text-slate-700">A readable AAC specification or brief is needed before Elume can check an official deadline. School calendars do not supply this date.</p>}
+              {deadlineReview?.status === "extraction_pending" && <p className="mt-2 text-slate-700">Your specification is still being extracted. Check again when it is marked extracted.</p>}
+              {deadlineReview?.status === "extraction_failed" && <p className="mt-2 text-amber-900">The specification could not be read. Upload a text-readable copy or enter the SEC date manually.</p>}
+              {deadlineReview?.status === "no_clear_deadline" && <p className="mt-2 text-slate-700">No clear student completion / hand-in deadline was found in the extracted specification. Enter the date manually and confirm it after checking the brief.</p>}
+              {deadlineReview?.status === "conflicting_candidates" && <p className="mt-2 text-amber-900">The specification contains conflicting possible deadlines. Review the source excerpts below and select or enter the correct SEC date.</p>}
+              {suggestedDeadline && !inputs.controlling_deadline && !inputs.official_deadline_confirmed && <p className="mt-2 font-bold text-teal-950">Suggested from your specification — please confirm.</p>}
+              {(deadlineReview?.candidates || []).map((candidate, index) => {
+                const filename = documents.find((document) => document.id === candidate.source_document_id)?.display_filename || `source ${candidate.source_document_id}`;
+                const differsFromConfirmed = Boolean(inputs.official_deadline_confirmed && inputs.controlling_deadline && inputs.controlling_deadline !== candidate.date);
+                return <article key={`${candidate.source_document_id}-${candidate.source_reference}-${index}`} className="mt-3 rounded-xl bg-white p-3 text-slate-800 shadow-sm">
+                  <p><b>Suggested SEC completion / hand-in date: {candidate.date}</b></p>
+                  <p className="mt-1">Suggested from {filename}, {candidate.source_reference}</p>
+                  <p className="mt-2 rounded-lg bg-slate-50 p-2 text-slate-700">“{candidate.supporting_excerpt}”</p>
+                  {differsFromConfirmed && <p className="mt-2 text-amber-900">Your confirmed date ({inputs.controlling_deadline}) stays unchanged unless you explicitly use this suggestion.</p>}
+                  <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => confirmOfficialDeadline(candidate)} className="rounded-lg bg-teal-700 px-3 py-1 font-bold text-white">{differsFromConfirmed ? "Use suggested date" : "Confirm date"}</button><button type="button" onClick={() => { changeInput("official_deadline_confirmed", false); setNotice("Change the date in Key dates, then confirm it before approval."); }} className="rounded-lg border border-slate-300 px-3 py-1 font-bold">Change date</button></div>
+                </article>;
+              })}
+              {inputs.controlling_deadline && !inputs.official_deadline_confirmed && <button type="button" onClick={() => confirmOfficialDeadline()} className="mt-3 rounded-lg border border-teal-300 bg-white px-3 py-1 font-bold text-teal-800">Confirm entered SEC date</button>}
+              {(deadlineReview?.stage_structure || []).length > 0 && <div className="mt-4 border-t border-teal-200 pt-3"><p className="font-extrabold">We found {deadlineReview?.stage_structure?.length} stages in this brief</p><ol className="mt-2 list-decimal pl-5">{deadlineReview?.stage_structure?.map((stage) => <li key={`${stage.source_document_id}-${stage.number}`}>{stage.name} <span className="text-slate-600">({stage.source_reference})</span></li>)}</ol>{deadlineReview?.source_tasks?.map((task) => <p key={`${task.source_document_id}-${task.name}`} className="mt-2 text-slate-700">Separate source task: {task.name} ({task.source_reference})</p>)}<button type="button" onClick={() => setShowSourceStagesDialog(true)} className="mt-3 rounded-lg border border-teal-300 bg-white px-3 py-1 font-bold text-teal-800">Review and apply source stages</button></div>}
+            </aside>
+            {showSourceStagesDialog && <div role="dialog" aria-modal="true" aria-labelledby="source-stage-dialog-title" className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4"><h4 id="source-stage-dialog-title" className="font-extrabold">Replace draft stages with source stages?</h4><p className="mt-2 text-sm">This replaces only the editable draft stages with the reviewed source-labelled stages. Your approved plan and calendars are unchanged.</p><div className="mt-3 flex gap-2"><button type="button" onClick={() => setShowSourceStagesDialog(false)} className="rounded-lg border px-3 py-1 font-bold">Keep current draft</button><button type="button" onClick={() => { const sourceStages = deadlineReview?.stage_structure || []; setStages(sourceStages.map((stage) => ({ id: `source-${stage.source_document_id}-stage-${stage.number}`, name: stage.name, estimated_minutes: null, completion_date: "", checkpoints: [] }))); setDirty(true); setReviewStale(true); setShowSourceStagesDialog(false); setNotice("Source stages are ready in your editable draft. Save when you are ready."); }} className="rounded-lg bg-teal-700 px-3 py-1 font-bold text-white">Apply {deadlineReview?.stage_structure?.length || 0} stages</button></div></div>}
+            <div className="mt-3 rounded-2xl bg-cyan-50 p-3 text-sm text-cyan-950">
+              <p>{catchUpDays === null ? "Add normal finish and final classroom dates to see catch-up time." : catchUpDays < 0 ? "Normal finish must be on or before the final classroom deadline." : `Catch-up time: ${catchUpDays} calendar days.`}</p>
+              <p className={buffer !== null && buffer < 14 ? "mt-1 text-amber-900" : "mt-1"}>{buffer === null ? "Add the SEC and final classroom deadlines to see the required buffer." : `Your final classroom deadline leaves ${buffer} calendar days before the SEC deadline.${buffer < 14 ? " At least 14 are required." : ""}`}</p>
+            </div>
+            <details className="mt-3 rounded-2xl border border-slate-200 p-3"><summary className="cursor-pointer font-bold">Other dates</summary><p className="mt-2 text-sm text-slate-600">Administrative school submission dates are separate from the student SEC completion deadline.</p><DateField label="School administrative submission date" help="Optional school administration date; it does not replace the SEC student completion deadline." value={inputs.school_submission_window} onChange={(value) => changeInput("school_submission_window", value)} /></details>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <DateField
+                label="Fifth Year teaching ends"
+                value={inputs.fifth_year_end}
+                onChange={(value) => changeInput("fifth_year_end", value)}
+              />
+              <DateField
+                label="Sixth Year restarts"
+                value={inputs.sixth_year_restart}
+                onChange={(value) => changeInput("sixth_year_restart", value)}
+              />
+              <label className="text-sm font-semibold">
+                Sixth Year calendar
+                <select
+                  value={inputs.sixth_year_calendar_status || "provisional"}
+                  onChange={(e) =>
+                    changeInput("sixth_year_calendar_status", e.target.value)
+                  }
+                  className="mt-1 block w-full rounded-xl border p-2 font-normal"
+                >
+                  <option value="provisional">
+                    Provisional — calendar not yet supplied
+                  </option>
+                  <option value="reviewed">Teacher-reviewed calendar</option>
+                </select>
+              </label>
+            </div>
+            <p
+              className={`mt-3 text-sm ${buffer !== null && buffer < 14 ? "text-amber-800" : "text-slate-600"}`}
+            >
+              {buffer === null
+                ? "Confirm a controlling deadline and internal target. The required 14-calendar-day buffer will be checked later."
+                : `${buffer} calendar-day buffer${buffer < 14 ? " — review needed" : ""}.`}
+            </p>
+          </section>
+          <section className="order-4 rounded-3xl bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-extrabold">Teaching time</h3>
+            <p className="mt-1 text-sm text-slate-600">AAC minutes are a weekly total, not per lesson. Confirm these estimates; Sixth Year can remain provisional.</p>
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              {([['fifth_year','Fifth Year'],['sixth_year','Sixth Year']] as [string, string][]).map(([year, heading]) => <div key={year} className="rounded-2xl border border-slate-200 p-4"><h4 className="font-bold">{heading}</h4><div className="mt-3 grid gap-2"><NumberField label="Lessons per week" value={inputs[`${year}_lessons_per_week`]} onChange={(value: number | "") => changeInput(`${year}_lessons_per_week`, value)} /><NumberField label="Minutes per lesson" value={inputs[`${year}_minutes_per_lesson`]} onChange={(value: number | "") => changeInput(`${year}_minutes_per_lesson`, value)} /><NumberField label="AAC minutes per week" value={inputs[`${year}_aac_minutes`]} onChange={(value: number | "") => changeInput(`${year}_aac_minutes`, value)} /></div></div>)}
+            </div>
+          </section>
+          <section className="order-1 rounded-3xl bg-white p-6 shadow-sm">
+            <h3 className="text-xl font-extrabold">Let’s get started…</h3>
+            <p className="mt-1 text-sm text-slate-600">Upload the specification or brief for your subject. We’ll help you find the important dates and build a plan you can adjust.</p>
+            <p className="mt-3 text-sm font-bold text-teal-800">Choose your specification</p>
+            <details className="mt-2 text-sm text-slate-600"><summary className="cursor-pointer font-semibold">Add school calendars — optional</summary><p className="mt-1">Calendars help plan around teaching dates and breaks. You can enter those details yourself.</p></details>
+            <p className="mt-1 text-sm text-slate-600">
+              PDF or DOCX only, maximum 15 MB. Scanned/unreadable PDFs need a
+              text-readable version or manual entry.
+            </p>
+            <form onSubmit={upload} className="mt-4 flex flex-wrap gap-3">
+              <select
+                aria-label="Document purpose"
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+                className="rounded-xl border p-2"
+              >
+                {Object.entries(sourcePurpose).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <label className="cursor-pointer rounded-xl border-2 border-dashed border-teal-300 bg-teal-50 px-4 py-2 font-bold text-teal-900 focus-within:ring-2 focus-within:ring-teal-500">Choose file<input
+                aria-label="AAC source file"
+                type="file"
+                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="sr-only" /></label>
+              <button
+                disabled={busy || !file}
+                className="rounded-xl bg-teal-600 px-4 py-2 font-bold text-white disabled:opacity-50"
+              >
+                {file ? `Upload ${file.name}` : "Choose your specification"}
+              </button>
+            </form>
+            <div className="mt-4 space-y-3">
+              {documents.length === 0 ? (
+                <div><p className="text-sm text-slate-600">No sources yet. Manual drafting is still available.</p><button type="button" onClick={() => setNotice("Manual planning is ready. Add key dates, teaching time and stages whenever you are ready.")} className="mt-3 rounded-xl border border-teal-300 bg-white px-4 py-2 font-bold text-teal-800">Set up manually</button></div>
+              ) : (
+                documents.map((document) => (
+                  <article
+                    key={document.id}
+                    className="rounded-2xl border border-slate-200 p-3"
+                  >
+                    <label className="flex gap-3">
+                      <input
+                        aria-label={`Use ${document.display_filename} for suggestions`}
+                        type="checkbox"
+                        checked={selectedDocs.includes(document.id)}
+                        disabled={document.extraction_state !== "extracted"}
+                        onChange={(e) => {
+                          setSelectedDocs((current) =>
+                            e.target.checked
+                              ? [...new Set([...current, document.id])]
+                              : current.filter((item) => item !== document.id),
+                          );
+                          setDirty(true);
+                        }}
+                      />
+                      <span>
+                        <b>
+                          {sourcePurpose[document.purpose] || document.purpose}
+                        </b>{" "}
+                        · {document.display_filename}
+                        <span className="ml-2 text-xs text-slate-500">
+                          {document.extraction_state}
+                        </span>
+                        {document.extraction_error && (
+                          <span className="block text-amber-800">
+                            {document.extraction_error}
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                    {document.sections?.length > 0 && (
+                      <details className="mt-2 text-sm">
+                        <summary className="cursor-pointer font-semibold">
+                          Review extracted source sections
+                        </summary>
+                        {document.sections.map((section, index) => (
+                          <p
+                            key={index}
+                            className="mt-2 rounded bg-slate-50 p-2"
+                          >
+                            <b>{section.reference}</b>
+                            <br />
+                            {section.text}
+                          </p>
+                        ))}
+                      </details>
+                    )}
+                    <button type="button" onClick={() => setRemoveDocument(document)} className="mt-3 rounded-lg border border-red-200 px-3 py-1 text-sm font-bold text-red-800">Remove source</button>
+                  </article>
+                ))
+              )}
+            </div>
+            <button
+              disabled={AAC_REVIEWER_PILOT_DRAFT_ONLY || busy || !selectedDocs.length}
+              onClick={generate}
+              className="mt-4 rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50"
+            >
+              {busy ? "Working…" : "Generate draft suggestions"}
+            </button>
+          </section>
+          <section className="order-5 rounded-3xl bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-extrabold">
+                  Editable stages and checkpoints
+                </h3>
+                <p className="text-sm text-slate-600">
+                  Use buttons as well as touch/keyboard controls to reorder.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setStages((current) => [
+                    ...current,
+                    {
+                      id: stableId(),
+                      name: "New stage",
+                      estimated_minutes: null,
+                      completion_date: "",
+                      checkpoints: [],
+                    },
+                  ]);
+                  setDirty(true);
+                }}
+                className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-bold text-teal-900"
+              >
+                Add stage
+              </button>
+            </div>
+            <div className="mt-4 space-y-4">
+              {stages.map((stage, index) => (
+                <article
+                  key={stage.id}
+                  className="rounded-2xl border border-slate-200 p-4"
+                >
+                  <div className="grid gap-2 md:grid-cols-[1fr_120px_150px_auto]">
+                    <input
+                      aria-label={`Stage ${index + 1} name`}
+                      value={stage.name}
+                      onChange={(e) =>
+                        updateStage(stage.id, { name: e.target.value })
+                      }
+                      className="rounded-xl border p-2"
+                    />
+                    <input
+                      aria-label={`Stage ${index + 1} minutes`}
+                      type="number"
+                      value={stage.estimated_minutes ?? ""}
+                      onChange={(e) =>
+                        updateStage(stage.id, {
+                          estimated_minutes: e.target.value
+                            ? Number(e.target.value)
+                            : null,
+                        })
+                      }
+                      className="rounded-xl border p-2"
+                    />
+                    <input
+                      aria-label={`Stage ${index + 1} date`}
+                      type="date"
+                      value={stage.completion_date || ""}
+                      onChange={(e) =>
+                        updateStage(stage.id, {
+                          completion_date: e.target.value,
+                        })
+                      }
+                      className="rounded-xl border p-2"
+                    />
+                    <div className="flex gap-1">
+                      <button
+                        aria-label={`Move stage ${index + 1} up`}
+                        disabled={index === 0}
+                        onClick={() => moveStage(index, -1)}
+                        className="rounded border px-2 disabled:opacity-30"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        aria-label={`Move stage ${index + 1} down`}
+                        disabled={index === stages.length - 1}
+                        onClick={() => moveStage(index, 1)}
+                        className="rounded border px-2 disabled:opacity-30"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        aria-label={`Remove stage ${index + 1}`}
+                        onClick={() => {
+                          setStages((current) =>
+                            current.filter((item) => item.id !== stage.id),
+                          );
+                          setDirty(true);
+                        }}
+                        className="rounded border border-red-200 px-2 text-red-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  {stage.checkpoints.map((checkpoint) => (
+                    <div key={checkpoint.id} className="mt-2 flex gap-2">
+                      <input
+                        aria-label="Checkpoint"
+                        value={checkpoint.text}
+                        onChange={(e) =>
+                          updateStage(stage.id, {
+                            checkpoints: stage.checkpoints.map((item) =>
+                              item.id === checkpoint.id
+                                ? { ...item, text: e.target.value }
+                                : item,
+                            ),
+                          })
+                        }
+                        className="min-w-0 flex-1 rounded-xl border p-2"
+                      />
+                      <button
+                        aria-label="Remove checkpoint"
+                        onClick={() =>
+                          updateStage(stage.id, {
+                            checkpoints: stage.checkpoints.filter(
+                              (item) => item.id !== checkpoint.id,
+                            ),
+                          })
+                        }
+                        className="rounded border border-red-200 px-2 text-red-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() =>
+                      updateStage(stage.id, {
+                        checkpoints: [
+                          ...stage.checkpoints,
+                          { id: stableId(), text: "New checkpoint" },
+                        ],
+                      })
+                    }
+                    className="mt-3 text-sm font-bold text-teal-700"
+                  >
+                    + Add checkpoint
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+          <section className="order-7 grid gap-4 lg:grid-cols-2">
+            <article className="rounded-3xl border border-cyan-100 bg-cyan-50 p-6">
+              <h3 className="font-extrabold">
+                Reviewed source requirements and dates
+              </h3>
+              {requirements.length ? (
+                requirements.map((item, index) => (
+                  <p
+                    key={index}
+                    className="mt-2 rounded-xl bg-white p-3 text-sm"
+                  >
+                    <b>{item.text || "Requirement"}</b>
+                    <br />
+                    Source {item.source_document_id} · {item.source_reference}
+                  </p>
+                ))
+              ) : (
+                <p className="mt-2 text-sm">
+                  Add requirements manually or generate suggestions from
+                  selected sources.
+                </p>
+              )}
+            </article>
+            <article className="rounded-3xl border border-amber-200 bg-amber-50 p-6">
+              <h3 className="font-extrabold">Review and save</h3>
+              <p className="mt-2 text-sm text-amber-900">Reviewer pilot: save private drafts only. AI suggestions, approval and calendar publication are unavailable.</p>
+              {assumptions.length ? (
+                <ul className="mt-2 list-disc pl-5 text-sm">
+                  {assumptions.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm">No recorded assumptions yet.</p>
+              )}
+              {project.approved_revision && (
+                <PlanComparison
+                  draft={stages}
+                  approved={normalizeStages(
+                    project.approved_revision.plan?.stages,
+                  )}
+                />
+              )}
+              <p className="mt-4 text-sm text-amber-900">
+                Approval publishes the saved stage milestones to your teacher
+                class and all-events calendars. It does not share this plan
+                with students.
+              </p>
+              {project.status === "approved" && !revision?.state.includes("draft") ? (
+                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                  <b>Approved plan is live in your calendars.</b>
+                  <button type="button" onClick={() => navigate(`/class/${classId}/calendar`)} className="ml-3 font-bold underline">Open class calendar</button>
+                </div>
+              ) : (
+                <>
+                  {dirty && <p className="mt-3 text-sm text-amber-900">Save your edits before approval so the reviewed revision and token are current.</p>}
+                  {reviewStale && <p className="mt-3 text-sm text-red-800">Refresh the saved draft before approving again.</p>}
+                  {blockingWarnings.length > 0 && <p className="mt-3 text-sm text-amber-900">Resolve the scheduling warnings shown above before approval.</p>}
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      disabled={AAC_REVIEWER_PILOT_DRAFT_ONLY || !canApprove}
+                      onClick={approve}
+                      className="rounded-xl bg-emerald-700 px-4 py-2 font-bold text-white disabled:opacity-50"
+                    >
+                      {approving ? "Approving…" : "Approve plan and update my calendars"}
+                    </button>
+                    {reviewStale && <button type="button" disabled={approving || busy || saving} onClick={() => void load()} className="rounded-xl border border-amber-300 bg-white px-4 py-2 font-bold text-amber-900 disabled:opacity-50">Refresh review</button>}
+                  </div>
+                </>
+              )}
+            </article>
+          </section>
+        </div>
+      )}
+    </>
+  );
+  if (pilotAccess !== true) return null;
+  return embedded ? (
+    <section className="space-y-5">{page}</section>
+  ) : (
+    <main className="min-h-screen bg-gradient-to-b from-cyan-50 via-white to-emerald-50 p-5 text-slate-800">
+      <section className="mx-auto max-w-5xl space-y-5">{page}</section>
+    </main>
+  );
+}
+
+function DateField({
+  label,
+  value,
+  onChange,
+  help,
+  emphasis = false,
+}: {
+  label: string;
+  value?: string;
+  onChange: (value: string) => void;
+  help?: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <label className={`text-sm font-semibold ${emphasis ? "rounded-2xl border-2 border-teal-300 bg-teal-50 p-3 text-teal-950" : ""}`}>
+      <span>{label}{help && <span className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full border border-teal-400 text-xs" tabIndex={0} aria-label={help}>?</span>}</span>
+      {help && <span className="mt-1 block text-xs font-normal text-slate-600">{help}</span>}
+      <input
+        aria-label={label}
+        type="date"
+        value={value || ""}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 block w-full rounded-xl border p-2 font-normal"
+      />
+    </label>
+  );
+}
+
+function NumberField({ label, value, onChange }: { label: string; value: string | number | null | undefined; onChange: (value: number | "") => void }) {
+  return <label className="text-sm font-semibold">{label}<input aria-label={label} type="number" min="0" value={value ?? ""} onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} className="mt-1 block w-full rounded-xl border p-2 font-normal" /></label>;
+}
+
+function PlanComparison({
+  draft,
+  approved,
+}: {
+  draft: Stage[];
+  approved: Stage[];
+}) {
+  const approvedById = new Map(approved.map((stage) => [stage.id, stage]));
+  const draftIds = new Set(draft.map((stage) => stage.id));
+  const added = draft.filter((stage) => !approvedById.has(stage.id));
+  const removed = approved.filter((stage) => !draftIds.has(stage.id));
+  const changed = draft.filter((stage) => {
+    const previous = approvedById.get(stage.id);
+    return (
+      previous &&
+      (previous.name !== stage.name ||
+        previous.estimated_minutes !== stage.estimated_minutes ||
+        previous.completion_date !== stage.completion_date)
+    );
+  });
+  return (
+    <div className="mt-4 rounded-xl bg-white p-3 text-sm">
+      <b>Current approved plan is retained.</b>
+      <p className="mt-1">
+        Draft comparison: {added.length} added, {removed.length} removed,{" "}
+        {changed.length} changed stage{changed.length === 1 ? "" : "s"}.
+      </p>
+      {[
+        ...added.map((stage) => `Added: ${stage.name}`),
+        ...removed.map((stage) => `Removed: ${stage.name}`),
+        ...changed.map((stage) => `Changed: ${stage.name}`),
+      ]
+        .slice(0, 8)
+        .map((line) => (
+          <div key={line} className="mt-1 text-slate-700">
+            {line}
+          </div>
+        ))}
+    </div>
+  );
+}

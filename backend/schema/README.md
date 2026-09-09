@@ -118,6 +118,31 @@ The guarded `--down --confirm-migration-013-down` path is allowed only for an
 otherwise exact v013 database with an empty inbox. It refuses if any webhook
 history exists and never deletes webhook history.
 
+## AAC Planner migration 014
+
+Migration `014` follows exactly ledgered `001`–`013`. It adds the disabled-by-
+default per-class AAC flag and private AAC project, revision, progress and
+practical-session tables. It is schema-only and is never run by FastAPI
+startup. Calendar milestones are application data created only after a teacher
+approves a plan; the migration itself creates none.
+
+```powershell
+cd backend
+python -m schema.migrate_014_aac_planner --check `
+  --expected-database elume --database-url-env DATABASE_URL
+python -m schema.migrate_014_aac_planner --apply `
+  --confirm-migration-014 --expected-database elume `
+  --database-url-env DATABASE_URL
+python -m schema.migrate_014_aac_planner --verify-applied `
+  --expected-database elume --database-url-env DATABASE_URL
+```
+
+The guarded `--down --confirm-migration-014-down` path is permitted only when
+there are no AAC projects, revisions, progress/session records, AAC calendar
+milestones, or AAC-enabled classes. If any exist, use a forward corrective
+migration rather than deleting teaching history or changing linked calendar
+data.
+
 ## CAT4 cohort migration 011
 
 `20260905_011_cat4_cohort_schema` is the first ledger-aware forward migration.

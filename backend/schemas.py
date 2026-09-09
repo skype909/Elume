@@ -409,6 +409,44 @@ class CalendarEventOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class AacEnablePayload(BaseModel):
+    enabled: bool
+
+
+class AacProjectCreate(BaseModel):
+    title: str
+    subject: str
+    examination_year: Optional[int] = None
+    current_year_stage: str = "fifth_year"
+    weekly_minutes: int = 30
+
+
+class AacRevisionDraft(BaseModel):
+    source_requirements: List[dict] = []
+    plan: dict = {}
+    assumptions: List[str] = []
+    source_document_ids: List[int] = []
+    planning_inputs: dict = {}
+
+
+class AacProposalRequest(BaseModel):
+    document_ids: List[int]
+    planning_inputs: dict = {}
+
+
+class AacApproveRequest(BaseModel):
+    revision_id: int
+    review_token: str
+
+
+class AacProgressUpdate(BaseModel):
+    current_stage: Optional[str] = None
+    checkpoints: List[dict] = []
+    observation: Optional[str] = None
+    next_action: Optional[str] = None
+    next_check_in_at: Optional[datetime] = None
+
 # -------------------------
 # AI calendar parsing
 # -------------------------
