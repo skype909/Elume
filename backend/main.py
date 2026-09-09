@@ -5420,6 +5420,22 @@ def _build_cat4_report_payload(
     baseline_sets = _cat4_baseline_sets_for_class(class_id, db, resolved_cohort_key)
     term_sets = _cat4_term_sets_for_class(class_id, db, resolved_cohort_key)
 
+    # A cohort may legitimately have no imported baseline or term data yet.
+    # Match the legacy path's empty-report contract rather than indexing an
+    # empty collection (which otherwise turns a normal empty state into 500).
+    if not baseline_sets or not term_sets:
+        return _cat4_build_report_payload_from_loaded(
+            baseline_sets,
+            term_sets,
+            [],
+            [],
+            [],
+            [],
+            baseline_id=baseline_id,
+            term_set_id=term_set_id,
+            threshold_percent=threshold_percent,
+        )
+
     selected_baseline = next((item for item in baseline_sets if item.id == baseline_id), baseline_sets[0]) if baseline_id else baseline_sets[0]
     selected_term = next((item for item in term_sets if item.id == term_set_id), term_sets[0]) if term_set_id else term_sets[0]
     ordered_term_sets = sorted(term_sets, key=_cat4_term_sort_key)
