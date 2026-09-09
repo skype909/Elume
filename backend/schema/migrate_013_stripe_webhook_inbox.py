@@ -48,8 +48,29 @@ def _sql(connection, path: Path) -> None:
     if re.search(r"(?im)^\s*(BEGIN|COMMIT)\s*;", script):
         raise MigrationRefused("Migration 013 SQL must not manage its own transaction.")
     for statement in _split_sql(script):
-        if statement.strip():
+        if _has_executable_sql(statement):
             connection.execute(text(statement))
+
+
+def _has_executable_sql(statement: str) -> bool:
+    """Ignore whitespace and line-comment-only fragments without touching SQL strings."""
+    quote: str | None = None
+    index = 0
+    while index < len(statement):
+        char = statement[index]
+        if quote:
+            if char == quote:
+                if index + 1 < len(statement) and statement[index + 1] == quote:
+                    index += 2; continue
+                quote = None
+            index += 1; continue
+        if char in "'\"": quote = char; index += 1; continue
+        if statement.startswith("--", index):
+            newline = statement.find("\n", index + 2)
+            index = len(statement) if newline < 0 else newline + 1; continue
+        if not char.isspace() and char != ";": return True
+        index += 1
+    return False
 
 
 def _split_sql(script: str) -> list[str]:
@@ -59,8 +80,13 @@ def _split_sql(script: str) -> list[str]:
     index = 0
     quote: str | None = None
     dollar_tag: str | None = None
+    line_comment = False
     while index < len(script):
         char = script[index]
+        if line_comment:
+            if char in "\r\n": line_comment = False
+            index += 1
+            continue
         if dollar_tag:
             if script.startswith(dollar_tag, index):
                 index += len(dollar_tag)
@@ -79,6 +105,10 @@ def _split_sql(script: str) -> list[str]:
         if char in {"'", '"'}:
             quote = char
             index += 1
+            continue
+        if script.startswith("--", index):
+            line_comment = True
+            index += 2
             continue
         if char == "$":
             match = re.match(r"\$[A-Za-z_0-9]*\$", script[index:])
