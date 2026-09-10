@@ -57,10 +57,35 @@ class AacPlannerSafetyTests(unittest.TestCase):
         self.assertNotIn("students", repr(context).lower())
 
     def test_two_year_schedule_excludes_summer_and_requires_stage_dates(self):
-        result = build_schedule({"planning_inputs": {"weekly_minutes": 30, "fifth_year_end": "2026-05-29", "sixth_year_restart": "2026-09-14", "controlling_deadline": "2027-04-20", "internal_completion_target": "2027-04-06", "official_deadline_confirmed": True, "reviewed_closures": ["2026-10-26"]}, "stages": [{"id": "fictional-a", "name": "Research", "estimated_minutes": 60, "completion_date": "2026-10-12"}, {"id": "fictional-b", "name": "Report", "estimated_minutes": 90, "completion_date": "2027-03-29"}]})
+        result = build_schedule({"planning_inputs": {"weekly_minutes": 30, "planned_start": "2025-09-01", "fifth_year_end": "2026-05-29", "sixth_year_restart": "2026-09-14", "controlling_deadline": "2027-04-20", "internal_completion_target": "2027-04-06", "official_deadline_confirmed": True, "reviewed_closures": ["2026-10-26"]}, "stages": [{"id": "fictional-a", "name": "Research", "estimated_minutes": 60, "completion_date": "2026-10-12"}, {"id": "fictional-b", "name": "Report", "estimated_minutes": 90, "completion_date": "2027-03-29"}]})
         self.assertFalse(result["warnings"], result["warnings"])
         self.assertTrue(result["estimated"])
         self.assertGreater(result["capacity_minutes"], result["estimated_minutes"])
+
+    def test_schedule_returns_editable_provisional_dates_when_source_stages_have_no_duration(self):
+        result = build_schedule({"planning_inputs": {"weekly_minutes": 30, "planned_start": "2026-09-01", "fifth_year_end": "2027-05-28", "sixth_year_restart": "2027-09-13", "controlling_deadline": "2028-05-15", "normal_finish_target": "2028-04-15", "final_classroom_deadline": "2028-05-01", "official_deadline_confirmed": True, "sixth_year_calendar_status": "reviewed"}, "stages": [{"id": "fictional-a", "name": "Source stage", "estimated_minutes": None, "completion_date": None}, {"id": "fictional-b", "name": "Teacher stage", "estimated_minutes": None, "completion_date": None}]})
+        self.assertEqual(len(result["stages"]), 2)
+        self.assertTrue(all(stage["provisional_estimate"] for stage in result["stages"]))
+        self.assertTrue(all(stage.get("proposed_completion_date") for stage in result["stages"]))
+        self.assertTrue(any("planning estimates" in warning for warning in result["warnings"]))
+
+    def test_saved_provisional_stage_time_remains_distinct_from_teacher_time(self):
+        inputs = {"planned_start": "2026-09-14", "fifth_year_end": "2026-05-31", "sixth_year_restart": "2026-09-01", "controlling_deadline": "2027-03-12", "normal_finish_target": "2027-02-08", "final_classroom_deadline": "2027-02-19", "official_deadline_confirmed": True, "fifth_year_aac_minutes": 30, "sixth_year_aac_minutes": 30}
+        generated = build_schedule({"planning_inputs": inputs, "stages": [{"id": "suggested", "name": "Suggested", "estimated_minutes": None}, {"id": "teacher", "name": "Teacher", "estimated_minutes": 45}]})
+        suggested_minutes = next(stage["estimated_minutes"] for stage in generated["stages"] if stage["id"] == "suggested")
+        reloaded = build_schedule({"planning_inputs": inputs, "stages": [{"id": "suggested", "name": "Suggested", "estimated_minutes": suggested_minutes, "provisional_estimate": True}, {"id": "teacher", "name": "Teacher", "estimated_minutes": 45}]})
+        rows = {stage["id"]: stage for stage in reloaded["stages"]}
+        self.assertEqual(rows["suggested"]["estimated_minutes"], suggested_minutes)
+        self.assertTrue(rows["suggested"]["provisional_estimate"])
+        self.assertFalse(rows["teacher"]["provisional_estimate"])
+
+    def test_sixth_year_window_spreads_missing_durations_from_september_to_february(self):
+        result = build_schedule({"planning_inputs": {"planned_start": "2026-09-14", "fifth_year_end": "2026-05-31", "sixth_year_restart": "2026-09-01", "controlling_deadline": "2027-03-12", "normal_finish_target": "2027-02-08", "final_classroom_deadline": "2027-02-19", "official_deadline_confirmed": True, "fifth_year_aac_minutes": 30, "sixth_year_aac_minutes": 30, "sixth_year_calendar_status": "provisional"}, "stages": [{"id": f"stage-{number}", "name": f"Stage {number}", "estimated_minutes": None, "completion_date": None} for number in range(1, 7)]})
+        dates = [date.fromisoformat(stage["proposed_completion_date"]) for stage in result["stages"]]
+        self.assertEqual(len(dates), 6)
+        self.assertLessEqual(dates[0], date(2026, 10, 15))
+        self.assertGreaterEqual(dates[-1], date(2027, 1, 1))
+        self.assertEqual(result["completion_target"], "2027-02-08")
 
     def test_schedule_rejects_summer_dates_short_buffer_and_infeasible_capacity(self):
         result = build_schedule({"planning_inputs": {"weekly_minutes": 30, "fifth_year_end": "2026-05-29", "sixth_year_restart": "2026-09-14", "controlling_deadline": "2027-04-20", "internal_completion_target": "2027-04-08"}, "stages": [{"id": "fictional", "name": "Summer work", "estimated_minutes": 999999, "completion_date": "2026-07-01"}]})

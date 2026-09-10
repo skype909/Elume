@@ -194,7 +194,8 @@ def build_schedule(plan: dict[str, Any]) -> dict[str, Any]:
     inputs = plan.get("planning_inputs") or plan
     warnings = plan_warnings({**plan, **inputs, "sixth_year_calendar_provisional": inputs.get("sixth_year_calendar_status") == "provisional"})
     try:
-        weekly = validate_weekly_minutes(inputs.get("sixth_year_aac_minutes") or inputs.get("weekly_minutes", DEFAULT_WEEKLY_MINUTES))
+        fifth_weekly = validate_weekly_minutes(inputs.get("fifth_year_aac_minutes") or inputs.get("weekly_minutes", DEFAULT_WEEKLY_MINUTES))
+        sixth_weekly = validate_weekly_minutes(inputs.get("sixth_year_aac_minutes") or inputs.get("weekly_minutes", DEFAULT_WEEKLY_MINUTES))
     except (TypeError, ValueError):
         return {"warnings": warnings + ["Set a valid weekly AAC allocation before approval."], "capacity_minutes": 0, "estimated": True, "stages": []}
     try:
@@ -202,7 +203,12 @@ def build_schedule(plan: dict[str, Any]) -> dict[str, Any]:
         target = date.fromisoformat(inputs.get("normal_finish_target") or inputs.get("final_classroom_deadline") or inputs["internal_completion_target"])
     except (KeyError, TypeError, ValueError):
         return {"warnings": warnings, "capacity_minutes": 0, "estimated": True, "stages": []}
-    if deadline - target < timedelta(days=MIN_COMPLETION_BUFFER_DAYS):
+    final_value = inputs.get("final_classroom_deadline") or inputs.get("internal_completion_target")
+    try:
+        final_deadline = date.fromisoformat(final_value)
+    except (TypeError, ValueError):
+        return {"warnings": warnings, "capacity_minutes": 0, "estimated": True, "stages": []}
+    if deadline - final_deadline < timedelta(days=MIN_COMPLETION_BUFFER_DAYS):
         return {"warnings": warnings, "capacity_minutes": 0, "estimated": True, "stages": []}
     try:
         fifth_end = date.fromisoformat(inputs["fifth_year_end"])
@@ -216,16 +222,49 @@ def build_schedule(plan: dict[str, Any]) -> dict[str, Any]:
     for value in inputs.get("reviewed_closures", []):
         try: closures.add(date.fromisoformat(str(value)))
         except ValueError: warnings.append("A reviewed closure has an invalid date.")
-    # Teaching capacity begins at the first supplied boundary and excludes the
-    # whole summer interval; partial weeks count once, a stated estimate.
-    try: start = date.fromisoformat(inputs.get("planned_start")) if inputs.get("planned_start") else min(fifth_end, sixth_restart) - timedelta(days=365)
-    except ValueError: start = min(fifth_end, sixth_restart) - timedelta(days=365)
-    fifth_weekly = validate_weekly_minutes(inputs.get("fifth_year_aac_minutes") or inputs.get("weekly_minutes", DEFAULT_WEEKLY_MINUTES))
-    sixth_weekly = validate_weekly_minutes(inputs.get("sixth_year_aac_minutes") or inputs.get("weekly_minutes", DEFAULT_WEEKLY_MINUTES))
-    fifth_weeks = {day - timedelta(days=day.weekday()) for day in _date_range(start, min(fifth_end, target)) if day not in closures}
-    sixth_weeks = {day - timedelta(days=day.weekday()) for day in _date_range(max(sixth_restart, start), target) if day not in closures}
-    capacity = len(fifth_weeks) * fifth_weekly + len(sixth_weeks) * sixth_weekly
+    try:
+        start = date.fromisoformat(inputs["planned_start"])
+    except (KeyError, TypeError, ValueError):
+        warnings.append("Set when AAC work will start before Elume can suggest stage dates.")
+        return {"warnings": list(dict.fromkeys(warnings)), "capacity_minutes": 0, "estimated": True, "stages": [], "completion_target": target.isoformat()}
+    if start > target:
+        return {"warnings": list(dict.fromkeys(warnings)), "capacity_minutes": 0, "estimated": True, "stages": [], "completion_target": target.isoformat()}
+    # Each calendar week contributes once, using the applicable year allocation.
+    # This excludes the summer gap and does not invent closures.
+    teaching_weeks: list[tuple[date, int]] = []
+    seen_weeks: set[date] = set()
+    for day in _date_range(start, target):
+        is_fifth = day <= fifth_end
+        is_sixth = day >= sixth_restart
+        if not (is_fifth or is_sixth) or day in closures:
+            continue
+        week = day - timedelta(days=day.weekday())
+        if week not in seen_weeks:
+            seen_weeks.add(week)
+            teaching_weeks.append((week, sixth_weekly if is_sixth else fifth_weekly))
+    capacity = sum(minutes for _, minutes in teaching_weeks)
     stages = plan.get("stages") or []
+    # A document may describe stages but not teaching time.  Give the teacher
+    # an even, explicitly provisional planning estimate from the calculated
+    # capacity instead of presenting an apparently usable plan with empty
+    # dates.  The value is only returned in the draft schedule; it never
+    # changes a saved stage or claims to be a document requirement.
+    known_minutes = sum(
+        int(stage.get("estimated_minutes"))
+        for stage in stages
+        if isinstance(stage, dict) and isinstance(stage.get("estimated_minutes"), int) and stage.get("estimated_minutes") > 0 and not stage.get("provisional_estimate")
+    )
+    undated_estimates = [
+        stage for stage in stages
+        if isinstance(stage, dict) and stage.get("id") and str(stage.get("name") or "").strip()
+        and (stage.get("provisional_estimate") or not (isinstance(stage.get("estimated_minutes"), int) and stage.get("estimated_minutes") > 0))
+    ]
+    remaining_capacity = capacity - known_minutes
+    provisional_minutes = remaining_capacity // len(undated_estimates) if undated_estimates and remaining_capacity > 0 else None
+    if provisional_minutes is not None:
+        warnings.append("Some stage timings are editable planning estimates because no duration was supplied.")
+    elif undated_estimates:
+        warnings.append("Elume cannot allocate stage time until there is available teaching capacity in the planned window.")
     total = 0
     previous = None
     validated = []
@@ -234,8 +273,14 @@ def build_schedule(plan: dict[str, Any]) -> dict[str, Any]:
         name = str(stage.get("name") or "").strip()
         minutes = stage.get("estimated_minutes")
         target_date = stage.get("completion_date")
-        if not identifier or not name or not isinstance(minutes, int) or minutes <= 0:
-            warnings.append(f"Stage {index} needs a stable ID, name and positive estimate.")
+        if not identifier or not name:
+            warnings.append(f"Stage {index} needs a stable ID and name.")
+            continue
+        is_provisional = bool(stage.get("provisional_estimate")) or not isinstance(minutes, int) or minutes <= 0
+        if is_provisional and (not isinstance(minutes, int) or minutes <= 0):
+            minutes = provisional_minutes
+        if not isinstance(minutes, int) or minutes <= 0:
+            warnings.append(f"Stage {index} needs a positive estimate.")
             continue
         try: when = date.fromisoformat(target_date) if target_date else None
         except ValueError:
@@ -244,24 +289,17 @@ def build_schedule(plan: dict[str, Any]) -> dict[str, Any]:
             warnings.append(f"Stage {index} falls outside available AAC teaching time.")
         if when and previous and when < previous: warnings.append("Stage dates must remain in order.")
         if when: previous = when
-        total += minutes; validated.append({"id": identifier, "name": name, "completion_date": when.isoformat() if when else None, "estimated_minutes": minutes})
-    # Fill only undated stages, backwards from the editable internal target.
-    # This is a proposal, never a mutation of the teacher's stored plan.
-    cursor = target
-    for stage in reversed(validated):
-        if stage["completion_date"]: cursor = date.fromisoformat(stage["completion_date"]); continue
-        weeks_needed = max(1, (stage["estimated_minutes"] + weekly - 1) // weekly)
-        found = 0
-        while cursor >= sixth_restart - timedelta(days=365):
-            if (cursor <= fifth_end or cursor >= sixth_restart) and cursor not in closures:
-                found += 1
-                if found >= weeks_needed and cursor.weekday() == 0: break
-            cursor -= timedelta(days=1)
-        if cursor < sixth_restart - timedelta(days=365):
-            warnings.append("There is not enough available teaching time to suggest all stage dates.")
+        total += minutes; validated.append({"id": identifier, "name": name, "completion_date": when.isoformat() if when else None, "estimated_minutes": minutes, "provisional_estimate": is_provisional})
+    # Spread missing-duration stages across the teacher's stated working window.
+    # These are proposals only: explicit teacher dates remain untouched.
+    undated = [stage for stage in validated if not stage["completion_date"]]
+    if undated and not teaching_weeks:
+        warnings.append("There is no available teaching time in the planned window.")
+    for index, stage in enumerate(undated, 1):
+        if not teaching_weeks:
             break
-        stage["proposed_completion_date"] = cursor.isoformat()
-        cursor -= timedelta(days=1)
+        slot = min(len(teaching_weeks) - 1, max(0, (index * len(teaching_weeks)) // (len(undated) + 1)))
+        stage["proposed_completion_date"] = teaching_weeks[slot][0].isoformat()
     if total > capacity: warnings.append("Estimated AAC work exceeds available teaching capacity; adjust it explicitly rather than compressing the plan.")
     return {"warnings": list(dict.fromkeys(warnings)), "capacity_minutes": capacity, "estimated_minutes": total, "estimated": True, "stages": validated, "completion_target": target.isoformat()}
 

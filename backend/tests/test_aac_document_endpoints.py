@@ -66,8 +66,41 @@ class AacDocumentEndpointTests(unittest.TestCase):
         return self.client.get(f"/classes/{self.cls.id}/aac").json()["project"]["revision"]["review_token"]
 
     def test_owner_uploads_lists_private_document_without_storage_key(self):
+        self.add_approvable_draft()
         created = self.upload(); self.assertEqual(created.status_code, 200, created.text); self.assertNotIn("storage_key", created.json())
         listed = self.client.get(f"/classes/{self.cls.id}/aac/documents"); self.assertEqual(listed.status_code, 200); self.assertEqual(len(listed.json()), 1); self.assertIn("paragraph 1", listed.json()[0]["sections"][0]["reference"])
+
+    def test_fresh_draft_has_no_historical_active_sources_then_persists_upload(self):
+        prior = self.add_approvable_draft()
+        historical = self.source("specification", "historical.pdf", [{"reference": "page 1", "text": "Historical source"}])
+        prior.source_document_ids_json = [historical.id]; self.db.commit()
+        response = self.client.post(f"/classes/{self.cls.id}/aac/new-draft", json={"title": "Fresh", "subject": "Art", "weekly_minutes": 30, "current_year_stage": "sixth_year"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac/documents").json(), [])
+        uploaded = self.upload()
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        listed = self.client.get(f"/classes/{self.cls.id}/aac/documents")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual([item["id"] for item in listed.json()], [uploaded.json()["id"]])
+        self.db.expire_all()
+        self.assertEqual(self.db.query(models.AacPlanRevisionModel).filter_by(id=prior.id).one().source_document_ids_json, [historical.id])
+
+    def test_new_tracker_keeps_historical_metadata_until_clean_setup_is_saved(self):
+        prior = self.add_approvable_draft()
+        old_title, old_subject = self.project.title, self.project.subject
+        started = self.client.post(f"/classes/{self.cls.id}/aac/new-draft")
+        self.assertEqual(started.status_code, 200, started.text)
+        clean = started.json()["revision"]
+        self.assertTrue(clean["plan"]["tracker_setup_pending"])
+        self.assertEqual(clean["source_document_ids"], [])
+        self.db.expire_all()
+        retained = self.db.query(models.AacPlanRevisionModel).filter_by(id=prior.id).one()
+        self.assertEqual(retained.plan_json["tracker_metadata"]["title"], old_title)
+        self.assertEqual(retained.plan_json["tracker_metadata"]["subject"], old_subject)
+        configured = self.client.put(f"/classes/{self.cls.id}/aac/tracker-details", json={"title": "New tracker", "subject": "Art", "weekly_minutes": 30, "current_year_stage": "sixth_year"})
+        self.assertEqual(configured.status_code, 200, configured.text)
+        self.assertFalse(configured.json()["revision"]["plan"]["tracker_setup_pending"])
+        self.assertEqual(configured.json()["title"], "New tracker")
 
     def test_only_named_reviewers_can_discover_or_use_draft_pilot(self):
         self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac").status_code, 200)

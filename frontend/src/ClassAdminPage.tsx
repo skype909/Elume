@@ -104,9 +104,10 @@ export default function ClassAdminPage() {
 
     const navigate = useNavigate();
 
-    const [tab, setTab] = useState<"students" | "tests" | "insights" | "reports">(
-        location.pathname.endsWith("/admin/aac") ? "insights" : "students"
+    const [tab, setTab] = useState<"students" | "tests" | "insights" | "aac" | "reports">(
+        location.pathname.endsWith("/admin/aac") ? "aac" : "students"
     );
+    const [aacEnabled, setAacEnabled] = useState(false);
 
     const [students, setStudents] = useState<Student[]>([]);
     const [tests, setTests] = useState<Assessment[]>([]);
@@ -213,6 +214,33 @@ export default function ClassAdminPage() {
             .then((data) => setStudentToken(data.token))
             .catch(() => { });
     }, [classId, validClassId]);
+
+    // AAC access and enablement must be discovered before the planner mounts:
+    // the dedicated tab itself is what makes the planner mount. The server
+    // remains authoritative here; a denied or failed request never reveals it.
+    useEffect(() => {
+        if (!validClassId) {
+            setAacEnabled(false);
+            return;
+        }
+        let cancelled = false;
+        setAacEnabled(false);
+        apiFetch(`${API_BASE}/classes/${classId}/aac`)
+            .then((data) => {
+                if (cancelled) return;
+                const enabled = data?.enabled === true;
+                setAacEnabled(enabled);
+                if (!enabled && location.pathname.endsWith("/admin/aac")) setTab("insights");
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setAacEnabled(false);
+                if (location.pathname.endsWith("/admin/aac")) setTab("insights");
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [classId, validClassId, location.pathname]);
 
     useEffect(() => {
         setReportDrafts((prev) => {
@@ -914,10 +942,20 @@ export default function ClassAdminPage() {
                             <button
                                 type="button"
                                 className={tab === "insights" ? `${pill} border-emerald-400 bg-emerald-50` : pill}
-                                onClick={() => setTab("insights")}
+                                onClick={() => { setTab("insights"); navigate(`/class/${classId}/admin`); }}
                             >
                                 Insights
                             </button>
+
+                            {aacEnabled && (
+                                <button
+                                    type="button"
+                                    className={tab === "aac" ? `${pill} border-teal-400 bg-teal-50` : pill}
+                                    onClick={() => { setTab("aac"); navigate(`/class/${classId}/admin/aac`); }}
+                                >
+                                    AAC Tracker
+                                </button>
+                            )}
 
                             <button
                                 type="button"
@@ -1206,8 +1244,13 @@ export default function ClassAdminPage() {
                             />
                         )}
 
-                        <section className="mt-5 border-t border-slate-200 pt-5" aria-label="AAC Planner in Class Insights">
-                            <AacPlannerPage embedded />
+                        <section className="mt-5 border-t border-slate-200 pt-5" aria-label="AAC Tracker entry in Class Insights">
+                            <AacPlannerPage
+                                embedded
+                                mode="entry"
+                                onEnabledChange={setAacEnabled}
+                                onOpen={() => { setTab("aac"); navigate(`/class/${classId}/admin/aac`); }}
+                            />
                         </section>
 
                         <div className="mt-5 grid gap-4 md:grid-cols-3">
@@ -1350,6 +1393,12 @@ export default function ClassAdminPage() {
                                 </div>
                             )}
                         </div>
+                    </div>
+                )}
+
+                {tab === "aac" && (
+                    <div className={`${card} ${cardPad} mt-6`}>
+                        <AacPlannerPage embedded mode="workspace" onEnabledChange={setAacEnabled} />
                     </div>
                 )}
 

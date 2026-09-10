@@ -422,6 +422,15 @@ class AacProjectCreate(BaseModel):
     weekly_minutes: int = 30
 
 
+class AacTrackerSetup(BaseModel):
+    """Teacher-facing setup fields for a previously created clean tracker."""
+    title: str
+    subject: str
+    examination_year: Optional[int] = None
+    current_year_stage: str = "fifth_year"
+    weekly_minutes: int = 30
+
+
 class AacRevisionDraft(BaseModel):
     source_requirements: List[dict] = []
     plan: dict = {}
