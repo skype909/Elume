@@ -13598,35 +13598,18 @@ def _aac_project_or_404(class_id: int, db: Session, user: models.UserModel):
     return project
 
 
-def _aac_project_out(project: models.AacProjectModel, db: Session, *, recalculate_dates: bool = False) -> dict:
+def _aac_project_out(project: models.AacProjectModel, db: Session) -> dict:
     revision = None
     if project.approved_revision_id:
         revision = db.query(models.AacPlanRevisionModel).filter_by(id=project.approved_revision_id).first()
     draft = db.query(models.AacPlanRevisionModel).filter_by(project_id=project.id, state="draft").order_by(models.AacPlanRevisionModel.version.desc()).first()
     selected = draft or revision
     def revision_out(item: Optional[models.AacPlanRevisionModel]) -> Optional[dict]:
-        if not item:
-            return None
-        plan = item.plan_json or {}
-        schedule_plan = {**plan, "planning_inputs": item.planning_inputs_json or {}}
-        # Recalculation is deliberately read-only.  Saved completion dates have
-        # no reliable provenance in older drafts, so the client must show each
-        # replacement and let the teacher choose what to apply.
-        if recalculate_dates:
-            schedule_plan = {
-                **schedule_plan,
-                "stages": [
-                    {**stage, "completion_date": None}
-                    for stage in (plan.get("stages") or [])
-                    if isinstance(stage, dict)
-                ],
-            }
-        schedule = build_schedule(schedule_plan)
-        return {"id": item.id, "version": item.version, "state": item.state,
+        return None if not item else {"id": item.id, "version": item.version, "state": item.state,
             "source_requirements": item.source_requirements_json, "plan": item.plan_json,
             "assumptions": item.assumptions_json, "source_document_ids": item.source_document_ids_json,
-            "planning_inputs": item.planning_inputs_json, "warnings": schedule["warnings"],
-            "schedule": schedule,
+            "planning_inputs": item.planning_inputs_json, "warnings": build_schedule({**(item.plan_json or {}), "planning_inputs": item.planning_inputs_json or {}})["warnings"],
+            "schedule": build_schedule({**(item.plan_json or {}), "planning_inputs": item.planning_inputs_json or {}}),
             "review_token": _aac_review_token(project, item)}
     return {"id": project.id, "class_id": project.class_id, "title": project.title, "subject": project.subject,
             "examination_year": project.examination_year, "current_year_stage": project.current_year_stage,
@@ -13650,13 +13633,13 @@ def set_aac_planner_enabled(class_id: int, payload: schemas.AacEnablePayload, db
 
 
 @app.get("/classes/{class_id}/aac")
-def get_aac_project(class_id: int, recalculate_dates: bool = False, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+def get_aac_project(class_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
     require_aac_reviewer_access(user)
     cls = _assert_class_access(class_id, db, user)
     if not cls.aac_planner_enabled:
         return {"enabled": False, "project": None}
     project = db.query(models.AacProjectModel).filter_by(class_id=class_id, owner_user_id=user.id).first()
-    return {"enabled": True, "project": _aac_project_out(project, db, recalculate_dates=recalculate_dates) if project else None}
+    return {"enabled": True, "project": _aac_project_out(project, db) if project else None}
 
 
 @app.post("/classes/{class_id}/aac/projects")
@@ -13674,67 +13657,6 @@ def create_aac_project(class_id: int, payload: schemas.AacProjectCreate, db: Ses
     plan = {"weekly_minutes": weekly, "stages": physics_starter_template() if payload.subject.strip().lower() == "physics" else [], "planning_template": payload.subject.strip().lower() == "physics"}
     db.add(models.AacPlanRevisionModel(project_id=project.id, version=1, source_requirements_json=[], plan_json=plan, assumptions_json=["Teacher must confirm the controlling deadline before approval."]))
     db.commit(); db.refresh(project)
-    return _aac_project_out(project, db)
-
-
-@app.post("/classes/{class_id}/aac/new-draft")
-def start_new_aac_draft(class_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    """Persist a clean setup revision without changing retained tracker metadata."""
-    require_aac_reviewer_access(user)
-    _assert_class_access(class_id, db, user)
-    project = db.query(models.AacProjectModel).filter_by(
-        class_id=class_id, owner_user_id=user.id
-    ).with_for_update().first()
-    if not project:
-        raise HTTPException(status_code=404, detail="AAC Planner is not set up for this class.")
-    revisions = db.query(models.AacPlanRevisionModel).filter_by(project_id=project.id).with_for_update().all()
-    snapshot = {"title": project.title, "subject": project.subject, "examination_year": project.examination_year, "current_year_stage": project.current_year_stage, "weekly_minutes": project.weekly_minutes}
-    for prior in revisions:
-        plan = dict(prior.plan_json or {})
-        plan.setdefault("tracker_metadata", snapshot)
-        prior.plan_json = plan
-        if prior.state == "draft":
-            prior.state = "superseded"
-        prior.updated_at = datetime.utcnow()
-    latest_version = max((item.version for item in revisions), default=0)
-    project.status = "revision_pending" if project.approved_revision_id else "draft"
-    project.updated_at = datetime.utcnow()
-    db.add(models.AacPlanRevisionModel(
-        project_id=project.id,
-        version=latest_version + 1,
-        source_requirements_json=[],
-        plan_json={"weekly_minutes": 30, "stages": [], "tracker_setup_pending": True},
-        assumptions_json=[],
-        source_document_ids_json=[],
-        planning_inputs_json={"weekly_minutes": 30},
-    ))
-    db.commit()
-    return _aac_project_out(project, db)
-
-
-@app.put("/classes/{class_id}/aac/tracker-details")
-def save_aac_tracker_details(class_id: int, payload: schemas.AacTrackerSetup, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    """Finish a clean tracker setup while retaining historical revision snapshots."""
-    require_aac_reviewer_access(user)
-    _assert_class_access(class_id, db, user)
-    if not payload.title.strip() or not payload.subject.strip():
-        raise HTTPException(status_code=422, detail="Enter a tracker title and subject.")
-    try:
-        weekly = validate_weekly_minutes(payload.weekly_minutes)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    project = db.query(models.AacProjectModel).filter_by(class_id=class_id, owner_user_id=user.id).with_for_update().first()
-    if not project:
-        raise HTTPException(status_code=404, detail="AAC Tracker is not set up for this class.")
-    revision = db.query(models.AacPlanRevisionModel).filter_by(project_id=project.id, state="draft").order_by(models.AacPlanRevisionModel.version.desc()).with_for_update().first()
-    if not revision or not (revision.plan_json or {}).get("tracker_setup_pending"):
-        raise HTTPException(status_code=409, detail="Start a new AAC tracker before entering its details.")
-    project.title, project.subject = payload.title.strip(), payload.subject.strip()
-    project.examination_year, project.current_year_stage, project.weekly_minutes = payload.examination_year, payload.current_year_stage, weekly
-    plan = dict(revision.plan_json or {}); plan["tracker_setup_pending"] = False; plan["weekly_minutes"] = weekly; revision.plan_json = plan
-    revision.planning_inputs_json, revision.updated_at = {"weekly_minutes": weekly}, datetime.utcnow()
-    project.updated_at = datetime.utcnow()
-    db.commit()
     return _aac_project_out(project, db)
 
 
@@ -13759,9 +13681,7 @@ def save_aac_revision(class_id: int, payload: schemas.AacRevisionDraft, db: Sess
 @app.get("/classes/{class_id}/aac/documents")
 def list_aac_documents(class_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
     project = _aac_project_or_404(class_id, db, user)
-    draft = db.query(models.AacPlanRevisionModel).filter_by(project_id=project.id, state="draft").order_by(models.AacPlanRevisionModel.version.desc()).first()
-    active_ids = (draft.source_document_ids_json or []) if draft else []
-    rows = db.query(models.AacSourceDocumentModel).filter(models.AacSourceDocumentModel.project_id == project.id, models.AacSourceDocumentModel.owner_user_id == user.id, models.AacSourceDocumentModel.id.in_(active_ids)).order_by(models.AacSourceDocumentModel.created_at.desc()).all() if active_ids else []
+    rows = db.query(models.AacSourceDocumentModel).filter_by(project_id=project.id, owner_user_id=user.id).order_by(models.AacSourceDocumentModel.created_at.desc()).all()
     return [{"id": row.id, "purpose": row.purpose, "academic_year": row.academic_year, "display_filename": row.display_filename, "size_bytes": row.size_bytes, "extraction_state": row.extraction_state, "extraction_error": row.extraction_error, "sections": row.extracted_sections_json, "created_at": row.created_at} for row in rows]
 
 
@@ -13773,9 +13693,9 @@ def get_aac_deadline_candidates(class_id: int, db: Session = Depends(get_db), us
     School-calendar dates are never candidates for the controlling SEC deadline.
     """
     project = _aac_project_or_404(class_id, db, user)
-    draft = db.query(models.AacPlanRevisionModel).filter_by(project_id=project.id, state="draft").order_by(models.AacPlanRevisionModel.version.desc()).first()
-    active_ids = (draft.source_document_ids_json or []) if draft else []
-    specifications = db.query(models.AacSourceDocumentModel).filter(models.AacSourceDocumentModel.project_id == project.id, models.AacSourceDocumentModel.owner_user_id == user.id, models.AacSourceDocumentModel.purpose == "specification", models.AacSourceDocumentModel.id.in_(active_ids)).order_by(models.AacSourceDocumentModel.created_at.desc()).all() if active_ids else []
+    specifications = db.query(models.AacSourceDocumentModel).filter_by(
+        project_id=project.id, owner_user_id=user.id, purpose="specification"
+    ).order_by(models.AacSourceDocumentModel.created_at.desc()).all()
     source_state = [{
         "id": row.id,
         "display_filename": row.display_filename,
@@ -13820,12 +13740,7 @@ async def upload_aac_document(class_id: int, purpose: str = Form(...), academic_
         # Replacement retains older source records so approved revisions keep truthful references.
         db.query(models.AacSourceDocumentModel).filter_by(project_id=project.id, purpose=purpose, extraction_state="extracted").update({"extraction_state": "replaced"})
         row = models.AacSourceDocumentModel(project_id=project.id, owner_user_id=user.id, purpose=purpose, academic_year=academic_year, display_filename=filename, storage_key=storage_key, content_type=file.content_type or "application/octet-stream", size_bytes=len(raw), sha256=extracted["sha256"], extraction_state="extracted", extracted_sections_json=extracted["sections"])
-        db.add(row); db.flush()
-        draft = db.query(models.AacPlanRevisionModel).filter_by(project_id=project.id, state="draft").order_by(models.AacPlanRevisionModel.version.desc()).with_for_update().first()
-        if not draft: raise RuntimeError("AAC source needs an editable draft")
-        draft.source_document_ids_json = [*dict.fromkeys([*(draft.source_document_ids_json or []), row.id])]
-        draft.updated_at = datetime.utcnow()
-        db.commit(); db.refresh(row)
+        db.add(row); db.commit(); db.refresh(row)
     except Exception as exc:
         db.rollback()
         try:
