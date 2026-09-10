@@ -1,0 +1,68 @@
+name: AAC Gunicorn hang diagnostic
+
+on:
+  push:
+    branches:
+      - diag/aac-gunicorn-hang
+    paths:
+      - .github/workflows/aac-gunicorn-hang-diagnostic.yml
+      - diagnostics/aac_gunicorn_hang/**
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: "Production Python minor version"
+        required: true
+        default: "3.10"
+      postgres_major:
+        description: "Production PostgreSQL major version"
+        required: true
+        default: "17"
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:${{ inputs.postgres_major }}
+        env:
+          POSTGRES_DB: aac_diagnostic
+          POSTGRES_USER: aac_diagnostic
+          POSTGRES_PASSWORD: diagnostic-only-not-a-secret
+        options: >-
+          --health-cmd "pg_isready -U aac_diagnostic -d aac_diagnostic"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+      - name: Install isolated backend runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt gunicorn==25.1.0
+      - name: Compare exact healthy and suspect revisions
+        env:
+          DIAGNOSTIC_DATABASE_URL: postgresql+psycopg2://aac_diagnostic:diagnostic-only-not-a-secret@127.0.0.1:5432/aac_diagnostic
+          DIAGNOSTIC_WORKDIR: ${{ runner.temp }}/aac-gunicorn-diagnostic
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONUTF8: "1"
+        run: |
+          timeout 720s python diagnostics/aac_gunicorn_hang/run_compare.py \
+            --healthy c1c9cc15d374f6af6a139b350a5b8c2e722a2690 \
+            --suspect d58e505b298d10ecad112e10b7d1046e61e58d00
+      - name: Upload sanitized diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aac-gunicorn-hang-diagnostic
+          path: ${{ runner.temp }}/aac-gunicorn-diagnostic/logs
+          if-no-files-found: warn
+          retention-days: 7
