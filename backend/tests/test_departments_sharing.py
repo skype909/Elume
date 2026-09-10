@@ -1,6 +1,8 @@
+import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from jose import jwt
@@ -172,6 +174,64 @@ class DepartmentSharingModelTests(unittest.TestCase):
         self.assertEqual(self.client.post(f"/collab/templates/{template.id}/use-shared", json={"class_id": recipient_class.id}, headers=self.auth(self.non_member)).status_code, 404)
         self.assertEqual(self.client.post(f"/collab/templates/{template.id}/use-shared", json={"class_id": recipient_class.id}, headers=self.auth(self.other_school_teacher)).status_code, 404)
         self.assertEqual(self.client.post(f"/collab/templates/{template.id}/use", json={"class_id": recipient_class.id}, headers=self.auth(self.member)).status_code, 404)
+
+    def test_saved_populated_board_reopens_from_persisted_teacher_snapshot(self):
+        classroom = models.ClassModel(owner_user_id=self.owner.id, name="5A", subject="Physics")
+        self.db.add(classroom); self.db.flush()
+        snapshot = {
+            "strokes": [{"id": "drawing", "createdBy": "teacher", "points": [{"x": 1, "y": 2}]}],
+            "objects": [
+                {"id": "note", "type": "sticky", "text": "Investigate", "createdBy": "teacher"},
+                {"id": "image", "type": "image", "src": "data:image/png;base64,AA==", "createdBy": "teacher"},
+            ],
+        }
+        events = [
+            {"type": "stroke", "stroke": snapshot["strokes"][0]},
+            *[{"type": "object-create", "object": obj} for obj in snapshot["objects"]],
+        ]
+        source_json = json.dumps(events, separators=(",", ":"))
+        session = models.CollabSessionModel(
+            class_id=classroom.id,
+            session_code="SAVE01",
+            title="Forces starter",
+            state="lobby",
+        )
+        self.db.add(session); self.db.commit()
+
+        started = self.client.post("/collab/SAVE01/start", json={"snapshot": snapshot}, headers=self.auth(self.owner))
+        self.assertEqual(started.status_code, 200, started.text)
+        ended = self.client.post("/collab/SAVE01/end", headers=self.auth(self.owner))
+        self.assertEqual(ended.status_code, 200, ended.text)
+
+        saved = self.client.post("/collab/SAVE01/save-template", json={"title": "Forces starter"}, headers=self.auth(self.owner))
+        self.assertEqual(saved.status_code, 200, saved.text)
+        template_id = saved.json()["template"]["id"]
+        template = self.db.get(models.CollabTemplateModel, template_id)
+        self.assertEqual(template.board_state_json, source_json)
+
+        used = self.client.post(f"/collab/templates/{template_id}/use", json={"class_id": classroom.id}, headers=self.auth(self.owner))
+        self.assertEqual(used.status_code, 200, used.text)
+        reopened_code = used.json()["session_code"]
+        reopened = self.db.query(models.CollabSessionModel).filter_by(session_code=reopened_code).one()
+        self.assertEqual(reopened.clean_snapshot_json, source_json)
+        self.assertEqual(main._get_collab_history(reopened_code, "teacher-main"), events)
+
+        # Simulate leaving the page after a process-memory history loss. The
+        # websocket path must restore the persisted template before replaying.
+        main._clear_collab_session_history(reopened_code)
+        with patch.object(main, "SessionLocal", return_value=self.db):
+            self.assertEqual(main._collab_history_for_socket_replay(reopened_code, "teacher-main"), events)
+        self.assertEqual(main._get_collab_history(reopened_code, "teacher-main"), events)
+
+        # A freshly mounted board receives replay-marked events, allowing the
+        # editable teacher client to distinguish saved content from an echo of
+        # its current local action.
+        main._clear_collab_session_history(reopened_code)
+        with patch.object(main, "SessionLocal", return_value=self.db):
+            with self.client.websocket_connect(f"/ws/collab/{reopened_code}/teacher-main") as socket:
+                replayed = [socket.receive_json() for _ in events]
+        self.assertEqual([message["type"] for message in replayed], [event["type"] for event in events])
+        self.assertTrue(all(message.get("replay") is True for message in replayed))
 
     def test_school_admin_department_member_can_use_shared_resources(self):
         department = models.SchoolDepartmentModel(school_id=self.school_one.id, name="Science")

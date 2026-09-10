@@ -1,4 +1,4 @@
-import { findTopObjectAtPoint, type BoardObject } from "./CollabBoard";
+import { findTopObjectAtPoint, shouldApplyReplayedBoardMutation, type BoardObject } from "./CollabBoard";
 
 function image(id: string, x = 48, y = 48, w = 320, h = 220): BoardObject {
   return {
@@ -32,4 +32,11 @@ test("a pasted image can be deselected, reselected, and resized without losing i
 test("overlapping images select the topmost object", () => {
   const objects = [image("lower"), image("upper", 80, 80)];
   expect(findTopObjectAtPoint(objects, { x: 120, y: 120 })?.id).toBe("upper");
+});
+
+test("saved teacher board replay is applied after reopening while live self echoes remain ignored", () => {
+  expect(shouldApplyReplayedBoardMutation(false, "teacher", "teacher", false)).toBe(false);
+  expect(shouldApplyReplayedBoardMutation(true, "teacher", "teacher", false)).toBe(true);
+  expect(shouldApplyReplayedBoardMutation(true, "teacher", "teacher", true)).toBe(true);
+  expect(shouldApplyReplayedBoardMutation(false, "student", "teacher", false)).toBe(true);
 });

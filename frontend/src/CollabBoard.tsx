@@ -72,7 +72,16 @@ type SocketPayload = (
     | { type: "object-update"; object: BoardObject }
     | { type: "object-delete"; id: string }
     | { type: "snapshot-sync"; snapshot: BoardSnapshot; sourceId: string }
-) & { board_round?: number };
+) & { board_round?: number; replay?: boolean };
+
+export function shouldApplyReplayedBoardMutation(
+    replay: boolean | undefined,
+    createdBy: string,
+    participantId: string,
+    readOnly: boolean
+) {
+    return Boolean(replay) || readOnly || createdBy !== participantId;
+}
 
 type NoteItem = {
     id: number;
@@ -1301,7 +1310,7 @@ export default function CollabBoard({
 
                 if (data.type === "stroke" && data.stroke) {
                     const incoming = data.stroke;
-                    if (!readOnly && incoming.createdBy === participantId) return;
+                    if (!shouldApplyReplayedBoardMutation(data.replay, incoming.createdBy, participantId, readOnly)) return;
                     remotePreviewStrokesRef.current.delete(incoming.id);
                     strokesRef.current.push(incoming);
                     redrawCommittedRef.current();
@@ -1320,7 +1329,7 @@ export default function CollabBoard({
 
                 if (data.type === "object-create" && data.object) {
                     const incoming = data.object;
-                    if (!readOnly && incoming.createdBy === participantId) return;
+                    if (!shouldApplyReplayedBoardMutation(data.replay, incoming.createdBy, participantId, readOnly)) return;
 
                     setObjects((prev) => {
                         const exists = prev.some((obj) => obj.id === incoming.id);
@@ -1332,7 +1341,7 @@ export default function CollabBoard({
 
                 if (data.type === "object-update" && data.object) {
                     const incoming = data.object;
-                    if (!readOnly && incoming.createdBy === participantId) return;
+                    if (!shouldApplyReplayedBoardMutation(data.replay, incoming.createdBy, participantId, readOnly)) return;
 
                     setObjects((prev) =>
                         prev.map((obj) => {

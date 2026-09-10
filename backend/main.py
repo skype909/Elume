@@ -9820,6 +9820,34 @@ def _get_collab_history(session_code: str, room_key: str) -> list[dict]:
     return collab_room_history.get(key, [])
 
 
+def _collab_history_for_socket_replay(session_code: str, room_key: str) -> list[dict]:
+    """Return room history, restoring a saved teacher template after a process cache loss.
+
+    Live collaboration history is intentionally process-local. A saved board,
+    however, has a persisted teacher-only source on its session, so a newly
+    opened template must not depend on the request that created the session
+    being handled by the same worker as the WebSocket.
+    """
+    events = _get_collab_history(session_code, room_key)
+    if events or room_key != "teacher-main":
+        return events
+
+    db = SessionLocal()
+    try:
+        session = (
+            db.query(CollabSessionModel)
+            .filter(CollabSessionModel.session_code == session_code)
+            .first()
+        )
+        if not session or not session.clean_snapshot_json:
+            return []
+        events = _decode_collab_events(session.clean_snapshot_json)
+        _replace_collab_history(session_code, room_key, events)
+        return events
+    finally:
+        db.close()
+
+
 def _collab_round_for_session(session_code: str) -> int:
     cached = collab_session_rounds.get(session_code)
     if cached is not None:
@@ -9936,8 +9964,11 @@ async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
 
     try:
         current_round = _collab_round_for_session(session_code)
-        for evt in _get_collab_history(session_code, room_key):
-            await websocket.send_json({**deepcopy(evt), "board_round": current_round})
+        for evt in _collab_history_for_socket_replay(session_code, room_key):
+            # Replayed history must be distinguishable from an echo of a local
+            # teacher action. Otherwise the teacher client discards its own
+            # saved strokes/objects while reopening a board.
+            await websocket.send_json({**deepcopy(evt), "board_round": current_round, "replay": True})
 
         await collab_room_manager.broadcast(session_code, room_key, {
             "type": "presence",
@@ -11713,6 +11744,10 @@ def _use_collab_template(template: CollabTemplateModel, payload: CollabTemplateU
         room_count=max(1, min(12, int(template.room_count or 4))),
         timer_minutes=template.timer_minutes,
         board_round=1,
+        # Persist the same immutable teacher-only source as the template.
+        # The socket may be served after an application restart or by a worker
+        # without the process-local history populated by this request.
+        clean_snapshot_json=template.board_state_json,
     )
     db.add(session)
     db.commit()
