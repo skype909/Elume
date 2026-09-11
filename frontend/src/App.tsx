@@ -33,7 +33,7 @@ import ResetPasswordPage from "./ResetPasswordPage";
 import VerifyEmailPage from "./VerifyEmailPage";
 import StudentPage from "./StudentPage";
 import StudentExamPapersPage from "./StudentExamPapersPage";
-import PublicExamCollectionPage, { PublicExamTopicPage } from "./PublicExamCollectionPage";
+import PublicExamCollectionPage, { PublicExamLevelPage, PublicExamTopicPage } from "./PublicExamCollectionPage";
 import BillingSuccessPage from "./BillingSuccessPage";
 import BillingCancelPage from "./BillingCancelPage";
 import BillingOnboardingPage from "./BillingOnboardingPage";
@@ -2414,7 +2414,9 @@ export default function App() {
         <Route path="/student" element={<StudentPage />} />
         <Route path="/student/exam-papers" element={<StudentExamPapersPage />} />
         <Route path="/student/exam-papers/mr-fitz-maths-mini-papers" element={<PublicExamCollectionPage />} />
-        <Route path="/student/exam-papers/mr-fitz-maths-mini-papers/algebra" element={<PublicExamTopicPage topicId="algebra" />} />
+        <Route path="/student/exam-papers/mr-fitz-maths-mini-papers/algebra" element={<PublicExamTopicPage legacyTopicId="algebra" />} />
+        <Route path="/student/exam-papers/mr-fitz-maths-mini-papers/:levelId/:topicId" element={<PublicExamTopicPage />} />
+        <Route path="/student/exam-papers/mr-fitz-maths-mini-papers/:levelId" element={<PublicExamLevelPage />} />
         <Route path="/student/:token" element={<StudentClassPage />} />
         <Route path="/s/:token" element={<StudentClassPage />} />
         <Route
