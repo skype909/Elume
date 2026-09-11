@@ -13,6 +13,7 @@ describe("PublicExamCollectionPage", () => {
         id: "mr-fitz-maths-mini-papers",
         title: "Mr Fitz Maths Mini Papers",
         description: "Original Higher Level algebra practice",
+        topics: [{ id: "algebra", title: "Algebra", published_paper_count: 2 }],
         items: [
           { id: "paper-1", title: "Mr Fitz Maths - Algebra Mini Paper 1", cycle: "Leaving Certificate", level: "Higher Level", topic: "Algebra", duration: "30 minutes", marks: "60 marks", download_filename: "Mr-Fitz-Maths-Algebra-Mini-Paper-1.pdf" },
           { id: "paper-4", title: "Mr Fitz Maths - Algebra Mini Paper 4", cycle: "Leaving Certificate", level: "Higher Level", topic: "Algebra", duration: "30 minutes", marks: "60 marks", badge: "Challenge", download_filename: "Mr-Fitz-Maths-Algebra-Mini-Paper-4.pdf" },
@@ -21,18 +22,8 @@ describe("PublicExamCollectionPage", () => {
     } as Response);
 
     render(<PublicExamCollectionPage />);
-    await waitFor(() => expect(screen.getByText("Mr Fitz Maths - Algebra Mini Paper 1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Algebra")).toBeInTheDocument());
 
-    const titles = screen.getAllByRole("heading", { level: 2 }).map((node) => node.textContent);
-    expect(titles).toEqual([
-      "Mr Fitz Maths - Algebra Mini Paper 1",
-      "Mr Fitz Maths - Algebra Mini Paper 4",
-    ]);
-    expect(screen.getByText("Challenge")).toBeInTheDocument();
-    expect(screen.getAllByText(/Leaving Certificate/)).toHaveLength(2);
-    expect(screen.getAllByRole("link", { name: /Open \/ download/i })[0]).toHaveAttribute(
-      "href",
-      "/api/public-exam-collections/mr-fitz-maths-mini-papers/items/paper-1/download",
-    );
+    expect(screen.getByRole("link", { name: /Algebra/i })).toHaveAttribute("href", "/#/student/exam-papers/mr-fitz-maths-mini-papers/algebra");
   });
 });

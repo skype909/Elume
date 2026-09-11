@@ -12476,8 +12476,14 @@ def list_exam_library_items(
 @app.get("/public-exam-collections/{collection_id}")
 def get_public_exam_collection(collection_id: str):
     collection = _public_exam_collection_or_404(collection_id)
-    fields = ("id", "title", "cycle", "level", "topic", "duration", "marks", "badge", "download_filename")
-    return {"id": collection["id"], "title": collection["title"], "description": collection["description"], "items": [{key: item.get(key) for key in fields} for item in collection.get("items", []) if isinstance(item, dict) and item.get("published")]}
+    fields = ("id", "title", "cycle", "level", "topic", "topic_id", "duration", "marks", "badge", "download_filename")
+    items = [{key: item.get(key) for key in fields} for item in collection.get("items", []) if isinstance(item, dict) and item.get("published")]
+    topics = []
+    for topic in collection.get("topics", []):
+        if not isinstance(topic, dict) or not topic.get("published") or not topic.get("id") or not topic.get("title"):
+            continue
+        topics.append({"id": topic["id"], "title": topic["title"], "published_paper_count": sum(item.get("topic_id") == topic["id"] for item in items)})
+    return {"id": collection["id"], "title": collection["title"], "description": collection["description"], "topics": topics, "items": items}
 
 
 @app.get("/public-exam-collections/{collection_id}/items/{item_id}/download")

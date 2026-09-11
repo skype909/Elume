@@ -18,11 +18,12 @@ function mockCatalogue(data: unknown, ok = true) {
 }
 
 describe("StudentExamPapersPage", () => {
-  test("shows the preparation state for an empty catalogue without authentication", async () => {
+  test("keeps original-practice navigation available when the official catalogue is empty", async () => {
     mockCatalogue([]);
     render(<StudentExamPapersPage />);
 
-    expect(await screen.findByText(/being prepared for students/i)).toBeInTheDocument();
+    expect(await screen.findByText(/No official exam papers are available/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Mr Fitz Maths Mini Papers/i })).toHaveAttribute("href", "/#/student/exam-papers/mr-fitz-maths-mini-papers");
     expect(global.fetch).toHaveBeenCalledWith("/data/public_exam_library.json", { credentials: "omit" });
   });
 

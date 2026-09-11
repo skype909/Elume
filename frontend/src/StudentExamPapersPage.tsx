@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowUpRight, BookOpen, ChevronLeft, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, ArrowUpRight, BookOpen, ChevronLeft, Folder, SlidersHorizontal } from "lucide-react";
 
 type PublicExamPaper = {
   id: string;
@@ -131,19 +131,22 @@ export default function StudentExamPapersPage() {
             </div>
             <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Exam Papers</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-50 sm:text-base">
-              Find official Junior Cycle and Leaving Certificate past papers.
+              Browse official exam papers and original practice papers.
             </p>
           </header>
 
           <div className="p-5 sm:p-7">
-            <a href="/#/student/exam-papers/mr-fitz-maths-mini-papers" className="mb-5 block rounded-2xl border border-teal-200 bg-teal-50 p-5 transition hover:bg-teal-100"><p className="font-black text-teal-900">Mr Fitz Maths Mini Papers</p><p className="mt-1 text-sm leading-6 text-teal-800">Original Higher Level algebra practice: four 30-minute mini-papers, with a Challenge in Paper 4.</p></a>
+            <a href="/#/student/exam-papers/mr-fitz-maths-mini-papers" className="mb-5 flex min-h-[96px] items-center justify-between gap-4 rounded-2xl border border-teal-200 bg-teal-50 p-5 text-teal-950 transition hover:border-teal-400 hover:bg-teal-100 focus:outline-none focus:ring-4 focus:ring-teal-200">
+              <span className="flex min-w-0 items-center gap-4"><span className="rounded-xl bg-white p-3 text-teal-700 shadow-sm"><Folder aria-hidden="true" size={25} /></span><span><span className="block text-lg font-black">Mr Fitz Maths Mini Papers</span><span className="mt-1 block text-sm font-bold text-teal-800">Browse topics</span></span></span>
+              <ArrowRight aria-hidden="true" className="shrink-0" size={22} />
+            </a>
             {status === "loading" ? (
               <div className="rounded-2xl border border-blue-100 bg-blue-50 px-5 py-5 text-sm font-medium text-blue-900">
                 Loading exam papers…
               </div>
             ) : items.length === 0 ? (
               <div className="rounded-2xl border border-blue-100 bg-blue-50 px-5 py-5 text-sm leading-6 text-blue-900">
-                Exam papers are being prepared for students. Please check back soon.
+                No official exam papers are available right now. You can still browse original practice papers above.
               </div>
             ) : (
               <>
