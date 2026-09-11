@@ -11202,6 +11202,27 @@ def update_teacher_planner(
 LEGACY_PUBLIC_UPLOAD_DIRS = {"notes", "tests", "posts", "whiteboards", "school-logos"}
 EXAM_LIBRARY_DIR = Path(os.getenv("ELUME_EXAM_LIBRARY_DIR") or "/var/lib/elume/exam-library")
 EXAM_LIBRARY_MANIFEST = EXAM_LIBRARY_DIR / "manifest.json"
+PUBLIC_EXAM_LIBRARY_DIR = Path(os.getenv("ELUME_PUBLIC_EXAM_LIBRARY_DIR") or "/var/lib/elume/public-exam-library")
+PUBLIC_EXAM_COLLECTIONS_MANIFEST = Path(os.getenv("ELUME_PUBLIC_EXAM_COLLECTIONS_MANIFEST") or "/var/lib/elume/public-exam-collections.json")
+
+def _public_exam_collection_or_404(collection_id: str) -> dict:
+    try:
+        raw = json.loads(PUBLIC_EXAM_COLLECTIONS_MANIFEST.read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(status_code=404, detail="Published collection not found")
+    collection = next((x for x in raw.get("collections", []) if isinstance(x, dict) and x.get("id") == collection_id and x.get("published")), None) if isinstance(raw, dict) else None
+    if not collection: raise HTTPException(status_code=404, detail="Published collection not found")
+    return collection
+
+def _public_exam_item_or_404(collection_id: str, item_id: str):
+    collection = _public_exam_collection_or_404(collection_id)
+    item = next((x for x in collection.get("items", []) if isinstance(x, dict) and x.get("id") == item_id and x.get("published")), None)
+    if not item: raise HTTPException(status_code=404, detail="Published paper not found")
+    path = (PUBLIC_EXAM_LIBRARY_DIR / str(item.get("path") or "")).resolve()
+    try: path.relative_to(PUBLIC_EXAM_LIBRARY_DIR.resolve())
+    except ValueError: raise HTTPException(status_code=404, detail="Published paper not found")
+    if not path.is_file(): raise HTTPException(status_code=404, detail="Published paper not found")
+    return collection, item, path
 
 
 def _normalise_exam_library_level(
@@ -12450,6 +12471,19 @@ def list_exam_library_items(
         if _matches(item.subject, subject) and _matches(item.cycle, cycle) and _matches(item.level, level)
     ]
     return items
+
+
+@app.get("/public-exam-collections/{collection_id}")
+def get_public_exam_collection(collection_id: str):
+    collection = _public_exam_collection_or_404(collection_id)
+    fields = ("id", "title", "cycle", "level", "topic", "duration", "marks", "badge", "download_filename")
+    return {"id": collection["id"], "title": collection["title"], "description": collection["description"], "items": [{key: item.get(key) for key in fields} for item in collection.get("items", []) if isinstance(item, dict) and item.get("published")]}
+
+
+@app.get("/public-exam-collections/{collection_id}/items/{item_id}/download")
+def download_public_exam_collection_item(collection_id: str, item_id: str):
+    _, item, path = _public_exam_item_or_404(collection_id, item_id)
+    return FileResponse(path, media_type="application/pdf", filename=str(item["download_filename"]))
 
 
 @app.get("/exam-library/items/{item_id}", response_model=schemas.ExamLibraryItemOut)

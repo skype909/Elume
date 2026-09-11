@@ -136,6 +136,7 @@ export default function StudentExamPapersPage() {
           </header>
 
           <div className="p-5 sm:p-7">
+            <a href="/#/student/exam-papers/mr-fitz-maths-mini-papers" className="mb-5 block rounded-2xl border border-teal-200 bg-teal-50 p-5 transition hover:bg-teal-100"><p className="font-black text-teal-900">Mr Fitz Maths Mini Papers</p><p className="mt-1 text-sm leading-6 text-teal-800">Original Higher Level algebra practice: four 30-minute mini-papers, with a Challenge in Paper 4.</p></a>
             {status === "loading" ? (
               <div className="rounded-2xl border border-blue-100 bg-blue-50 px-5 py-5 text-sm font-medium text-blue-900">
                 Loading exam papers…
