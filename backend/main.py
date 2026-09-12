@@ -8603,6 +8603,26 @@ def _delete_class_dependencies(
     if not class_ids:
         return
 
+    # All class-deletion callers (including admin hard-delete) must retain AAC
+    # history. Lock parents before checking, then projects/students in the same
+    # order as progress writes. This also serializes first-save versus deletion.
+    db.query(ClassModel.id).filter(ClassModel.id.in_(class_ids)).order_by(ClassModel.id).with_for_update().all()
+    project_ids = [row.id for row in db.query(models.AacProjectModel.id)
+                   .filter(models.AacProjectModel.class_id.in_(class_ids))
+                   .order_by(models.AacProjectModel.id).with_for_update().all()]
+    student_ids = [row.id for row in db.query(StudentModel.id)
+                   .filter(StudentModel.class_id.in_(class_ids))
+                   .order_by(StudentModel.id).with_for_update().all()]
+    retained = db.query(models.AacStudentProgressModel.id).filter(
+        models.AacStudentProgressModel.project_id.in_(project_ids)
+        | models.AacStudentProgressModel.student_id.in_(student_ids)
+    ).first()
+    if retained:
+        raise HTTPException(status_code=409, detail={
+            "code": "AAC_RETAINED_HISTORY",
+            "message": "This class has retained AAC student history and cannot be permanently deleted, including through account deletion. Keep the class and archive students instead; their history must be preserved.",
+        })
+
     assessment_ids = [
         row.id
         for row in db.query(ClassAssessmentModel.id)
