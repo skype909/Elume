@@ -83,9 +83,14 @@ print(klass.id); print(jwt.encode({'sub':str(user.id)},os.environ['DIAGNOSTIC_JW
     class_id, token = result.stdout.strip().splitlines()[-2:]; return int(class_id), token
 
 def dump_stacks(process: subprocess.Popen[bytes], log: Path) -> None:
-    try: os.killpg(process.pid, signal.SIGUSR1)
+    ids = [str(process.pid)]
+    try: ids += Path(f"/proc/{process.pid}/task/{process.pid}/children").read_text().split()
+    except OSError: pass
+    snapshot = subprocess.run(["ps","-L","-o","pid,ppid,tid,stat,wchan:32,comm","--pid",','.join(ids)],capture_output=True,text=True,timeout=5)
+    write(log,"DIAGNOSTIC:process-thread-state\n"+snapshot.stdout)
+    try: os.killpg(process.pid, signal.SIGRTMIN)
     except ProcessLookupError: pass
-    time.sleep(1); write(log, "DIAGNOSTIC: SIGUSR1 sent to the disposable Gunicorn process group for test-only faulthandler capture")
+    time.sleep(1); write(log, "DIAGNOSTIC: SIGRTMIN sent to disposable master/workers for faulthandler capture; SIGUSR1 is reserved by Gunicorn")
 
 def run_revision(label: str, revision: str, port: int, workdir: Path, database_url: str) -> None:
     source = workdir / label; subprocess.run(["git", "worktree", "add", "--detach", str(source), revision], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
