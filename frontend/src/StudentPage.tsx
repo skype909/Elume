@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowUpRight, BookOpen, BrainCircuit, UsersRound } from "lucide-react";
+import { ArrowUpRight, BookOpen, BrainCircuit, CircleHelp, UsersRound } from "lucide-react";
 import ELogo2 from "./assets/ELogo2.png";
 import {
     readRememberedStudentClasses,
@@ -60,7 +60,7 @@ const MODE_CONFIG: Record<JoinMode, {
         codeLabel: "CLASS CODE",
         placeholder: "Enter class code",
         description: "Use the class code your teacher gave you.",
-        pinDescription: "Enter the class PIN your teacher gave you.",
+        pinDescription: "Enter the Teacher Admin PIN set by your teacher.",
         icon: BookOpen,
         surface: "border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-teal-50 shadow-emerald-100/70",
         badge: "from-emerald-600 via-teal-500 to-cyan-500",
@@ -175,7 +175,6 @@ function StudentJoinCard(props: {
     loading: boolean;
     error: string;
     onSubmit: () => void;
-    autoFocused?: boolean;
 }) {
     const {
         mode,
@@ -188,12 +187,12 @@ function StudentJoinCard(props: {
         loading,
         error,
         onSubmit,
-        autoFocused,
     } = props;
 
     const isClass = mode === "class";
     const config = MODE_CONFIG[mode];
     const Icon = config.icon;
+    const [pinHelpOpen, setPinHelpOpen] = useState(false);
 
     return (
         <div className={`rounded-[28px] border shadow-xl backdrop-blur-xl ${config.surface}`}>
@@ -237,7 +236,6 @@ function StudentJoinCard(props: {
                             </label>
                             <input
                                 id={`${mode}-code`}
-                                autoFocus={autoFocused}
                                 value={code}
                                 onChange={(e) => onCodeChange(cleanCodeInput(e.target.value))}
                                 onKeyDown={(e) => {
@@ -254,21 +252,38 @@ function StudentJoinCard(props: {
 
                         {isClass ? (
                             <div>
-                                <label
-                                    htmlFor={`${mode}-pin`}
-                                    className="mb-2 block text-sm font-semibold text-slate-700"
-                                >
-                                    CLASS PIN
-                                </label>
+                                <div className="mb-2 flex items-center gap-2">
+                                    <label
+                                        htmlFor={`${mode}-pin`}
+                                        className="text-sm font-semibold text-slate-700"
+                                    >
+                                        TEACHER ADMIN PIN
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={() => setPinHelpOpen((open) => !open)}
+                                        aria-label="What is the Teacher Admin PIN?"
+                                        aria-expanded={pinHelpOpen}
+                                        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                                    >
+                                        <CircleHelp aria-hidden="true" size={14} strokeWidth={2.5} />
+                                    </button>
+                                </div>
+                                {pinHelpOpen ? (
+                                    <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-900">
+                                        This is the Admin PIN set by your teacher in Dashboard → Teacher Admin. It is different from the Class Code.
+                                    </div>
+                                ) : null}
                                 <input
                                     id={`${mode}-pin`}
+                                    type="password"
                                     value={pin}
                                     onChange={(e) => onPinChange(cleanPinInput(e.target.value))}
                                     onKeyDown={(e) => {
                                         if (e.key === "Enter") onSubmit();
                                     }}
                                     inputMode="numeric"
-                                    placeholder="Enter class PIN"
+                                    placeholder="Enter Teacher Admin PIN"
                                     className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-4 text-lg font-semibold tracking-[0.18em] text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
                                     maxLength={6}
                                 />
@@ -604,7 +619,6 @@ export default function StudentPage() {
                                 loading={classLoading}
                                 error={classError}
                                 onSubmit={() => submitJoin("class")}
-                                autoFocused={openMode === "class"}
                             />
 
                             <StudentJoinCard
@@ -621,7 +635,6 @@ export default function StudentPage() {
                                 loading={quizLoading}
                                 error={quizError}
                                 onSubmit={() => submitJoin("quiz")}
-                                autoFocused={openMode === "quiz"}
                             />
 
                             <StudentJoinCard
@@ -638,7 +651,6 @@ export default function StudentPage() {
                                 loading={collabLoading}
                                 error={collabError}
                                 onSubmit={() => submitJoin("collab")}
-                                autoFocused={openMode === "collab"}
                             />
 
                             <section className="mt-8 border-t border-slate-200 pt-8">
