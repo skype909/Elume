@@ -171,8 +171,8 @@ export default function AacPlannerPage({
   const [documents, setDocuments] = useState<SourceDocument[]>([]);
   const [deadlineReview, setDeadlineReview] = useState<DeadlineReview | null>(null);
   const [suggestedDeadline, setSuggestedDeadline] = useState<DeadlineCandidate | null>(null);
-  const [title, setTitle] = useState("Physics in Practice");
-  const [subject, setSubject] = useState("Physics");
+  const [title, setTitle] = useState("");
+  const [subject, setSubject] = useState("");
   const [examYear, setExamYear] = useState("");
   const [currentStage, setCurrentStage] = useState("fifth_year");
   const [inputs, setInputs] = useState<Record<string, any>>(defaultInputs);
@@ -203,6 +203,15 @@ export default function AacPlannerPage({
   const [showRecalculateDialog, setShowRecalculateDialog] = useState(false);
   const [showNewDraftDialog, setShowNewDraftDialog] = useState(false);
   const [startingNewDraft, setStartingNewDraft] = useState(false);
+  const progressEligible = Boolean(enabled && project?.revision && !startingNewDraft && (stages.length > 0 || project.revision.plan?.retired_stages?.length));
+  const progressDisabled = dirty || saving || busy;
+  const openProgress = () => {
+    if (progressEligible && !progressDisabled) setShowProgress(true);
+  };
+  const progressButtonClass = "min-h-12 rounded-xl bg-teal-700 px-5 py-3 text-base font-bold text-white disabled:opacity-50";
+  const progressGuidance = dirty
+    ? "Save your tracker to continue to student progress."
+    : "Next: track each student’s progress through these stages.";
   const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
   const [reviewFocusRequest, setReviewFocusRequest] = useState(0);
   const finalDeadlineRef = useRef<HTMLInputElement>(null);
@@ -530,7 +539,7 @@ export default function AacPlannerPage({
         return;
       }
       setSetupStep(4);
-      setNotice("Tracker saved and suggested dates added. Review or edit every date before later approval.");
+      setNotice("Tracker saved and suggested dates added. Review or edit the stages and dates at any time; save any changes before opening student progress.");
       return;
     }
     setSetupStep(4);
@@ -740,7 +749,7 @@ export default function AacPlannerPage({
           Upload your brief, review the key dates and organise your stages.
         </p>
       </header>
-      {enabled && project?.revision && !startingNewDraft && (stages.length > 0 || Boolean(project.revision.plan?.retired_stages?.length)) && <div><button type="button" disabled={dirty || saving || busy} onClick={() => setShowProgress(true)} className="rounded-xl bg-teal-700 px-5 py-3 font-bold text-white disabled:opacity-50">Track this class</button>{dirty && <span className="ml-3">Save the plan before opening student progress.</span>}</div>}
+      {progressEligible && <div className="flex flex-wrap items-center gap-3"><button type="button" disabled={progressDisabled} onClick={openProgress} className={progressButtonClass}>Track this class</button><p className="text-base text-slate-700">{progressGuidance}</p></div>}
       {removedStageReview.length > 0 && <div role="dialog" aria-label="Review stage removal" className="rounded-2xl border border-amber-300 bg-amber-50 p-5"><h2 className="text-xl font-bold">Review stages with recorded progress</h2><p>Removing these stages hides them from the active grid. Student check-ins and the removed stage details will remain in read-only history.</p><ul>{removedStageReview.map((stage) => <li key={stage.id}>{stage.name}</li>)}</ul><div className="mt-3 flex gap-3"><button type="button" disabled={saving} onClick={() => setRemovedStageReview([])} className="rounded-xl border px-4 py-2">Keep editing</button><button type="button" disabled={saving} onClick={() => void save({ reviewedRemovedIds: removedStageReview.map((s) => s.id) })} className="rounded-xl bg-amber-800 px-4 py-2 font-bold text-white">Remove reviewed stages and retain history</button></div></div>}
       {error && (
         <div
@@ -785,18 +794,18 @@ export default function AacPlannerPage({
             Create AAC tracker
           </h2>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <input
-              aria-label="Project title"
+            <label className="text-base font-semibold">Brief title<input
+              placeholder="Brief title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="rounded-xl border p-3"
-            />
-            <input
-              aria-label="Subject"
+              className="mt-1 w-full min-w-0 rounded-xl border p-3 font-normal"
+            /></label>
+            <label className="text-base font-semibold">Subject<input
+              placeholder="Subject"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              className="rounded-xl border p-3"
-            />
+              className="mt-1 w-full min-w-0 rounded-xl border p-3 font-normal"
+            /></label>
             <input
               aria-label="Examination year"
               value={examYear}
@@ -830,8 +839,7 @@ export default function AacPlannerPage({
             </label>
           </div>
           <p className="mt-3 text-sm text-slate-600">
-            30 minutes is the editable default. Physics starts with a planning
-            template only, not verified official requirements.
+            30 minutes per week is the editable default. Upload your brief to review its stages and key dates.
           </p>
           <button
             disabled={busy || !title.trim() || !subject.trim()}
@@ -989,7 +997,17 @@ export default function AacPlannerPage({
           <section className={`order-1 rounded-3xl bg-white p-6 shadow-sm ${setupStep === 1 ? "" : "hidden"}`}>
             <h3 className="!text-3xl font-extrabold leading-tight">Let’s get started…</h3>
             <p className="mt-1 text-sm text-slate-600">Upload the specification or brief for your subject. We’ll help you find the important dates and build a plan you can adjust.</p>
-            {startingNewDraft && <div className="mt-4 rounded-2xl border border-teal-200 bg-teal-50 p-4"><p className="font-extrabold text-teal-950">Set up your new AAC tracker</p><div className="mt-3 grid gap-3 md:grid-cols-2"><input aria-label="New project title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Tracker title" className="rounded-xl border p-3" /><input aria-label="New project subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Subject" className="rounded-xl border p-3" /><input aria-label="New examination year" value={examYear} onChange={(event) => setExamYear(event.target.value)} placeholder="Examination year (optional)" className="rounded-xl border p-3" /><select aria-label="New current project stage" value={currentStage} onChange={(event) => setCurrentStage(event.target.value)} className="rounded-xl border p-3"><option value="fifth_year">Fifth Year</option><option value="sixth_year">Sixth Year</option><option value="underway">Already underway</option></select></div><button type="button" disabled={busy || !title.trim() || !subject.trim()} onClick={() => void create()} className="mt-4 rounded-xl bg-teal-700 px-4 py-2 font-bold text-white disabled:opacity-50">Create AAC tracker</button></div>}
+            {startingNewDraft && <div className="mt-4 rounded-2xl border border-teal-200 bg-teal-50 p-4">
+              <p className="font-extrabold text-teal-950">Set up your new AAC tracker</p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="text-base font-semibold">Brief title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Brief title" className="mt-1 w-full min-w-0 rounded-xl border p-3 font-normal" /></label>
+                <label className="text-base font-semibold">Subject<input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Subject" className="mt-1 w-full min-w-0 rounded-xl border p-3 font-normal" /></label>
+                <input aria-label="New examination year" value={examYear} onChange={(event) => setExamYear(event.target.value)} placeholder="Examination year (optional)" className="rounded-xl border p-3" />
+                <select aria-label="New current project stage" value={currentStage} onChange={(event) => setCurrentStage(event.target.value)} className="rounded-xl border p-3"><option value="fifth_year">Fifth Year</option><option value="sixth_year">Sixth Year</option><option value="underway">Already underway</option></select>
+              </div>
+              <p className="mt-3 text-sm text-slate-600">30 minutes per week is the editable default. Upload your brief to review its stages and key dates.</p>
+              <button type="button" disabled={busy || !title.trim() || !subject.trim()} onClick={() => void create()} className="mt-4 rounded-xl bg-teal-700 px-4 py-2 font-bold text-white disabled:opacity-50">Create AAC tracker</button>
+            </div>}
             <p className="mt-3 text-sm font-bold text-teal-800">Choose your specification</p>
             <details className="mt-2 text-sm text-slate-600"><summary className="cursor-pointer font-semibold">Add school calendars — optional</summary><p className="mt-1">Calendars help plan around teaching dates and breaks. You can enter those details yourself.</p></details>
             <p className="mt-1 text-sm text-slate-600">
@@ -1244,7 +1262,9 @@ export default function AacPlannerPage({
               <button type="button" onClick={() => focusSetupHeading(teachingTimeHeadingRef)} className="rounded-xl border border-teal-300 bg-white px-4 py-2 font-bold text-teal-900">Edit teaching time</button>
               <button type="button" disabled={busy || saving || dirty} onClick={() => void openRecalculation()} className="rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50">Recalculate suggested dates</button>
               <button type="button" disabled={startingNewDraft || !dirty || saving || busy} onClick={() => void save()} className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white disabled:opacity-50">{saving ? "Saving…" : "Save tracker"}</button>
+              {progressEligible && <button type="button" disabled={progressDisabled} onClick={openProgress} className={progressButtonClass}>Track this class</button>}
             </div>
+            {progressEligible && <p className="mt-3 text-base text-slate-700">{progressGuidance}</p>}
             <p className="mt-3 text-base text-slate-700">Review proposed replacement dates before applying them. Saving keeps this tracker private to teachers; this pilot does not publish calendar events.</p>
             {assumptions.length > 0 && <details className="mt-4 rounded-2xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-bold">Recorded planning assumptions</summary><ul className="mt-3 list-disc pl-5">{assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul></details>}
             {project.approved_revision && <details className="mt-4 rounded-2xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-bold">Saved plan comparison</summary><PlanComparison draft={stages} approved={normalizeStages(project.approved_revision.plan?.stages)} /></details>}

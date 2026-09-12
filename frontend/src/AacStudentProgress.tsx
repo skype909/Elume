@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { apiFetch } from "./api";
 
 // Grid/check-in presentation adapted from AacStudentProgressDemo. No demo storage
@@ -17,6 +17,11 @@ const statuses: { value: Status; label: string; className: string }[] = [
 const defaultStage = { status: "not_started" as Status, target: null };
 
 export default function AacStudentProgress({ classId, onBack }: { classId: number; onBack: () => void }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    headingRef.current?.focus();
+    headingRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, []);
   const [data, setData] = useState<Workspace | null>(null);
   const [edits, setEdits] = useState<Record<number, Entry>>({});
   const [selected, setSelected] = useState<number | null>(null);
@@ -77,7 +82,7 @@ export default function AacStudentProgress({ classId, onBack }: { classId: numbe
     onClick={() => void save(student)} className="rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50">{pending[student.id] ? "Saving…" : panel ? "Save check-in" : `Save ${student.first_name}`}</button>;
   return <section className="space-y-5" aria-label="AAC student progress">
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-teal-200 bg-teal-50 p-5">
-      <div><h2 className="text-2xl font-black text-teal-950">Student progress</h2><p className="mt-1 text-base text-teal-900">Private teacher check-ins, saved to this class on the server. Dates never mark work complete.</p></div>
+      <div><h2 ref={headingRef} tabIndex={-1} className="text-2xl font-black text-teal-950">Student progress</h2><p className="mt-1 text-base text-teal-900">Private teacher check-ins, saved to this class on the server. Dates never mark work complete.</p></div>
       <button type="button" disabled={Object.values(pending).some(Boolean)} onClick={() => { if (mayLeave()) onBack(); }} className="rounded-xl border border-teal-300 bg-white px-4 py-2 font-bold">Plan</button>
     </div>
     {error && <p role="alert">{error}</p>}

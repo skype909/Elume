@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AacPlannerPage from "./AacPlannerPage";
 import { apiFetch } from "./api";
 
@@ -14,6 +14,78 @@ const approvableDraft = { ...scheduledDraft, revision: { ...scheduledDraft.revis
 const approvedProject = { ...approvableDraft, status: "approved", revision: { ...approvableDraft.revision, state: "approved" }, approved_revision: { ...approvableDraft.revision, state: "approved" } };
 
 beforeEach(() => { mockRouteClassId = "18"; mockedApi.mockReset(); });
+
+test("subject-neutral initial setup submits only entered required values", async () => {
+  mockedApi.mockImplementation(async (path: string) => {
+    if (path.endsWith("/projects")) return { ...draft, title: "Fictional Art brief", subject: "Art" };
+    return { enabled: true, project: null };
+  });
+  render(<AacPlannerPage embedded />);
+  const title = await screen.findByLabelText("Brief title");
+  const subject = screen.getByLabelText("Subject");
+  expect(title).toHaveValue(""); expect(subject).toHaveValue("");
+  expect(screen.getByPlaceholderText("Brief title")).toBe(title);
+  expect(screen.getByPlaceholderText("Subject")).toBe(subject);
+  expect(screen.getByText("30 minutes per week is the editable default. Upload your brief to review its stages and key dates.")).toBeInTheDocument();
+  const create = screen.getByRole("button", { name: "Create AAC tracker" });
+  fireEvent.click(create);
+  expect(mockedApi.mock.calls.some(([path]) => path.endsWith("/projects"))).toBe(false);
+  fireEvent.change(title, { target: { value: "Fictional Art brief" } });
+  fireEvent.change(subject, { target: { value: "   " } });
+  expect(create).toBeDisabled();
+  fireEvent.change(subject, { target: { value: "Art" } });
+  fireEvent.click(create);
+  await screen.findByRole("heading", { name: "Fictional Art brief" });
+  const request = mockedApi.mock.calls.find(([path]) => path.endsWith("/projects"))!;
+  expect(JSON.parse(request[1]?.body as string)).toMatchObject({ title: "Fictional Art brief", subject: "Art", weekly_minutes: 30 });
+});
+
+test("bottom progress action respects dirty, pending and failed saves then opens and focuses the existing grid", async () => {
+  let settleSave: (value: any) => void = () => {};
+  let failSave: (error: Error) => void = () => {};
+  mockedApi.mockImplementation(async (path: string) => {
+    if (path === "/api/classes/18/aac") return { enabled: true, project: draft };
+    if (path.endsWith("/documents")) return [];
+    if (path.endsWith("/revision")) return new Promise((resolve, reject) => { settleSave = resolve; failSave = reject; });
+    if (path.endsWith("/aac/students")) return { tracker_id: "fictional", read_only: false, stages: [], retired_stages: [], students: [], trackers: [] };
+    return {};
+  });
+  render(<AacPlannerPage embedded />);
+  const summary = (await screen.findByRole("heading", { name: "Plan summary" })).closest("section")!;
+  const bottom = within(summary).getByRole("button", { name: "Track this class" });
+  expect(screen.getAllByRole("button", { name: "Track this class" })).toHaveLength(2);
+  expect(bottom).toBeEnabled();
+  expect(within(summary).getByText("Next: track each student’s progress through these stages.")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Fictional Physics AAC" })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Stage 1 name"), { target: { value: "Edited fictional stage" } });
+  expect(bottom).toBeDisabled();
+  expect(within(summary).getByText("Save your tracker to continue to student progress.")).toBeInTheDocument();
+  fireEvent.click(bottom);
+  expect(mockedApi.mock.calls.some(([path]) => path.endsWith("/students"))).toBe(false);
+  fireEvent.click(within(summary).getByRole("button", { name: "Save tracker" }));
+  expect(bottom).toBeDisabled();
+  failSave(new Error("Fictional failed save"));
+  await screen.findByText("Fictional failed save");
+  expect(bottom).toBeDisabled();
+  expect(screen.getByLabelText("Stage 1 name")).toHaveValue("Edited fictional stage");
+  fireEvent.click(within(summary).getByRole("button", { name: "Save tracker" }));
+  settleSave(draft);
+  await waitFor(() => expect(bottom).toBeEnabled());
+  fireEvent.click(bottom);
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Student progress" })).toHaveFocus());
+  expect(mockedApi).toHaveBeenCalledWith("/classes/18/aac/students");
+});
+
+test("progress actions remain absent without saved or historical stages", async () => {
+  mockedApi.mockImplementation(async (path: string) => {
+    if (path === "/api/classes/18/aac") return { enabled: true, project: { ...draft, revision: { ...draft.revision, plan: { stages: [] } } } };
+    if (path.endsWith("/documents")) return [];
+    return {};
+  });
+  render(<AacPlannerPage embedded />);
+  await screen.findByRole("heading", { name: "Plan summary" });
+  expect(screen.queryByRole("button", { name: "Track this class" })).not.toBeInTheDocument();
+});
 
 test("recorded stage removal requires explicit historical-retention review", async () => {
   mockedApi.mockImplementation(async (path: string, options: any) => {
@@ -44,7 +116,7 @@ test("Track this class opens only the connected server roster", async () => {
     return {};
   });
   render(<AacPlannerPage embedded />);
-  fireEvent.click(await screen.findByRole("button", { name: "Track this class" }));
+  fireEvent.click((await screen.findAllByRole("button", { name: "Track this class" }))[0]);
   await screen.findByLabelText("Tracker history");
   expect(mockedApi).toHaveBeenCalledWith("/classes/18/aac/students");
   expect(screen.queryByText(/Local demonstration/)).not.toBeInTheDocument();
@@ -85,10 +157,10 @@ test("supports manual teacher editing without an AI request or calendar action",
   });
   render(<AacPlannerPage embedded />);
   const stage = await screen.findByLabelText("Stage 1 name");
-  expect(screen.getByRole("button", { name: "Track this class" })).toBeEnabled();
+  screen.getAllByRole("button", { name: "Track this class" }).forEach((button) => expect(button).toBeEnabled());
   expect(screen.queryByText(/student progress is stored in this browser/)).not.toBeInTheDocument();
   fireEvent.change(stage, { target: { value: "Teacher-edited research" } });
-  expect(screen.getByRole("button", { name: "Track this class" })).toBeDisabled();
+  screen.getAllByRole("button", { name: "Track this class" }).forEach((button) => expect(button).toBeDisabled());
   fireEvent.click(screen.getByRole("button", { name: "Save tracker" }));
   await waitFor(() => expect(mockedApi).toHaveBeenCalledWith("/api/classes/18/aac/revision", expect.objectContaining({ method: "PUT" })));
   expect(mockedApi.mock.calls.some(([path]) => String(path).includes("/approve") || String(path).includes("calendar"))).toBe(false);
@@ -438,13 +510,17 @@ test("new tracker confirmation persists a clean workspace before details and nev
   fireEvent.click(screen.getByRole("button", { name: "Start a new AAC tracker" }));
   fireEvent.click(screen.getByRole("button", { name: "Start new AAC tracker" }));
   await waitFor(() => expect(mockedApi).toHaveBeenCalledWith("/api/classes/18/aac/new-draft", expect.objectContaining({ method: "POST" })));
-  expect(screen.getByLabelText("New project title")).toHaveValue("");
+  expect(screen.getByLabelText("Brief title")).toHaveValue("");
+  expect(screen.getByLabelText("Subject")).toHaveValue("");
+  expect(screen.getByPlaceholderText("Brief title")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Create AAC tracker" })).toBeDisabled();
   expect(screen.getByText("Ready for your new brief.")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "New AAC tracker" })).toBeInTheDocument();
   expect(screen.queryByText("Fictional Physics AAC")).not.toBeInTheDocument();
   expect(screen.queryByText("retained.pdf")).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("New project title"), { target: { value: "Fresh fictional AAC" } });
-  fireEvent.change(screen.getByLabelText("New project subject"), { target: { value: "Art" } });
+  fireEvent.change(screen.getByLabelText("Brief title"), { target: { value: "Fresh fictional AAC" } });
+  expect(screen.getByRole("button", { name: "Create AAC tracker" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "Art" } });
   fireEvent.click(screen.getByRole("button", { name: "Create AAC tracker" }));
   await waitFor(() => expect(mockedApi).toHaveBeenCalledWith("/api/classes/18/aac/tracker-details", expect.objectContaining({ method: "PUT" })));
   expect(mockedApi.mock.calls.some(([path]) => String(path).includes("approve") || String(path).includes("calendar"))).toBe(false);
