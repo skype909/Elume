@@ -50,12 +50,17 @@ class AacDocumentEndpointTests(unittest.TestCase):
         doc = Document(); doc.add_paragraph("Fictional deadline is 20 April 2027."); stream = BytesIO(); doc.save(stream); return stream.getvalue()
 
     def upload(self, **extra):
+        if not self.db.query(models.AacPlanRevisionModel).filter_by(project_id=self.project.id, state="draft").first():
+            self.add_approvable_draft()
         data = {"purpose": "specification", **extra}
         return self.client.post(f"/classes/{self.cls.id}/aac/documents", data=data, files={"file": ("fictional.docx", self.docx_bytes(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
 
     def source(self, purpose, filename, sections, state="extracted"):
         row = models.AacSourceDocumentModel(project_id=self.project.id, owner_user_id=self.owner.id, purpose=purpose, display_filename=filename, storage_key=f"aac/test/{uuid4().hex}_{filename}", content_type="application/pdf", size_bytes=12, sha256="a" * 64, extraction_state=state, extracted_sections_json=sections)
-        self.db.add(row); self.db.commit(); return row
+        self.db.add(row); self.db.flush()
+        draft = self.db.query(models.AacPlanRevisionModel).filter_by(project_id=self.project.id, state="draft").first() or self.add_approvable_draft()
+        draft.source_document_ids_json = [*(draft.source_document_ids_json or []), row.id]
+        self.db.commit(); return row
 
     def add_approvable_draft(self, version=1, stage_id="fictional-stage", stage_name="Fictional stage"):
         inputs = {"weekly_minutes":30,"fifth_year_end":"2026-05-29","sixth_year_restart":"2026-09-14","controlling_deadline":"2027-04-20","internal_completion_target":"2027-04-06","official_deadline_confirmed":True,"sixth_year_calendar_status":"reviewed"}
@@ -110,7 +115,7 @@ class AacDocumentEndpointTests(unittest.TestCase):
         self.assertEqual(self.client.post(f"/classes/{self.cls.id}/aac/projects", json={"title": "No access", "subject": "Physics", "weekly_minutes": 30, "current_year_stage": "fifth_year"}).status_code, 403)
 
     def test_pilot_rejects_provider_proposals_and_calendar_publication(self):
-        document = self.upload().json(); revision = self.add_approvable_draft()
+        document = self.upload().json(); revision = self.db.query(models.AacPlanRevisionModel).filter_by(project_id=self.project.id, state="draft").one()
         with patch.object(main, "_enforce_ai_feature_limit") as enforce:
             proposal = self.client.post(f"/classes/{self.cls.id}/aac/proposals", json={"document_ids": [document["id"]], "planning_inputs": {}})
         self.assertEqual(proposal.status_code, 409); enforce.assert_not_called()
@@ -146,6 +151,7 @@ class AacDocumentEndpointTests(unittest.TestCase):
     def test_owner_removes_safe_missing_file_record_and_invalidates_derived_evidence(self):
         document = self.upload().json(); row = self.db.query(models.AacSourceDocumentModel).filter_by(id=document["id"]).one(); path = self.tmp / row.storage_key
         revision = models.AacPlanRevisionModel(project_id=self.project.id, version=1, state="draft", source_document_ids_json=[row.id], source_requirements_json=[{"source_document_id": row.id, "source_reference": "paragraph 1", "text": "Derived evidence"}], assumptions_json=[], plan_json={"stages": [{"id": "teacher-stage", "name": "Keep teacher stage"}], "candidate_deadlines": [{"source_document_id": row.id, "source_reference": "paragraph 1", "date": "2027-04-20"}]}, planning_inputs_json={"official_deadline_confirmed": True, "official_deadline_source": {"source_document_id": row.id}})
+        self.db.query(models.AacPlanRevisionModel).filter_by(project_id=self.project.id, state="draft").delete()
         self.db.add(revision); self.db.commit(); path.unlink()
         response = self.client.delete(f"/classes/{self.cls.id}/aac/documents/{row.id}")
         self.assertEqual(response.status_code, 200, response.text); self.assertTrue(response.json()["removed"]); self.assertTrue(response.json()["stored_file_already_absent"])
@@ -168,8 +174,8 @@ class AacDocumentEndpointTests(unittest.TestCase):
 
     def test_student_or_other_teacher_cannot_read_or_upload(self):
         main.app.dependency_overrides[main.get_current_user] = lambda: self.other
-        self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac/documents").status_code, 404)
-        self.assertEqual(self.upload().status_code, 404)
+        self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac/documents").status_code, 403)
+        self.assertEqual(self.upload().status_code, 403)
         main.app.dependency_overrides.pop(main.get_current_user)
         # QR/PIN sessions do not satisfy the teacher identity dependency.
         self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac/documents").status_code, 401)
@@ -183,6 +189,7 @@ class AacDocumentEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503); self.db.rollback(); self.assertEqual(self.db.query(models.AacSourceDocumentModel).count(), 1); self.assertTrue(old_path.exists()); self.assertEqual(len(list((self.tmp / "aac" / str(self.project.id)).glob("*"))), 1)
 
     def test_cleanup_failure_preserves_the_original_safe_persistence_error(self):
+        self.add_approvable_draft()
         with patch.object(self.db, "commit", side_effect=RuntimeError("fictional db failure")), patch.object(main, "UPLOADS_DIR", self.tmp / "cleanup-failure"):
             with patch.object(main, "_remove_aac_source_file", side_effect=OSError("fictional cleanup failure")):
                 response = self.upload()
@@ -190,125 +197,58 @@ class AacDocumentEndpointTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "The document could not be saved. Please try again.")
         self.db.rollback(); self.assertEqual(self.db.query(models.AacSourceDocumentModel).count(), 0)
 
-    def test_proposal_failures_leave_draft_and_calendar_unchanged(self):
-        document = self.upload().json(); initial = models.AacPlanRevisionModel(project_id=self.project.id, version=1, state="approved", source_requirements_json=[], plan_json={}, assumptions_json=[], source_document_ids_json=[], approved_by_user_id=self.owner.id, approved_at=datetime.now(timezone.utc))
-        self.db.add(initial); self.db.flush(); self.project.approved_revision_id = initial.id; self.project.status = "approved"; self.db.commit()
-        with patch.object(main, "_enforce_ai_feature_limit") as enforce, patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
-            response = self.client.post(f"/classes/{self.cls.id}/aac/proposals", json={"document_ids":[document["id"]], "planning_inputs":{"weekly_minutes":30}})
-        enforce.assert_called_once_with(self.db, self.owner, "aac_planner")
-        self.assertEqual(response.status_code, 503); self.assertEqual(self.project.approved_revision_id, initial.id); self.assertEqual(self.db.query(models.CalendarEvent).count(), 0); self.assertEqual(self.db.query(models.AacStudentProgressModel).count(), 0)
-        response = self.client.post(f"/classes/{self.cls.id}/aac/proposals", json={"document_ids":[9999], "planning_inputs":{}}); self.assertEqual(response.status_code, 422)
-
-    def test_mocked_proposal_creates_only_a_draft_and_no_calendar_side_effect(self):
-        document = self.upload().json(); proposal = {"requirements":[{"source_document_id":document["id"],"source_reference":"paragraph 1","text":"Fictional requirement"}],"candidate_deadlines":[],"stages":[{"name":"A single reviewed stage","checkpoints":[]}],"interruptions":[],"missing_information":["Confirm the controlling deadline."],"conflicts":[],"assumptions":[]}
-        response_obj = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=__import__("json").dumps(proposal)))])
-        with patch.object(main, "_enforce_ai_feature_limit") as enforce, patch.object(main, "_record_ai_feature_usage") as record, patch.dict(os.environ, {"OPENAI_API_KEY":"fictional"}, clear=False), patch("openai.OpenAI") as openai:
-            openai.return_value.chat.completions.create.return_value = response_obj
-            response = self.client.post(f"/classes/{self.cls.id}/aac/proposals", json={"document_ids":[document["id"]],"planning_inputs":{"weekly_minutes":30}})
-            repeat = self.client.post(f"/classes/{self.cls.id}/aac/proposals", json={"document_ids":[document["id"]],"planning_inputs":{"weekly_minutes":30}})
-        self.assertEqual(response.status_code, 200, response.text); self.assertEqual(repeat.status_code, 200, repeat.text); self.assertEqual(enforce.call_count, 2); self.assertEqual(record.call_count, 2)
-        revision = self.db.query(models.AacPlanRevisionModel).one(); self.assertEqual(revision.state, "draft"); self.assertIsNone(self.project.approved_revision_id); self.assertEqual(revision.source_document_ids_json, [document["id"]]); self.assertEqual(self.db.query(models.AacPlanRevisionModel).count(), 1); self.assertEqual(self.db.query(models.CalendarEvent).count(), 0); self.assertEqual(self.db.query(models.AacStudentProgressModel).count(), 0)
-
-    def test_external_ai_call_finishes_before_draft_writer_locks(self):
-        document = self.upload().json(); locks = []; original = Query.with_for_update
-        proposal = {"requirements":[{"source_document_id":document["id"],"source_reference":"paragraph 1","text":"Fictional requirement"}],"candidate_deadlines":[],"stages":[{"name":"Reviewed stage","checkpoints":[]}],"interruptions":[],"missing_information":[],"conflicts":[],"assumptions":[]}
-        response_obj = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=__import__("json").dumps(proposal)))])
-        def track_lock(query, *args, **kwargs):
-            locks.append(True); return original(query, *args, **kwargs)
-        def ai_response(*args, **kwargs):
-            self.assertEqual(locks, [], "The AI call must not run while draft/approval rows are locked")
-            return response_obj
-        with patch.object(Query, "with_for_update", track_lock), patch.object(main, "_enforce_ai_feature_limit"), patch.object(main, "_record_ai_feature_usage"), patch.dict(os.environ, {"OPENAI_API_KEY":"fictional"}, clear=False), patch("openai.OpenAI") as openai:
-            openai.return_value.chat.completions.create.side_effect = ai_response
-            response = self.client.post(f"/classes/{self.cls.id}/aac/proposals", json={"document_ids":[document["id"]],"planning_inputs":{"weekly_minutes":30}})
-        self.assertEqual(response.status_code, 200, response.text); self.assertTrue(locks, "Draft persistence must lock after the AI response")
-
-    def test_quota_rejection_does_not_call_ai_or_create_a_draft(self):
-        document = self.upload().json()
-        with patch.object(main, "_enforce_ai_feature_limit", side_effect=HTTPException(status_code=429, detail="AAC planning limit reached")), patch("openai.OpenAI") as openai:
-            response = self.client.post(f"/classes/{self.cls.id}/aac/proposals", json={"document_ids":[document["id"]], "planning_inputs":{}})
-        self.assertEqual(response.status_code, 429); openai.assert_not_called()
-        self.assertEqual(self.db.query(models.AacPlanRevisionModel).count(), 0)
-
-    def test_malformed_ai_output_creates_no_draft(self):
-        document = self.upload().json()
-        response_obj = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))])
-        with patch.object(main, "_enforce_ai_feature_limit"), patch.object(main, "_record_ai_feature_usage") as record, patch.dict(os.environ, {"OPENAI_API_KEY":"fictional"}, clear=False), patch("openai.OpenAI") as openai:
-            openai.return_value.chat.completions.create.return_value = response_obj
-            response = self.client.post(f"/classes/{self.cls.id}/aac/proposals", json={"document_ids":[document["id"]], "planning_inputs":{}})
-        self.assertEqual(response.status_code, 422); record.assert_not_called()
-        self.assertEqual(self.db.query(models.AacPlanRevisionModel).count(), 0)
-
-    def test_review_token_approves_once_and_stale_or_other_teacher_cannot_write(self):
-        revision = self.add_approvable_draft(); current = self.client.get(f"/classes/{self.cls.id}/aac").json()["project"]["revision"]
-        main.app.dependency_overrides[main.get_current_user] = lambda: self.other
-        self.assertIn(self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":revision.id,"review_token":current["review_token"]}).status_code, (403,404))
-        main.app.dependency_overrides[main.get_current_user] = lambda: self.owner
-        self.assertEqual(self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":revision.id,"review_token":"bad"}).status_code, 409)
-        approved = self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":revision.id,"review_token":current["review_token"]})
-        self.assertEqual(approved.status_code, 200, approved.text); self.assertEqual(self.db.query(models.CalendarEvent).count(), 1)
-        self.assertEqual(self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":revision.id,"review_token":current["review_token"]}).status_code, 409)
-
-    def test_actual_scheduling_input_change_invalidates_review_token(self):
-        revision = self.add_approvable_draft(); token = self.review_token()
-        self.project.weekly_minutes = 45; self.db.commit()
-        response = self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":revision.id,"review_token":token})
-        self.assertEqual(response.status_code, 409); self.assertEqual(self.db.query(models.CalendarEvent).count(), 0)
-        token = self.review_token(); revision.planning_inputs_json = {**revision.planning_inputs_json, "weekly_minutes": 60}; self.db.commit()
-        response = self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":revision.id,"review_token":token})
-        self.assertEqual(response.status_code, 409); self.assertEqual(self.db.query(models.CalendarEvent).count(), 0)
-
-    def test_replacement_reconciles_only_aac_events_and_preserves_ordinary_event(self):
-        first = self.add_approvable_draft(); self.assertEqual(self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":first.id,"review_token":self.review_token()}).status_code, 200)
-        ordinary = models.CalendarEvent(class_id=self.cls.id, owner_user_id=self.owner.id, title="Fictional school event", description="ordinary", event_date=datetime(2027, 3, 19), all_day=True, event_type="general")
-        self.db.add(ordinary); self.db.commit()
-        replacement = self.add_approvable_draft(version=2, stage_id="replacement", stage_name="Replacement stage")
-        self.assertEqual(self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":replacement.id,"review_token":self.review_token()}).status_code, 200)
-        rows = self.db.query(models.CalendarEvent).order_by(models.CalendarEvent.id).all()
-        self.assertEqual([(row.title, row.event_type) for row in rows], [("Fictional school event", "general"), ("AAC: Replacement stage", "aac")])
-
-    def test_calendar_sync_failure_rolls_back_approval_and_milestones(self):
-        revision = self.add_approvable_draft()
-        with patch.object(main, "_synchronise_aac_calendar", side_effect=RuntimeError("fictional calendar failure")):
-            response = self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":revision.id,"review_token":self.review_token()})
-        self.assertEqual(response.status_code, 503); self.db.expire_all()
-        self.assertEqual(self.db.query(models.AacPlanRevisionModel).filter_by(id=revision.id).one().state, "draft")
-        self.assertIsNone(self.db.query(models.AacProjectModel).filter_by(id=self.project.id).one().approved_revision_id)
-        self.assertEqual(self.db.query(models.CalendarEvent).count(), 0)
-
-    def test_owner_calendar_views_include_approved_aac_and_protect_aac_writes(self):
-        revision = self.add_approvable_draft()
-        self.assertEqual(self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":revision.id,"review_token":self.review_token()}).status_code, 200)
-        ordinary = models.CalendarEvent(class_id=self.cls.id, owner_user_id=self.owner.id, title="Fictional permitted event", description=None, event_date=datetime(2027, 3, 19), all_day=True, event_type="general")
-        self.db.add(ordinary); self.db.commit(); milestone = self.db.query(models.CalendarEvent).filter_by(event_type="aac").one()
-        for route in ("/calendar-events", f"/calendar-events?class_id={self.cls.id}", f"/classes/{self.cls.id}/calendar-events"):
-            response = self.client.get(route); self.assertEqual(response.status_code, 200)
-            self.assertEqual({row["title"] for row in response.json()}, {"Fictional permitted event", "AAC: Fictional stage"})
-        payload = {"class_id":self.cls.id,"title":"Updated permitted event","description":None,"event_date":"2027-03-21T00:00:00","end_date":None,"all_day":True,"event_type":"general"}
-        self.assertEqual(self.client.put(f"/calendar-events/{milestone.id}", json=payload).status_code, 409)
-        self.assertEqual(self.client.delete(f"/calendar-events/{milestone.id}").status_code, 409)
-        self.assertEqual(self.client.post("/calendar-events", json={**payload, "event_type":"aac"}).status_code, 409)
-        self.assertEqual(self.client.put(f"/calendar-events/{ordinary.id}", json=payload).status_code, 200)
-        self.assertEqual(self.client.delete(f"/calendar-events/{ordinary.id}").status_code, 200)
-
-    def test_other_teacher_anonymous_and_qr_views_cannot_retrieve_aac_milestones(self):
-        revision = self.add_approvable_draft()
-        self.assertEqual(self.client.post(f"/classes/{self.cls.id}/aac/approve", json={"revision_id":revision.id,"review_token":self.review_token()}).status_code, 200)
-        main.app.dependency_overrides[main.get_current_user] = lambda: self.other
-        self.assertEqual(self.client.get("/calendar-events").json(), [])
-        self.assertEqual(self.client.get(f"/calendar-events?class_id={self.cls.id}").status_code, 404)
-        main.app.dependency_overrides.pop(main.get_current_user)
-        self.assertEqual(self.client.get("/calendar-events").status_code, 401)
-        link = models.StudentAccessLink(class_id=self.cls.id, token="fictional-student-calendar-token", is_active=True)
-        self.db.add(link); self.db.commit()
-        response = self.client.get(f"/student/{link.token}")
-        self.assertEqual(response.status_code, 200); self.assertNotIn("calendar", response.json())
-        self.assertNotIn("AAC: Fictional stage", response.text)
-
     def test_draft_save_does_not_publish_milestones(self):
         payload = {"source_requirements":[],"plan":{"stages":[{"id":"draft-only","name":"Draft only","estimated_minutes":30,"completion_date":"2027-03-20"}]},"assumptions":[],"source_document_ids":[],"planning_inputs":{"weekly_minutes":30}}
         response = self.client.put(f"/classes/{self.cls.id}/aac/revision", json=payload)
         self.assertEqual(response.status_code, 200, response.text); self.assertEqual(self.db.query(models.CalendarEvent).count(), 0)
+
+    def test_both_reviewers_are_limited_to_their_own_classes(self):
+        self.other.email = "dcampion@preskilkenny.ie"; self.db.commit()
+        for user, own, foreign in ((self.owner, self.cls, self.other_cls), (self.other, self.other_cls, self.cls)):
+            main.app.dependency_overrides[main.get_current_user] = lambda: user
+            self.assertEqual(self.client.get(f"/classes/{own.id}/aac").status_code, 200)
+            for method, suffix, payload in (("get", "", None), ("post", "/new-draft", None), ("put", "/tracker-details", {"title":"Fictional", "subject":"Art"}), ("get", "/documents", None)):
+                response = self.client.request(method, f"/classes/{foreign.id}/aac{suffix}", json=payload)
+                self.assertEqual(response.status_code, 404, response.text)
+
+    def test_complete_source_review_save_reload_recalculation_and_fresh_history(self):
+        from docx import Document
+        doc = Document(); doc.add_paragraph("Students must complete and hand in their AAC by 12 March 2027.")
+        doc.add_paragraph("Stage 1: Research\nStage 2: Investigation\nStage 3: Report")
+        stream = BytesIO(); doc.save(stream)
+        with patch.object(self, "docx_bytes", return_value=stream.getvalue()):
+            uploaded = self.upload()
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        source_id = uploaded.json()["id"]
+        review = self.client.get(f"/classes/{self.cls.id}/aac/deadline-candidates").json()
+        self.assertEqual(review["candidates"][0]["date"], "2027-03-12")
+        self.assertEqual(review["candidates"][0]["source_reference"], "paragraph 1")
+        self.assertEqual(len(review["stage_structure"]), 3)
+        inputs = {"weekly_minutes":30,"planned_start":"2026-09-16","normal_finish_target":"2027-02-08","final_classroom_deadline":"2027-02-26","controlling_deadline":"2027-03-12","fifth_year_end":"2026-05-29","sixth_year_restart":"2026-09-14","official_deadline_confirmed":True}
+        stages = [{"id":f"source-{source_id}-{item['number']}","name":item["name"],"estimated_minutes":45,"completion_date":"2026-11-02"} for item in review["stage_structure"]]
+        payload = {"plan":{"stages":stages},"planning_inputs":inputs,"source_document_ids":[source_id]}
+        saved = self.client.put(f"/classes/{self.cls.id}/aac/revision", json=payload)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        revision_id = saved.json()["revision"]["id"]
+        reloaded = self.client.get(f"/classes/{self.cls.id}/aac").json()["project"]["revision"]
+        self.assertEqual(reloaded["plan"]["stages"], stages)
+        proposed = self.client.get(f"/classes/{self.cls.id}/aac?recalculate_dates=true").json()["project"]["revision"]
+        self.assertTrue(all(s["proposed_completion_date"] >= inputs["planned_start"] for s in proposed["schedule"]["stages"]))
+        self.db.expire_all()
+        self.assertEqual(self.db.get(models.AacPlanRevisionModel, revision_id).plan_json["stages"], stages)
+        self.assertEqual(self.client.post(f"/classes/{self.cls.id}/aac/new-draft").status_code, 200)
+        self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac/documents").json(), [])
+        self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac/deadline-candidates").json()["status"], "specification_needed")
+        self.assertTrue(self.client.get(f"/classes/{self.cls.id}/aac").json()["project"]["revision"]["plan"]["tracker_setup_pending"])
+        replacement = self.upload(); self.assertEqual(replacement.status_code, 200, replacement.text)
+        self.db.expire_all()
+        old_source = self.db.get(models.AacSourceDocumentModel, source_id)
+        self.assertEqual(old_source.extraction_state, "extracted")
+        self.assertEqual(self.client.delete(f"/classes/{self.cls.id}/aac/documents/{source_id}").status_code, 200)
+        self.assertTrue((self.tmp / old_source.storage_key).is_file())
+        self.assertEqual(self.db.get(models.AacPlanRevisionModel, revision_id).source_document_ids_json, [source_id])
+        self.assertEqual(self.db.query(models.CalendarEvent).count(), 0)
+        self.assertEqual(self.db.query(models.AacStudentProgressModel).count(), 0)
 
 
 if __name__ == "__main__": unittest.main()

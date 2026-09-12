@@ -103,6 +103,19 @@ const stableId = () =>
   globalThis.crypto?.randomUUID?.() ||
   `aac-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const AAC_REVIEWER_PILOT_DRAFT_ONLY = true;
+const stageCardPalettes = [
+  { card: "border-emerald-300 border-l-emerald-600 bg-emerald-50/70", badge: "bg-emerald-700 text-white" },
+  { card: "border-cyan-300 border-l-cyan-600 bg-cyan-50/70", badge: "bg-cyan-700 text-white" },
+  { card: "border-violet-300 border-l-violet-600 bg-violet-50/70", badge: "bg-violet-700 text-white" },
+  { card: "border-amber-300 border-l-amber-600 bg-amber-50/70", badge: "bg-amber-700 text-white" },
+  { card: "border-teal-300 border-l-teal-600 bg-teal-50/70", badge: "bg-teal-700 text-white" },
+  { card: "border-blue-300 border-l-blue-600 bg-blue-50/70", badge: "bg-blue-700 text-white" },
+];
+const stageCardPalette = (id: string) => {
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1) hash = (hash * 31 + id.charCodeAt(index)) | 0;
+  return stageCardPalettes[Math.abs(hash) % stageCardPalettes.length];
+};
 const defaultInputs = () => ({
   weekly_minutes: 30,
   fifth_year_aac_minutes: 30,
@@ -187,6 +200,9 @@ export default function AacPlannerPage({
   const [startingNewDraft, setStartingNewDraft] = useState(false);
   const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
   const [reviewFocusRequest, setReviewFocusRequest] = useState(0);
+  const finalDeadlineRef = useRef<HTMLInputElement>(null);
+  const keyDatesHeadingRef = useRef<HTMLHeadingElement>(null);
+  const teachingTimeHeadingRef = useRef<HTMLHeadingElement>(null);
   // Existing projects reopen at their editable plan; a newly created project starts at Step 1.
   const [setupStep, setSetupStep] = useState(4);
   const hydrate = useCallback((next: WorkspaceProject | null) => {
@@ -657,8 +673,34 @@ export default function AacPlannerPage({
   const catchUpDays = inputs.normal_finish_target && finalClassroomDeadline
     ? Math.round((new Date(finalClassroomDeadline).getTime() - new Date(inputs.normal_finish_target).getTime()) / 86400000)
     : null;
+  const readableDate = (value?: string) => value ? new Intl.DateTimeFormat("en-IE", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`)) : "";
+  const latestClassroomDeadline = inputs.controlling_deadline ? (() => { const day = new Date(`${inputs.controlling_deadline}T00:00:00Z`); day.setUTCDate(day.getUTCDate() - 14); return day.toISOString().slice(0, 10); })() : "";
+  const calendarDays = (days: number) => `${days} calendar ${days === 1 ? "day" : "days"}`;
+  const deadlineBufferIssue = inputs.controlling_deadline && finalClassroomDeadline && buffer !== null && buffer < 14
+    ? { negative: buffer < 0, text: buffer < 0 ? `This deadline is ${calendarDays(Math.abs(buffer))} after the SEC deadline.` : `This leaves ${buffer} days before the SEC deadline. Allow at least 14 days.` }
+    : null;
+  const deadlineMissingGuidance = !inputs.controlling_deadline && !finalClassroomDeadline
+    ? "Add the SEC completion / hand-in deadline and final classroom deadline to check the required buffer."
+    : !inputs.controlling_deadline
+      ? "Add the SEC completion / hand-in deadline to check the required buffer."
+      : !finalClassroomDeadline
+        ? "Add the final classroom deadline to check the required buffer."
+        : null;
+  const focusFinalDeadline = () => { setSetupStep(3); window.setTimeout(() => { const input = finalDeadlineRef.current; if (!input) return; input.scrollIntoView?.({ behavior: "smooth", block: "center" }); input.focus(); }, 0); };
+  const focusSetupHeading = (heading: React.RefObject<HTMLHeadingElement | null>) => {
+    setSetupStep(3);
+    window.setTimeout(() => {
+      const element = heading.current;
+      if (!element) return;
+      element.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      element.focus();
+    }, 0);
+  };
   const revision = project?.revision;
   const blockingWarnings = revision?.schedule?.warnings || [];
+  const provisionalCalendarWarnings = blockingWarnings.filter((warning) => /provisional|calendar/i.test(warning));
+  const schedulingBlockers = blockingWarnings.filter((warning) => !provisionalCalendarWarnings.includes(warning));
+  const hasProvisionalStageAllocations = Boolean(revision?.schedule?.stages?.some((stage) => stage.provisional_estimate));
   const canApprove = Boolean(
     revision &&
       revision.state === "draft" &&
@@ -826,15 +868,6 @@ export default function AacPlannerPage({
             {(deadlineReview?.stage_structure || []).length > 0 && <div className="mt-4 rounded-2xl border border-teal-100 p-4"><p className="font-bold">Explicit stages from the brief</p><ol className="mt-2 list-decimal pl-5 text-sm">{deadlineReview?.stage_structure?.map((stage) => <li key={`${stage.source_document_id}-${stage.number}`}>{stage.name} <span className="text-slate-500">({stage.source_reference})</span></li>)}</ol><button type="button" onClick={() => { setSetupStep(3); setShowSourceStagesDialog(true); }} className="mt-3 rounded-lg border border-teal-300 bg-white px-3 py-1 font-bold text-teal-800">Review and apply source stages</button></div>}
             <div className="mt-5 flex justify-between gap-3"><button type="button" onClick={() => setSetupStep(1)} className="rounded-xl border px-4 py-2 font-bold">Back</button><button type="button" onClick={() => setSetupStep(3)} className="rounded-xl bg-teal-700 px-4 py-2 font-bold text-white">Continue to teaching time</button></div>
           </section>
-          <section className={`order-6 rounded-3xl border border-violet-100 bg-violet-50 p-6 ${setupStep === 4 ? "" : "hidden"}`}>
-            <h3 className="text-2xl font-extrabold leading-tight">Schedule preview</h3>
-            <p className="mt-1 text-sm text-slate-700">Estimated workload: {project.revision?.schedule?.estimated_minutes ?? "—"} minutes. Available estimated capacity: {project.revision?.schedule?.capacity_minutes ?? "—"} minutes.</p>
-            <p className="mt-1 text-sm text-slate-700">Internal target: {project.revision?.schedule?.completion_target || "Confirm a target"}. {buffer === null ? "Confirm the 14-day buffer." : `${buffer}-day buffer.`}</p>
-            {dirty ? <p className="mt-3 text-sm text-amber-900">Schedule suggestions are stale after your edits. Save tracker to refresh them.</p> : <>{project.revision?.schedule?.warnings?.length ? <ul className="mt-3 list-disc pl-5 text-sm text-amber-900">{project.revision.schedule.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
-            <div className="mt-3 space-y-1 text-sm text-slate-700">{(project.revision?.schedule?.stages || []).map((stage) => <div key={stage.id}>{stage.name}: {stage.completion_date || stage.proposed_completion_date || "No feasible proposed date"}{stage.provisional_estimate ? " · editable planning estimate" : ""}</div>)}</div></>}
-            <button type="button" disabled={busy || saving || dirty} onClick={() => void openRecalculation()} className="mt-4 min-h-12 rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50">Recalculate suggested dates</button>
-            <p className="mt-2 text-sm text-slate-600">Review a proposed replacement for every stage, then explicitly choose which dates to apply. This never approves a plan or writes calendar events.</p>
-          </section>
           <section className="order-2 rounded-3xl bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -851,28 +884,18 @@ export default function AacPlannerPage({
                   weekly
                 </p>}
               </div>
-              <button
-                disabled={startingNewDraft || !dirty || saving || busy}
-                onClick={() => void save()}
-                className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white disabled:opacity-50"
-              >
-                {saving ? "Saving…" : "Save tracker"}
-              </button>
             </div>
-            <p className="mt-3 text-sm text-slate-600">
-              Saving never replaces the approved plan or creates calendar
-              events.
-            </p>
           </section>
           <section className={`order-3 rounded-3xl bg-white p-6 shadow-sm ${setupStep === 3 ? "" : "hidden"}`}>
-            <h3 className="text-2xl font-extrabold leading-tight">Key dates</h3>
+            <h3 ref={keyDatesHeadingRef} tabIndex={-1} className="text-2xl font-extrabold leading-tight">Key dates</h3>
             <p className="mt-1 text-sm text-slate-600">Teacher choices are editable and never silently moved.</p>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <DateField emphasis label="SEC completion / hand-in deadline" help="The confirmed official deadline for students to complete or hand in this AAC. Check the specification or brief before confirming it." value={displayedControllingDeadline} onChange={(value) => { setSuggestedDeadline(null); changeInput("controlling_deadline", value); changeInput("official_deadline_confirmed", false); }} />
               <DateField label="When will you start?" help="The date you plan to begin AAC work with this class." value={inputs.planned_start} onChange={(value) => changeInput("planned_start", value)} />
               <DateField label="When should students aim to finish?" help="Your normal classroom finish date, leaving time for students who need to catch up before your final classroom deadline." value={inputs.normal_finish_target} onChange={(value) => changeInput("normal_finish_target", value)} />
-              <DateField label="Final classroom deadline" help="Your latest classroom deadline for outstanding work and catch-up. Leave at least 14 calendar days before the SEC deadline." value={finalClassroomDeadline} onChange={(value) => { changeInput("final_classroom_deadline", value); changeInput("internal_completion_target", value); }} />
+              <DateField label="Final classroom deadline" help="Your latest classroom deadline for outstanding work and catch-up. Leave at least 14 calendar days before the SEC deadline." value={finalClassroomDeadline} onChange={(value) => { changeInput("final_classroom_deadline", value); changeInput("internal_completion_target", value); }} inputRef={finalDeadlineRef} error={deadlineBufferIssue?.text || (inputs.controlling_deadline ? deadlineMissingGuidance || undefined : undefined)} />
             </div>
+            {deadlineBufferIssue && <div role="alert" className="mt-4 rounded-2xl border-2 border-red-500 bg-red-50 p-4 text-red-950"><div className="flex gap-3"><span aria-hidden="true" className="text-3xl leading-none">⚠</span><div><h4 className="text-xl font-black">Change your final classroom deadline</h4><p className="mt-1 text-lg"><b>{deadlineBufferIssue.text}</b></p><p className="mt-2">Final classroom deadline: <b>{readableDate(finalClassroomDeadline)}</b><br />SEC deadline: <b>{readableDate(inputs.controlling_deadline)}</b><br />Latest permitted classroom date: <b>{readableDate(latestClassroomDeadline)}</b></p><button type="button" onClick={focusFinalDeadline} className="mt-3 rounded-xl bg-red-700 px-4 py-2 font-bold text-white">Change date</button></div></div></div>}
             <aside className="mt-3 rounded-2xl border border-teal-100 bg-teal-50 p-4 text-sm" aria-live="polite">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="font-extrabold text-teal-950">Document deadline review</h4>
@@ -902,7 +925,7 @@ export default function AacPlannerPage({
             {showSourceStagesDialog && <div role="dialog" aria-modal="true" aria-labelledby="source-stage-dialog-title" className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4"><h4 id="source-stage-dialog-title" className="font-extrabold">Replace tracker stages with source stages?</h4><p className="mt-2 text-sm">This replaces only the editable tracker stages with the reviewed source-labelled stages. Your approved plan and calendars are unchanged.</p><div className="mt-3 flex gap-2"><button type="button" onClick={() => setShowSourceStagesDialog(false)} className="rounded-lg border px-3 py-1 font-bold">Keep current tracker</button><button type="button" onClick={() => { const sourceStages = deadlineReview?.stage_structure || []; setStages(sourceStages.map((stage) => ({ id: `source-${stage.source_document_id}-stage-${stage.number}`, name: stage.name, estimated_minutes: null, completion_date: "", checkpoints: [] }))); setDirty(true); setReviewStale(true); setShowSourceStagesDialog(false); setNotice("Source stages are ready in your editable tracker. Save when you are ready."); }} className="rounded-lg bg-teal-700 px-3 py-1 font-bold text-white">Apply {deadlineReview?.stage_structure?.length || 0} stages</button></div></div>}
             <div className="mt-3 rounded-2xl bg-cyan-50 p-3 text-sm text-cyan-950">
               <p>{catchUpDays === null ? "Add normal finish and final classroom dates to see catch-up time." : catchUpDays < 0 ? "Normal finish must be on or before the final classroom deadline." : `Catch-up time: ${catchUpDays} calendar days.`}</p>
-              <p className={buffer !== null && buffer < 14 ? "mt-1 text-amber-900" : "mt-1"}>{buffer === null ? "Add the SEC and final classroom deadlines to see the required buffer." : `Your final classroom deadline leaves ${buffer} calendar days before the SEC deadline.${buffer < 14 ? " At least 14 are required." : ""}`}</p>
+              <p className={deadlineBufferIssue || deadlineMissingGuidance ? "mt-1 font-semibold text-red-900" : "mt-1"}>{deadlineMissingGuidance || (deadlineBufferIssue ? deadlineBufferIssue.text : `Your final classroom deadline leaves ${buffer} calendar days before the SEC deadline.`)}</p>
             </div>
             <details className="mt-3 rounded-2xl border border-slate-200 p-3"><summary className="cursor-pointer font-bold">Other dates</summary><p className="mt-2 text-sm text-slate-600">Administrative school submission dates are separate from the student SEC completion deadline.</p><DateField label="School administrative submission date" help="Optional school administration date; it does not replace the SEC student completion deadline." value={inputs.school_submission_window} onChange={(value) => changeInput("school_submission_window", value)} /></details>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -933,16 +956,15 @@ export default function AacPlannerPage({
               </label>
             </div>
             <p
-              className={`mt-3 text-sm ${buffer !== null && buffer < 14 ? "text-amber-800" : "text-slate-600"}`}
+              className={`mt-3 text-sm ${deadlineBufferIssue ? "text-red-800" : "text-slate-600"}`}
             >
-              {buffer === null
-                ? "Confirm a controlling deadline and internal target. The required 14-calendar-day buffer will be checked later."
-                : `${buffer} calendar-day buffer${buffer < 14 ? " — review needed" : ""}.`}
+              {deadlineMissingGuidance || (deadlineBufferIssue ? deadlineBufferIssue.text : `${buffer} calendar-day buffer.`)}
             </p>
+            {(deadlineBufferIssue || deadlineMissingGuidance) && <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3 text-red-950"><b>Before continuing:</b> {deadlineMissingGuidance || "change the final classroom deadline so it is at least 14 calendar days before the SEC deadline."} {!finalClassroomDeadline && inputs.controlling_deadline && <button type="button" onClick={focusFinalDeadline} className="font-bold underline">Change date</button>}</div>}
           </section>
           <section className={`order-4 rounded-3xl bg-white p-6 shadow-sm ${setupStep === 3 ? "" : "hidden"}`}>
             <p className="text-sm font-bold text-teal-700">Step 3 of 4</p>
-            <h3 className="mt-1 !text-3xl font-extrabold leading-tight">When will your class work on this?</h3>
+            <h3 ref={teachingTimeHeadingRef} tabIndex={-1} className="mt-1 !text-3xl font-extrabold leading-tight">When will your class work on this?</h3>
             <p className="mt-1 text-sm text-slate-600">AAC minutes are a weekly total, not per lesson. Confirm these estimates; Sixth Year can remain provisional.</p>
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               {([['fifth_year','Fifth Year'],['sixth_year','Sixth Year']] as [string, string][]).map(([year, heading]) => <div key={year} className="rounded-2xl border border-slate-200 p-4"><h4 className="font-bold">{heading}</h4><div className="mt-3 grid gap-2"><NumberField label="Lessons per week" value={inputs[`${year}_lessons_per_week`]} onChange={(value: number | "") => changeInput(`${year}_lessons_per_week`, value)} /><NumberField label="Minutes per lesson" value={inputs[`${year}_minutes_per_lesson`]} onChange={(value: number | "") => changeInput(`${year}_minutes_per_lesson`, value)} /><NumberField label="AAC minutes per week" value={inputs[`${year}_aac_minutes`]} onChange={(value: number | "") => changeInput(`${year}_aac_minutes`, value)} /></div></div>)}
@@ -1083,11 +1105,28 @@ export default function AacPlannerPage({
                 const scheduledStage = scheduledStageById.get(stage.id);
                 const displayedMinutes = stage.estimated_minutes ?? scheduledStage?.estimated_minutes ?? null;
                 const provisional = stage.provisional_estimate === true || (stage.estimated_minutes == null && scheduledStage?.provisional_estimate === true);
+                const palette = stageCardPalette(stage.id);
                 return <article
                   key={stage.id}
-                  className="rounded-2xl border border-slate-200 p-4"
+                  className={`rounded-2xl border border-l-4 p-3 ${palette.card}`}
                 >
-                  <div className="space-y-4">
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <span className={`inline-flex min-h-12 w-fit items-center rounded-xl px-4 text-lg font-black ${palette.badge}`}>Stage {index + 1}</span>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" aria-label={`Move stage ${index + 1} up`} disabled={index === 0} onClick={() => moveStage(index, -1)} className="min-h-12 rounded-xl border border-slate-300 bg-white px-3 text-lg font-bold text-slate-900 disabled:opacity-30">Move up</button>
+                        <button type="button" aria-label={`Move stage ${index + 1} down`} disabled={index === stages.length - 1} onClick={() => moveStage(index, 1)} className="min-h-12 rounded-xl border border-slate-300 bg-white px-3 text-lg font-bold text-slate-900 disabled:opacity-30">Move down</button>
+                        <button type="button" aria-label={`Remove stage ${index + 1}`} onClick={() => { setStages((current) => current.filter((item) => item.id !== stage.id)); setDirty(true); }} className="min-h-12 rounded-xl border border-red-200 bg-white px-3 text-lg font-bold text-red-700">Remove</button>
+                      </div>
+                    </div>
+                    <label className="block text-lg font-bold text-slate-900">Stage title<textarea aria-label={`Stage ${index + 1} name`} rows={1} value={stage.name} onChange={(e) => updateStage(stage.id, { name: e.target.value })} className="mt-1 block w-full resize-none rounded-xl border border-slate-300 bg-white p-3 text-[22px] font-semibold leading-snug text-slate-950 [field-sizing:content]" /></label>
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                      <label className="w-full text-lg font-bold text-slate-800 lg:w-56">Completion date<input aria-label={`Stage ${index + 1} date`} type="date" value={stage.completion_date || ""} onChange={(e) => updateStage(stage.id, { completion_date: e.target.value })} className="mt-1 block min-h-12 w-full rounded-xl border border-slate-300 bg-white p-2 text-lg font-normal" /></label>
+                      <div className="flex flex-wrap gap-2"><button type="button" aria-label={`Stage ${index + 1}: 1 week earlier`} onClick={() => shiftStageDate(stage, -7)} className="min-h-12 rounded-xl border border-slate-300 bg-white px-3 text-lg font-bold text-slate-900">−1 week</button><button type="button" aria-label={`Stage ${index + 1}: 1 week later`} onClick={() => shiftStageDate(stage, 7)} className="min-h-12 rounded-xl border border-slate-300 bg-white px-3 text-lg font-bold text-slate-900">+1 week</button></div>
+                      <details className="rounded-xl bg-white/80 p-3 lg:min-w-[260px] lg:flex-1"><summary className="cursor-pointer text-lg font-bold text-slate-900">Adjust time allocation{displayedMinutes ? ` (${displayedMinutes} minutes${provisional ? ", suggested" : ""})` : ""}</summary><label className="mt-3 block text-base font-bold text-slate-700">Total teaching time for this stage (minutes)<span className="mt-1 block text-base font-normal text-slate-600">{displayedMinutes ? provisional ? "Suggested from your plan. You can increase or reduce this estimate." : "Teacher-entered estimate." : "Add teaching inputs before Elume can allocate time for this stage."}</span><input aria-label={`Stage ${index + 1} minutes`} type="number" value={displayedMinutes ?? ""} onChange={(e) => updateStage(stage.id, { estimated_minutes: e.target.value ? Number(e.target.value) : null, provisional_estimate: false })} className="mt-1 block min-h-12 w-full rounded-xl border border-slate-300 bg-white p-2 text-lg font-normal" /></label></details>
+                    </div>
+                  </div>
+                  {false && <div>
                     <label className="block text-lg font-bold text-slate-900">Stage {index + 1}<textarea aria-label={`Stage ${index + 1} name`} rows={2} value={stage.name} onChange={(e) => updateStage(stage.id, { name: e.target.value })} className="mt-2 block w-full resize-y rounded-xl border p-3 text-[22px] font-semibold leading-snug" /></label>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                       <label className="min-w-0 flex-1 text-lg font-bold text-slate-800">Completion date<input aria-label={`Stage ${index + 1} date`} type="date" value={stage.completion_date || ""} onChange={(e) => updateStage(stage.id, { completion_date: e.target.value })} className="mt-1 block min-h-12 w-full rounded-xl border p-2 text-lg font-normal" /></label>
@@ -1124,9 +1163,9 @@ export default function AacPlannerPage({
                         Remove
                       </button>
                     </div>
-                  </div>
+                  </div>}
                   {stage.checkpoints.map((checkpoint) => (
-                    <div key={checkpoint.id} className="mt-2 flex gap-2">
+                    <div key={checkpoint.id} className="mt-3 flex flex-col gap-2 sm:flex-row">
                       <input
                         aria-label="Checkpoint"
                         value={checkpoint.text}
@@ -1139,7 +1178,7 @@ export default function AacPlannerPage({
                             ),
                           })
                         }
-                        className="min-w-0 flex-1 rounded-xl border p-2"
+                        className="min-h-12 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white p-3 text-lg"
                       />
                       <button
                         aria-label="Remove checkpoint"
@@ -1150,7 +1189,7 @@ export default function AacPlannerPage({
                             ),
                           })
                         }
-                        className="rounded border border-red-200 px-2 text-red-700"
+                        className="min-h-12 rounded-xl border border-red-200 bg-white px-3 text-lg font-bold text-red-700"
                       >
                         Remove
                       </button>
@@ -1165,7 +1204,7 @@ export default function AacPlannerPage({
                         ],
                       })
                     }
-                    className="mt-3 text-sm font-bold text-teal-700"
+                    className="mt-3 min-h-12 rounded-xl border border-teal-200 bg-white px-3 text-lg font-bold text-teal-800"
                   >
                     + Add checkpoint
                   </button>
@@ -1173,7 +1212,33 @@ export default function AacPlannerPage({
               })}
             </div>
           </section>
-          <section className={`order-7 grid gap-4 lg:grid-cols-2 ${setupStep === 4 ? "" : "hidden"}`}>
+          <section className={`order-7 rounded-3xl border border-violet-100 bg-violet-50 p-6 ${setupStep === 4 ? "" : "hidden"}`}>
+            <h3 className="text-2xl font-extrabold leading-tight">Plan summary</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-white p-4"><p className="text-base font-semibold text-slate-700">Total allocated teaching time</p><p className="mt-1 text-2xl font-black text-slate-950">{revision?.schedule?.estimated_minutes ?? "—"} minutes</p></div>
+              <div className="rounded-2xl bg-white p-4"><p className="text-base font-semibold text-slate-700">Available teaching time</p><p className="mt-1 text-2xl font-black text-slate-950">{revision?.schedule?.capacity_minutes ?? "—"} minutes</p></div>
+            </div>
+            <dl className="mt-4 grid gap-3 rounded-2xl bg-white p-4 md:grid-cols-2">
+              <div><dt className="text-base font-semibold text-slate-700">Preferred student finish</dt><dd className="font-bold">{inputs.normal_finish_target ? readableDate(inputs.normal_finish_target) : "Not set"}</dd></div>
+              <div><dt className="text-base font-semibold text-slate-700">Final classroom deadline</dt><dd className="font-bold">{finalClassroomDeadline ? readableDate(finalClassroomDeadline) : "Not set"}</dd></div>
+              <div><dt className="text-base font-semibold text-slate-700">SEC deadline</dt><dd className="font-bold">{inputs.controlling_deadline ? readableDate(inputs.controlling_deadline) : "Not confirmed"}</dd></div>
+              <div><dt className="text-base font-semibold text-slate-700">Final-classroom-to-SEC buffer</dt><dd className={deadlineBufferIssue || deadlineMissingGuidance ? "font-bold text-red-800" : "font-bold text-teal-900"}>{deadlineMissingGuidance || deadlineBufferIssue?.text || `${buffer} calendar days before the SEC deadline.`}</dd></div>
+            </dl>
+            {hasProvisionalStageAllocations && <p className="mt-4 rounded-2xl border border-violet-200 bg-white p-4 text-violet-950">Suggested stage allocations use your available teaching time. Adjust them to suit your class.</p>}
+            {dirty && <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950">Schedule suggestions are stale after your edits. Save tracker to refresh them.</p>}
+            {schedulingBlockers.length > 0 && <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-950"><p className="font-extrabold">Scheduling needs attention</p><ul className="mt-2 list-disc pl-5">{schedulingBlockers.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+            {provisionalCalendarWarnings.length > 0 && <div className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50 p-4 text-cyan-950"><p className="font-extrabold">Calendar information is provisional</p><ul className="mt-2 list-disc pl-5">{provisionalCalendarWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button type="button" onClick={() => focusSetupHeading(keyDatesHeadingRef)} className="rounded-xl border border-teal-300 bg-white px-4 py-2 font-bold text-teal-900">Edit dates</button>
+              <button type="button" onClick={() => focusSetupHeading(teachingTimeHeadingRef)} className="rounded-xl border border-teal-300 bg-white px-4 py-2 font-bold text-teal-900">Edit teaching time</button>
+              <button type="button" disabled={busy || saving || dirty} onClick={() => void openRecalculation()} className="rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50">Recalculate suggested dates</button>
+              <button type="button" disabled={startingNewDraft || !dirty || saving || busy} onClick={() => void save()} className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white disabled:opacity-50">{saving ? "Saving…" : "Save tracker"}</button>
+            </div>
+            <p className="mt-3 text-base text-slate-700">Review proposed replacement dates before applying them. Saving keeps this tracker private to teachers; this pilot does not publish calendar events.</p>
+            {assumptions.length > 0 && <details className="mt-4 rounded-2xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-bold">Recorded planning assumptions</summary><ul className="mt-3 list-disc pl-5">{assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul></details>}
+            {project.approved_revision && <details className="mt-4 rounded-2xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-bold">Saved plan comparison</summary><PlanComparison draft={stages} approved={normalizeStages(project.approved_revision.plan?.stages)} /></details>}
+          </section>
+          {false && <section className="hidden">
             <article className="rounded-3xl border border-cyan-100 bg-cyan-50 p-6">
               <h3 className="font-extrabold">
                 Reviewed source requirements and dates
@@ -1208,11 +1273,11 @@ export default function AacPlannerPage({
               ) : (
                 <p className="mt-2 text-sm">No recorded assumptions yet.</p>
               )}
-              {project.approved_revision && (
+              {project?.approved_revision && (
                 <PlanComparison
                   draft={stages}
                   approved={normalizeStages(
-                    project.approved_revision.plan?.stages,
+                    project?.approved_revision?.plan?.stages,
                   )}
                 />
               )}
@@ -1221,7 +1286,7 @@ export default function AacPlannerPage({
                   ? "This pilot does not publish stages to any calendar or share them with students."
                   : "Approval publishes the saved stage milestones to your teacher class and all-events calendars. It does not share this plan with students."}
               </p>
-              {project.status === "approved" && !revision?.state.includes("draft") ? (
+              {project?.status === "approved" && !revision?.state.includes("draft") ? (
                 <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
                   <b>Approved plan is live in your calendars.</b>
                   <button type="button" onClick={() => navigate(`/class/${classId}/calendar`)} className="ml-3 font-bold underline">Open class calendar</button>
@@ -1245,7 +1310,7 @@ export default function AacPlannerPage({
                 </>
               )}
             </article>
-          </section>
+          </section>}
         </div>
       )}
     </>
@@ -1291,24 +1356,33 @@ function DateField({
   onChange,
   help,
   emphasis = false,
+  error,
+  inputRef,
 }: {
   label: string;
   value?: string;
   onChange: (value: string) => void;
   help?: string;
   emphasis?: boolean;
+  error?: string;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
+  const errorId = `${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-error`;
   return (
     <label className={`text-lg font-semibold leading-7 ${emphasis ? "rounded-2xl border-2 border-teal-300 bg-teal-50 p-4 text-teal-950" : ""}`}>
       <span>{label}{help && <span className="ml-2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-teal-400 text-base" tabIndex={0} aria-label={help}>?</span>}</span>
       {help && <span className="mt-2 block text-base font-normal leading-6 text-slate-700">{help}</span>}
       <input
+        ref={inputRef}
         aria-label={label}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? errorId : undefined}
         type="date"
         value={value || ""}
         onChange={(event) => onChange(event.target.value)}
         className="mt-2 block min-h-12 w-full rounded-xl border p-3 text-lg font-normal leading-7"
       />
+      {error && <span id={errorId} role="alert" className="mt-2 block rounded-xl bg-red-50 p-3 text-base font-bold text-red-900">{error}</span>}
     </label>
   );
 }

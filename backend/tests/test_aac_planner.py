@@ -15,6 +15,13 @@ class AacPlannerSafetyTests(unittest.TestCase):
         self.assertEqual(len(physics_starter_template()), 6)
         self.assertTrue(all(stage["completion_date"] is None for stage in physics_starter_template()))
 
+    def test_short_midweek_window_never_proposes_an_excluded_monday(self):
+        inputs = {"weekly_minutes":30,"planned_start":"2026-09-16","normal_finish_target":"2026-09-18","final_classroom_deadline":"2027-02-26","controlling_deadline":"2027-03-12","fifth_year_end":"2026-05-29","sixth_year_restart":"2026-09-14","reviewed_closures":["2026-09-16"]}
+        result = build_schedule({"planning_inputs":inputs,"stages":[{"id":"a","name":"Research"}]})
+        self.assertEqual(result["stages"][0]["proposed_completion_date"], "2026-09-17")
+        result = build_schedule({"planning_inputs":inputs,"stages":[{"id":"a","name":"Research","estimated_minutes":30,"completion_date":"2026-09-14"}]})
+        self.assertTrue(any("outside" in warning for warning in result["warnings"]))
+
     def test_deadline_and_buffer_require_teacher_confirmation(self):
         deadline = date(2027, 4, 20)
         self.assertTrue(plan_warnings({"controlling_deadline": deadline.isoformat()}))

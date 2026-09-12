@@ -50,6 +50,8 @@ test("supports manual teacher editing without an AI request or calendar action",
   });
   render(<AacPlannerPage embedded />);
   const stage = await screen.findByLabelText("Stage 1 name");
+  expect(screen.queryByRole("button", { name: "Track this class" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/student progress is stored in this browser/)).not.toBeInTheDocument();
   fireEvent.change(stage, { target: { value: "Teacher-edited research" } });
   fireEvent.click(screen.getByRole("button", { name: "Save tracker" }));
   await waitFor(() => expect(mockedApi).toHaveBeenCalledWith("/api/classes/18/aac/revision", expect.objectContaining({ method: "PUT" })));
@@ -71,6 +73,28 @@ test("shows scheduler stage time and makes a teacher edit stale without moving i
   expect(screen.getByLabelText("Stage 1 date")).toHaveValue("2027-03-01");
   expect(screen.getByText("Schedule suggestions are stale after your edits. Save tracker to refresh them.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save tracker" })).toBeEnabled();
+});
+
+test.each([
+  ["2027-04-25", "This deadline is 5 calendar days after the SEC deadline."],
+  ["2027-04-12", "This leaves 8 days before the SEC deadline. Allow at least 14 days."],
+])("makes an invalid classroom buffer explicit (%s)", async (finalDate, expected) => {
+  const invalid = { ...scheduledDraft, revision: { ...scheduledDraft.revision, planning_inputs: { ...scheduledDraft.revision.planning_inputs, controlling_deadline: "2027-04-20", final_classroom_deadline: finalDate, internal_completion_target: finalDate } } };
+  mockedApi.mockImplementation((path: string) => path === "/api/classes/18/aac" ? Promise.resolve({ enabled: true, project: invalid }) as any : Promise.resolve([]) as any);
+  render(<AacPlannerPage embedded />);
+  fireEvent.click(await screen.findByRole("button", { name: "3. Teaching time" }));
+  expect(screen.getAllByText(expected).length).toBeGreaterThan(0);
+  const date = screen.getByLabelText("Final classroom deadline");
+  expect(date).toHaveAttribute("aria-invalid", "true");
+  fireEvent.click(screen.getAllByRole("button", { name: "Change date" })[0]);
+  await waitFor(() => expect(date).toHaveFocus());
+});
+
+test("does not show a buffer error at exactly fourteen calendar days", async () => {
+  mockedApi.mockImplementation((path: string) => path === "/api/classes/18/aac" ? Promise.resolve({ enabled: true, project: scheduledDraft }) as any : Promise.resolve([]) as any);
+  render(<AacPlannerPage embedded />);
+  fireEvent.click(await screen.findByRole("button", { name: "3. Teaching time" }));
+  expect(screen.queryByText("Change your final classroom deadline")).not.toBeInTheDocument();
 });
 
 test("uses the active specification automatically while keeping manual editing available", async () => {
@@ -151,8 +175,17 @@ test("shows schedule details and applies only stable-ID suggestions to the edita
     return Promise.resolve({}) as any;
   });
   render(<AacPlannerPage embedded />);
-  expect(await screen.findByText(/Estimated workload: 90 minutes/)).toBeInTheDocument();
+  expect(await screen.findByText("Total allocated teaching time")).toBeInTheDocument();
+  expect(screen.getByText("90 minutes")).toBeInTheDocument();
   expect(screen.getByText(/Fictional closure conflict/)).toBeInTheDocument();
+  expect(screen.queryByText("Schedule preview")).not.toBeInTheDocument();
+  expect(screen.queryByText("Reviewed source requirements and dates")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Edit dates" }));
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Key dates" })).toHaveFocus());
+  fireEvent.click(screen.getByRole("button", { name: "4. Suggested plan" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit teaching time" }));
+  await waitFor(() => expect(screen.getByRole("heading", { name: "When will your class work on this?" })).toHaveFocus());
+  fireEvent.click(screen.getByRole("button", { name: "4. Suggested plan" }));
   fireEvent.click(screen.getByRole("button", { name: "Recalculate suggested dates" }));
   expect(await screen.findByRole("heading", { name: "Review replacement dates" })).toBeInTheDocument();
   expect(screen.getAllByRole("checkbox")).toHaveLength(2);
