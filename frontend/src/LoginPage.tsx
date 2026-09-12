@@ -73,7 +73,8 @@ export default function LoginPage({ onLoggedIn }: Props) {
     const [forgotPasswordError, setForgotPasswordError] = useState<string | null>(null);
     const [gaeilgeDiscoveryPinned, setGaeilgeDiscoveryPinned] = useState(false);
     const [gaeilgeDiscoveryHovered, setGaeilgeDiscoveryHovered] = useState(false);
-    const gaeilgeDiscoveryOpen = gaeilgeDiscoveryPinned || gaeilgeDiscoveryHovered;
+    const [gaeilgeDiscoveryHoverDismissed, setGaeilgeDiscoveryHoverDismissed] = useState(false);
+    const gaeilgeDiscoveryOpen = gaeilgeDiscoveryPinned || (gaeilgeDiscoveryHovered && !gaeilgeDiscoveryHoverDismissed);
 
     function isLocalDev() {
         const h = window.location.hostname;
@@ -159,6 +160,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
             if (event.key === "Escape") {
                 setGaeilgeDiscoveryPinned(false);
                 setGaeilgeDiscoveryHovered(false);
+                setGaeilgeDiscoveryHoverDismissed(false);
             }
         }
 
@@ -251,12 +253,26 @@ export default function LoginPage({ onLoggedIn }: Props) {
                 <LanguageSwitch />
                 <div
                     className="relative"
-                    onMouseEnter={() => setGaeilgeDiscoveryHovered(true)}
-                    onMouseLeave={() => setGaeilgeDiscoveryHovered(false)}
+                    onMouseEnter={() => {
+                        setGaeilgeDiscoveryHovered(true);
+                        setGaeilgeDiscoveryHoverDismissed(false);
+                    }}
+                    onMouseLeave={() => {
+                        setGaeilgeDiscoveryHovered(false);
+                        setGaeilgeDiscoveryHoverDismissed(false);
+                    }}
                 >
                     <button
                         type="button"
-                        onClick={() => setGaeilgeDiscoveryPinned((pinned) => !pinned)}
+                        onClick={() => {
+                            if (gaeilgeDiscoveryPinned) {
+                                setGaeilgeDiscoveryPinned(false);
+                                setGaeilgeDiscoveryHoverDismissed(true);
+                            } else {
+                                setGaeilgeDiscoveryPinned(true);
+                                setGaeilgeDiscoveryHoverDismissed(false);
+                            }
+                        }}
                         aria-label="Learn about Elume in Irish"
                         aria-expanded={gaeilgeDiscoveryOpen}
                         aria-controls="gaeilge-discovery-popover"

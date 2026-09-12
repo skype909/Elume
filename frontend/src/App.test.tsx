@@ -189,6 +189,12 @@ describe("public Gaeilge account flow", () => {
     fireEvent.click(discovery);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByText("Tá Elume ar fáil i nGaeilge.")).not.toBeInTheDocument();
+
+    fireEvent.mouseEnter(discovery);
+    expect(screen.getByText("Tá Elume ar fáil i nGaeilge.")).toBeInTheDocument();
+    fireEvent.click(discovery);
+    fireEvent.click(discovery);
+    expect(screen.queryByText("Tá Elume ar fáil i nGaeilge.")).not.toBeInTheDocument();
   });
 
   test("keeps the language switch working with the all-in-one Gaeilge positioning", async () => {
