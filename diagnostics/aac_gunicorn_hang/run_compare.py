@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from uuid import uuid4
+from progress_checks import check_progress, check_recovery
 
 ROOT = Path(__file__).resolve().parents[2]
 HARNESS = Path(__file__).resolve().parent
@@ -62,7 +63,13 @@ Base.metadata.drop_all(bind=engine); Base.metadata.create_all(bind=engine); db=S
 user=models.UserModel(email='pfitzgerald@preskilkenny.ie',password_hash='x',role='teacher',is_active=True,email_verified=True); db.add(user); db.flush()
 klass=models.ClassModel(owner_user_id=user.id,name='Synthetic AAC',subject='Physics',aac_planner_enabled=True); db.add(klass); db.flush()
 project=models.AacProjectModel(class_id=klass.id,owner_user_id=user.id,title='Synthetic tracker',subject='Physics'); db.add(project); db.flush()
-revision=models.AacPlanRevisionModel(project_id=project.id,version=1,state='draft',source_requirements_json=[],source_document_ids_json=[],assumptions_json=[],planning_inputs_json={'weekly_minutes':30,'planned_start':'2026-09-14','normal_finish_target':'2027-02-08','final_classroom_deadline':'2027-02-20','controlling_deadline':'2027-03-12','fifth_year_end':'2026-05-29','sixth_year_restart':'2026-09-14'},plan_json={'stages':[{'id':'synthetic-stage','name':'Synthetic stage','completion_date':'2026-11-01','estimated_minutes':30,'checkpoints':[]}]}); db.add(revision); db.commit()
+revision=models.AacPlanRevisionModel(project_id=project.id,version=1,state='draft',source_requirements_json=[],source_document_ids_json=[],assumptions_json=[],planning_inputs_json={'weekly_minutes':30,'planned_start':'2026-09-14','normal_finish_target':'2027-02-08','final_classroom_deadline':'2027-02-20','controlling_deadline':'2027-03-12','fifth_year_end':'2026-05-29','sixth_year_restart':'2026-09-14'},plan_json={'stages':[{'id':'synthetic-stage','name':'Synthetic stage','completion_date':'2026-11-01','estimated_minutes':30,'checkpoints':[]}]}); db.add(revision)
+db.add_all([models.StudentModel(class_id=klass.id,first_name=n,active=True) for n in ['Synthetic Alice','Synthetic Bob']]); db.flush()
+dan=models.UserModel(email='dcampion@preskilkenny.ie',password_hash='x',role='teacher',is_active=True,email_verified=True); outsider=models.UserModel(email='outsider@example.test',password_hash='x',role='teacher',is_active=True,email_verified=True); db.add_all([dan,outsider]); db.flush()
+other=models.ClassModel(owner_user_id=dan.id,name='Synthetic Dan class',subject='Physics',aac_planner_enabled=True); db.add(other); db.flush()
+db.add(models.StudentModel(class_id=other.id,first_name='Synthetic Dan student',active=True))
+other_project=models.AacProjectModel(class_id=other.id,owner_user_id=dan.id,title='Synthetic Dan tracker',subject='Physics'); db.add(other_project); db.flush()
+db.add(models.AacPlanRevisionModel(project_id=other_project.id,version=1,state='draft',plan_json={'stages':[{'id':'dan-stage','name':'Dan stage','completion_date':'2026-11-01'}]})); db.commit()
 print(klass.id); print(jwt.encode({'sub':str(user.id)},os.environ['DIAGNOSTIC_JWT_SECRET'],algorithm='HS256'))"""
     env = {**os.environ, "DIAGNOSTIC_DATABASE_URL": database_url, "DIAGNOSTIC_JWT_SECRET": SECRET, "PYTHONDONTWRITEBYTECODE": "1"}
     result = subprocess.run([sys.executable, "-c", script], cwd=source / "backend", env=env, capture_output=True, text=True, timeout=45, check=True)
@@ -82,7 +89,7 @@ def run_revision(label: str, revision: str, port: int, workdir: Path, database_u
         except Exception as exc:
             write(log, f"RESULT:setup-failure:{type(exc).__name__}")
             raise RuntimeError("Disposable database seeding failed; see setup classification") from None
-        env = {**os.environ, "DATABASE_URL": database_url, "JWT_SECRET": SECRET, "UPLOADS_DIR": str(workdir / label / "uploads"), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1", "PYTHONPATH": os.pathsep.join((str(HARNESS), str(source / "backend")))}
+        env = {**os.environ, "DATABASE_URL": database_url, "JWT_SECRET": SECRET, "ELUME_UPLOADS_DIR": str(workdir / label / "uploads"), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1", "PYTHONPATH": os.pathsep.join((str(HARNESS), str(source / "backend")))}
         command = [sys.executable, "-m", "gunicorn", "main:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", f"127.0.0.1:{port}"]
         write(log, f"REVISION:{revision}\nRUNTIME:{sys.version.split()[0]}\nCOMMAND:gunicorn workers=1 uvicorn.workers.UvicornWorker")
         with log.open("ab") as stream: process = subprocess.Popen(command, cwd=source / "backend", env=env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
@@ -130,9 +137,15 @@ def run_revision(label: str, revision: str, port: int, workdir: Path, database_u
                 if [future.result() for future in probes] != [401] * 8: raise AssertionError("concurrent unauthenticated probes failed")
                 write(log, "AAC:upload=200 review=source-backed-three-stages save=200 reload=90-minutes recalculation=read-only concurrent-auth=8x401-json")
                 if label == "suspect":
+                    identity, progress = check_progress(port,class_id,token,request,json_request,auth_probe,log,write)
                     if json_request(port, "POST", f"/classes/{class_id}/aac/new-draft", token, {})[0] != 200: raise AssertionError("second fresh start failed")
                     if json.loads(request(port, "GET", f"/classes/{class_id}/aac/documents", token=token)[1]) != []: raise AssertionError("fresh sources not isolated")
                     write(log, "AAC:fresh-start=200 active-sources=empty")
+                    fresh = json.loads(request(port,"GET",f"/classes/{class_id}/aac/students",token=token)[1])
+                    assert fresh["tracker_id"] != identity and all(s["check_in"]["version"] == 0 for s in fresh["students"])
+                    historical = json.loads(request(port,"GET",f"/classes/{class_id}/aac/students?tracker_id={identity}",token=token)[1])
+                    assert historical["read_only"] and historical["students"][0]["check_in"] == progress
+                    write(log,"PROGRESS:fresh-tracker=isolated prior-history=retained")
             if re.findall(r"\[(\d+)\].*Application startup complete\.", log.read_text()) != worker_ids: raise AssertionError("worker restarted during diagnostic")
             write(log, "RESULT:pass")
         except Exception as exc:
@@ -150,8 +163,11 @@ def main() -> int:
     if workdir.parent != runner_temp or workdir.name != "aac-gunicorn-diagnostic": raise ValueError("Unsafe diagnostic directory")
     if workdir.exists(): raise ValueError("Diagnostic directory already exists; automatic repeats are forbidden")
     (workdir / "logs").mkdir(parents=True)
+    os.environ["DIAGNOSTIC_JWT_SECRET"] = SECRET
     run_revision("healthy", args.healthy, 18182, workdir, os.environ["DIAGNOSTIC_DATABASE_URL"])
     run_revision("suspect", args.suspect, 18183, workdir, os.environ["DIAGNOSTIC_DATABASE_URL"])
+    from jose import jwt
+    check_recovery(ROOT,HARNESS,args.healthy,workdir,os.environ["DIAGNOSTIC_DATABASE_URL"],jwt.encode({"sub":"1"},SECRET,algorithm="HS256"),request,write,dump_stacks)
     return 0
 
 if __name__ == "__main__": raise SystemExit(main())
