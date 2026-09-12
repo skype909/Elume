@@ -3,11 +3,10 @@ name: AAC Gunicorn hang diagnostic
 on:
   push:
     branches:
-      - diag/aac-gunicorn-hang
+      - diag/aac-candidate-585c28c
     paths:
       - .github/workflows/aac-gunicorn-hang-diagnostic.yml
       - diagnostics/aac_gunicorn_hang/**
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -32,6 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -47,8 +47,8 @@ jobs:
           PYTHONUTF8: "1"
         run: |
           timeout 720s python diagnostics/aac_gunicorn_hang/run_compare.py \
-            --healthy c1c9cc15d374f6af6a139b350a5b8c2e722a2690 \
-            --suspect d58e505b298d10ecad112e10b7d1046e61e58d00
+            --healthy dc8f9dec4eaa9e12844c8f251416a919fef68474 \
+            --suspect 585c28cf72656992c0cd00413e154db72360fe2b
       - name: Upload sanitized diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
