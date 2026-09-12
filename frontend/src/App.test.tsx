@@ -163,6 +163,45 @@ describe("public Gaeilge account flow", () => {
     expect(screen.getByText("Clárú múinteora")).toBeInTheDocument();
     expect(screen.queryByText("Early Adopter Pricing")).not.toBeInTheDocument();
   });
+
+  test("shows the all-in-one positioning and a bilingual Gaeilge discovery popover", async () => {
+    setAnonymousPublicResponses();
+    router.__setLocation({ pathname: "/" });
+    renderApp();
+
+    expect((await screen.findAllByText("The All-in-One Teaching Platform")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("The AI-Powered Teaching Platform")).not.toBeInTheDocument();
+    expect(screen.getByText(/Elume is an all-in-one teaching platform/)).toBeInTheDocument();
+    expect(screen.queryByText(/Elume is an AI teaching platform/)).not.toBeInTheDocument();
+    expect(document.title).toBe("Elume – The All-in-One Teaching Platform");
+
+    const discovery = screen.getByRole("button", { name: "Learn about Elume in Irish" });
+    expect(discovery).toHaveTextContent("Bain triail as Gaeilge");
+    expect(discovery).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(discovery);
+
+    expect(screen.getByText("Tá Elume ar fáil i nGaeilge.")).toBeInTheDocument();
+    expect(screen.getByText("Elume is available in Irish.")).toBeInTheDocument();
+    expect(discovery).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(discovery);
+    expect(screen.queryByText("Tá Elume ar fáil i nGaeilge.")).not.toBeInTheDocument();
+
+    fireEvent.click(discovery);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByText("Tá Elume ar fáil i nGaeilge.")).not.toBeInTheDocument();
+  });
+
+  test("keeps the language switch working with the all-in-one Gaeilge positioning", async () => {
+    setAnonymousPublicResponses();
+    router.__setLocation({ pathname: "/" });
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Gaeilge" }));
+    expect((await screen.findAllByText("An tArdán Múinteoireachta Uile-i-Aon")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Is ardán múinteoireachta uile-i-aon é Elume/)).toBeInTheDocument();
+    expect(document.title).toBe("Elume – An tArdán Múinteoireachta Uile-i-Aon");
+    expect(screen.queryByLabelText(/Review Gaeilge translation/)).not.toBeInTheDocument();
+  });
 });
 
 describe("server-authoritative billing access", () => {

@@ -6,6 +6,7 @@ import SchoolBrand from "./Components/SchoolBrand";
 import { normalElumeLoginUrl, resolveSchoolBrandingSlug } from "./schoolBranding";
 import LanguageSwitch from "./Components/LanguageSwitch";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
+import { Sparkles } from "lucide-react";
 
 type Props = { onLoggedIn: () => void };
 type SchoolBranding = { name: string; slug: string; logo_url?: string | null; status: "active" | "suspended" | "inactive" };
@@ -70,6 +71,9 @@ export default function LoginPage({ onLoggedIn }: Props) {
     const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
     const [forgotPasswordSuccess, setForgotPasswordSuccess] = useState<string | null>(null);
     const [forgotPasswordError, setForgotPasswordError] = useState<string | null>(null);
+    const [gaeilgeDiscoveryPinned, setGaeilgeDiscoveryPinned] = useState(false);
+    const [gaeilgeDiscoveryHovered, setGaeilgeDiscoveryHovered] = useState(false);
+    const gaeilgeDiscoveryOpen = gaeilgeDiscoveryPinned || gaeilgeDiscoveryHovered;
 
     function isLocalDev() {
         const h = window.location.hostname;
@@ -134,7 +138,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
     }, [schoolSlug]);
 
     useEffect(() => {
-        document.title = language === "ga" ? "Elume – Uirlisí IS do mhúinteoirí iar-bhunscoile" : "Elume – AI Tools for Secondary School Teachers";
+        document.title = language === "ga" ? "Elume – An tArdán Múinteoireachta Uile-i-Aon" : "Elume – The All-in-One Teaching Platform";
 
         let meta = document.querySelector('meta[name="description"]');
 
@@ -149,6 +153,18 @@ export default function LoginPage({ onLoggedIn }: Props) {
             t("public.description")
         );
     }, [language, t]);
+
+    useEffect(() => {
+        function closeGaeilgeDiscovery(event: KeyboardEvent) {
+            if (event.key === "Escape") {
+                setGaeilgeDiscoveryPinned(false);
+                setGaeilgeDiscoveryHovered(false);
+            }
+        }
+
+        window.addEventListener("keydown", closeGaeilgeDiscovery);
+        return () => window.removeEventListener("keydown", closeGaeilgeDiscovery);
+    }, []);
 
     async function submitForgotPassword(e: React.FormEvent) {
         e.preventDefault();
@@ -231,7 +247,55 @@ export default function LoginPage({ onLoggedIn }: Props) {
             </div>
 
             <div className="pointer-events-none absolute inset-0 opacity-[0.10] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:36px_36px]" />
-            <div className="absolute right-4 top-4 z-20 sm:right-6 sm:top-6"><LanguageSwitch /></div>
+            <div className="absolute right-4 top-4 z-20 flex flex-col items-end gap-2 sm:right-6 sm:top-6">
+                <LanguageSwitch />
+                <div
+                    className="relative"
+                    onMouseEnter={() => setGaeilgeDiscoveryHovered(true)}
+                    onMouseLeave={() => setGaeilgeDiscoveryHovered(false)}
+                >
+                    <button
+                        type="button"
+                        onClick={() => setGaeilgeDiscoveryPinned((pinned) => !pinned)}
+                        aria-label="Learn about Elume in Irish"
+                        aria-expanded={gaeilgeDiscoveryOpen}
+                        aria-controls="gaeilge-discovery-popover"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200/80 bg-white/85 px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-md shadow-emerald-900/10 backdrop-blur transition hover:-translate-y-px hover:border-teal-300 hover:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2"
+                    >
+                        <Sparkles aria-hidden="true" size={14} className="text-violet-500" />
+                        Bain triail as Gaeilge
+                    </button>
+
+                    {gaeilgeDiscoveryOpen ? (
+                        <div
+                            id="gaeilge-discovery-popover"
+                            className="absolute right-0 top-full mt-3 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-emerald-200/80 bg-white/95 p-4 text-left shadow-2xl shadow-emerald-900/15 backdrop-blur sm:w-80"
+                        >
+                            <div className="absolute -top-1.5 right-7 h-3 w-3 rotate-45 border-l border-t border-emerald-200/80 bg-white/95" />
+                            <div className="relative flex items-center gap-2">
+                                <div className="grid h-8 w-8 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 text-white shadow-sm">
+                                    <Sparkles aria-hidden="true" size={16} />
+                                </div>
+                                <div>
+                                    <div className="text-sm font-black text-slate-900">Elume as Gaeilge</div>
+                                    <div className="text-xs font-semibold text-emerald-700">Béarla ↔ Gaeilge</div>
+                                </div>
+                            </div>
+                            <div className="relative mt-3 space-y-3 text-sm leading-5 text-slate-700">
+                                <p>
+                                    <span className="font-bold text-emerald-800">Tá Elume ar fáil i nGaeilge.</span><br />
+                                    Úsáid an lasc thuas chun aistriú idir Béarla agus Gaeilge.
+                                </p>
+                                <div className="h-px bg-gradient-to-r from-emerald-100 via-cyan-200 to-violet-100" />
+                                <p>
+                                    <span className="font-bold text-slate-900">Elume is available in Irish.</span><br />
+                                    Use the switch above to move between English and Gaeilge.
+                                </p>
+                            </div>
+                        </div>
+                    ) : null}
+                </div>
+            </div>
 
             <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-8">
                 <div className="w-full max-w-6xl">
