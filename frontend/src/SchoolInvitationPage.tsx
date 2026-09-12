@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiFetch, clearToken, INVITATION_LOGIN_NOTICE_KEY } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
+import LanguageSwitch from "./Components/LanguageSwitch";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 type InvitationInfo = {
   school_name: string;
@@ -29,6 +31,7 @@ function inviterLabel(invitation: InvitationInfo) {
 }
 
 export default function SchoolInvitationPage() {
+  const { t } = useUiLanguage();
   const { token = "" } = useParams();
   const invitationToken = useMemo(() => token.trim(), [token]);
   const [invitation, setInvitation] = useState<InvitationInfo | null>(null);
@@ -49,7 +52,7 @@ export default function SchoolInvitationPage() {
 
     async function validateInvitation() {
       if (!invitationToken) {
-        setError("This invitation link is invalid or incomplete.");
+        setError(t("schoolInvite.invalid"));
         setLoading(false);
         return;
       }
@@ -57,7 +60,7 @@ export default function SchoolInvitationPage() {
         const data = (await apiFetch(`/school-invite/${encodeURIComponent(invitationToken)}`)) as InvitationInfo;
         if (!cancelled) setInvitation(data);
       } catch (err: any) {
-        if (!cancelled) setError(err?.message || "This invitation is no longer available.");
+        if (!cancelled) setError(err?.message || t("schoolInvite.unavailable"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -87,7 +90,7 @@ export default function SchoolInvitationPage() {
         return;
       }
       if (password !== confirmPassword) {
-        setError("Passwords do not match.");
+        setError(t("register.passwordMismatch"));
         return;
       }
     }
@@ -118,7 +121,7 @@ export default function SchoolInvitationPage() {
         window.location.replace(`${window.location.origin}${window.location.pathname}#/`);
       }, 1200);
     } catch (err: any) {
-      setError(err?.message || "Could not accept this invitation.");
+      setError(err?.message || t("schoolInvite.failure"));
     } finally {
       setSubmitting(false);
     }
@@ -126,6 +129,7 @@ export default function SchoolInvitationPage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
+      <div className="absolute right-4 top-4 z-20"><LanguageSwitch /></div>
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute -left-24 top-[-60px] h-80 w-80 rounded-full bg-cyan-300/25 blur-3xl" />
         <div className="absolute right-[-80px] top-24 h-96 w-96 rounded-full bg-emerald-300/20 blur-3xl" />
@@ -138,12 +142,12 @@ export default function SchoolInvitationPage() {
               <img src={elumeLogo} alt="Elume" className="h-12 w-12 object-contain" />
             </div>
             <div>
-              <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">School invitation</div>
-              <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-900">Join Elume</h1>
+              <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">{t("schoolInvite.label")}</div>
+              <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-900">{t("schoolInvite.title")}</h1>
             </div>
           </div>
 
-          {loading && <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">Checking invitation…</p>}
+          {loading && <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">{t("schoolInvite.checking")}</p>}
 
           {!loading && !invitation && error && <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</p>}
 
@@ -181,13 +185,13 @@ export default function SchoolInvitationPage() {
                 {error && <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</p>}
 
                 <button type="submit" disabled={submitting} className="w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-base font-black text-white shadow-lg transition hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60">
-                  {submitting ? "Accepting invitation..." : isSchoolAdminInvitation ? "Create School Admin account" : "Accept invitation"}
+                  {submitting ? t("schoolInvite.accepting") : isSchoolAdminInvitation ? t("register.title") : t("schoolInvite.accept")}
                 </button>
               </form>
             </>
           )}
 
-          <div className="mt-5 text-center text-sm text-slate-600"><Link to="/" className="font-semibold text-emerald-700 hover:underline">Back to login</Link></div>
+          <div className="mt-5 text-center text-sm text-slate-600"><Link to="/" className="font-semibold text-emerald-700 hover:underline">{t("schoolInvite.back")}</Link></div>
         </div>
       </div>
     </div>

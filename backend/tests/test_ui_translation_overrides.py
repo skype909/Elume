@@ -57,6 +57,15 @@ class UiTranslationOverrideTests(unittest.TestCase):
         response = self.client.get("/ui-translations/ga")
         self.assertEqual(response.status_code, 401)
 
+    def test_public_read_returns_only_allowlisted_values_without_reviewer_metadata(self):
+        self.assertEqual(self.put(self.reviewer, key="public.aiTools", value="Uirlisí IS").status_code, 200)
+        self.assertEqual(self.put(self.reviewer, key="class.resources", value="Acmhainní").status_code, 200)
+        response = self.client.get("/public/ui-translations/ga")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"overrides": {"public.aiTools": "Uirlisí IS"}})
+        self.assertNotIn("reviewed_by_user_id", response.text)
+        self.assertNotIn("is_gaeilge_reviewer", response.text)
+
     def test_non_reviewer_write_is_rejected(self):
         self.assertEqual(self.put(self.non_reviewer).status_code, 403)
 

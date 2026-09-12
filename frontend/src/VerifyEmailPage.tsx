@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiFetch, setToken } from "./api";
+import LanguageSwitch from "./Components/LanguageSwitch";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 export default function VerifyEmailPage() {
+  const { t } = useUiLanguage();
   const location = useLocation();
   const navigate = useNavigate();
   const token = useMemo(() => new URLSearchParams(location.search).get("token") || "", [location.search]);
@@ -48,10 +51,11 @@ export default function VerifyEmailPage() {
   }, [token]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 px-4 py-10">
+    <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 px-4 py-10">
+      <div className="absolute right-4 top-4 z-20"><LanguageSwitch /></div>
       <div className="mx-auto max-w-md rounded-[32px] border border-white/70 bg-white/85 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-7">
-        <div className="text-2xl font-black tracking-tight text-slate-900">Verify your email</div>
-        <div className="mt-2 text-sm text-slate-600">We’re activating your Elume teacher account.</div>
+        <div className="text-2xl font-black tracking-tight text-slate-900">{t("verifyEmail.title")}</div>
+        <div className="mt-2 text-sm text-slate-600">{t("verifyEmail.help")}</div>
 
         {loading && <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">{message}</div>}
         {!loading && error && <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</div>}
@@ -62,7 +66,7 @@ export default function VerifyEmailPage() {
             to="/"
             className="flex w-full items-center justify-center rounded-2xl border-2 border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
           >
-            Back to login
+            {t("verifyEmail.back")}
           </Link>
         </div>
       </div>

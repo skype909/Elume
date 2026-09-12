@@ -2828,6 +2828,15 @@ def auth_me(user: models.UserModel = Depends(get_authenticated_user)):
 
 # Keep this deliberately limited to the non-interactive reviewer labels.
 GAEILGE_REVIEWABLE_KEYS = {
+    "public.aiTools", "public.platform", "public.makeTeaching", "public.makeTeachingAccent", "public.description",
+    "public.saveTime", "public.saveTimeDescription", "public.engageClasses", "public.engageClassesDescription",
+    "public.stayOrganised", "public.stayOrganisedDescription", "public.builtForSchools", "public.builtForSchoolsDescription",
+    "public.trustedPilots", "public.teacherFirst", "public.builtInIreland", "public.seeInAction", "public.mobileDescription",
+    "login.welcomeBack", "login.signIn", "login.email", "login.password", "login.forgotPassword", "login.resetPassword", "login.resetGuidance", "login.sendReset", "login.createAccount",
+    "register.title", "register.firstName", "register.lastName", "register.schoolName", "register.confirmPassword", "register.passwordHelp", "register.submit", "register.loading", "register.completeFields", "register.validEmail", "register.passwordMismatch", "register.success", "register.failure",
+    "verifyEmail.title", "verifyEmail.help", "verifyEmail.back",
+    "resetPassword.recovery", "resetPassword.title", "resetPassword.help", "resetPassword.new", "resetPassword.confirm", "resetPassword.invalid", "resetPassword.success", "resetPassword.failure", "resetPassword.submit", "resetPassword.loading", "resetPassword.back",
+    "schoolInvite.label", "schoolInvite.title", "schoolInvite.checking", "schoolInvite.invalid", "schoolInvite.unavailable", "schoolInvite.existingPassword", "schoolInvite.firstName", "schoolInvite.lastName", "schoolInvite.confirmPassword", "schoolInvite.accept", "schoolInvite.accepting", "schoolInvite.back", "schoolInvite.failure",
     "nav.dashboard",
     "nav.admin",
     "nav.calendar",
@@ -2868,6 +2877,7 @@ GAEILGE_REVIEWABLE_KEYS = {
     "class.teamGenerator",
 }
 UI_TRANSLATION_VALUE_MAX_LENGTH = 500
+PUBLIC_GAEILGE_TRANSLATION_KEYS = {key for key in GAEILGE_REVIEWABLE_KEYS if key.startswith(("public.", "login.", "register.", "verifyEmail.", "resetPassword.", "schoolInvite."))}
 
 
 @app.get("/ui-translations/ga", response_model=schemas.UiTranslationOverridesOut)
@@ -2884,6 +2894,21 @@ def get_gaeilge_ui_translation_overrides(
         "overrides": {row.translation_key: row.value for row in rows},
         "is_gaeilge_reviewer": is_gaeilge_reviewer(user),
     }
+
+
+@app.get("/public/ui-translations/ga")
+def get_public_gaeilge_ui_translation_overrides(db: Session = Depends(get_db)):
+    """Anonymous read-only view of vetted public UI corrections only."""
+    rows = (
+        db.query(models.UiTranslationOverrideModel)
+        .filter(
+            models.UiTranslationOverrideModel.language_code == "ga",
+            models.UiTranslationOverrideModel.translation_key.in_(PUBLIC_GAEILGE_TRANSLATION_KEYS),
+        )
+        .order_by(models.UiTranslationOverrideModel.translation_key.asc())
+        .all()
+    )
+    return {"overrides": {row.translation_key: row.value for row in rows}}
 
 
 @app.put("/ui-translations/ga/{translation_key}")

@@ -4,6 +4,8 @@ import { apiFetch, INVITATION_LOGIN_NOTICE_KEY, setToken } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
 import SchoolBrand from "./Components/SchoolBrand";
 import { normalElumeLoginUrl, resolveSchoolBrandingSlug } from "./schoolBranding";
+import LanguageSwitch from "./Components/LanguageSwitch";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 type Props = { onLoggedIn: () => void };
 type SchoolBranding = { name: string; slug: string; logo_url?: string | null; status: "active" | "suspended" | "inactive" };
@@ -47,6 +49,7 @@ function SocialIconLink({
 
 export default function LoginPage({ onLoggedIn }: Props) {
     const navigate = useNavigate();
+    const { t } = useUiLanguage();
     const [schoolSlug] = useState(() => resolveSchoolBrandingSlug());
     const [brandingState, setBrandingState] = useState<BrandingState>(() => schoolSlug ? { kind: "loading" } : { kind: "none" });
     const [email, setEmail] = useState("");
@@ -230,6 +233,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
             </div>
 
             <div className="pointer-events-none absolute inset-0 opacity-[0.10] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:36px_36px]" />
+            <div className="absolute right-4 top-4 z-20 sm:right-6 sm:top-6"><LanguageSwitch /></div>
 
             <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-8">
                 <div className="w-full max-w-6xl">
@@ -239,7 +243,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                             <div className="max-w-2xl">
                                 <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200/70 bg-white/70 px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm backdrop-blur">
                                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.9)]" />
-                                    AI-powered tools for modern teachers
+                                    {t("public.aiTools")}
                                 </div>
 
                                 <div className="mt-6 flex items-center gap-4">
@@ -258,78 +262,76 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                             </span>
                                         </h1>
                                         <p className="mt-1 text-lg font-medium text-slate-600">
-                                            The AI-Powered Teaching Platform
+                                            {t("public.platform")}
                                         </p>
                                     </div>
                                 </div>
 
                                 <h2 className="mt-8 text-5xl font-black leading-tight tracking-tight text-slate-900 xl:text-6xl">
-                                    Make teaching
+                                    {t("public.makeTeaching")}
                                     <span className="block bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500 bg-clip-text text-transparent">
-                                        smarter, faster, brighter.
+                                        {t("public.makeTeachingAccent")}
                                     </span>
                                 </h2>
 
                                 <p className="mt-5 max-w-xl text-lg leading-8 text-slate-600">
-                                    Elume is an AI teaching platform for secondary school teachers,
-                                    helping you create quizzes, organise class resources, build exam materials,
-                                    and run live classroom tools from one teacher-friendly workspace.
+                                    {t("public.description")}
                                 </p>
 
                                 <div className="mt-8 grid max-w-xl grid-cols-1 gap-3 sm:grid-cols-2">
                                     <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-md backdrop-blur">
                                         <div className="text-sm font-bold text-slate-900">
-                                            Save Time
+                                            {t("public.saveTime")}
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            Create quizzes, class resources and teaching materials in minutes.
+                                            {t("public.saveTimeDescription")}
                                         </div>
                                     </div>
 
                                     <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-md backdrop-blur">
                                         <div className="text-sm font-bold text-slate-900">
-                                            Engage Classes
+                                            {t("public.engageClasses")}
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            Run live classroom tools and quizzes that work beautifully on screen.
+                                            {t("public.engageClassesDescription")}
                                         </div>
                                     </div>
 
                                     <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-md backdrop-blur">
                                         <div className="text-sm font-bold text-slate-900">
-                                            Stay Organised
+                                            {t("public.stayOrganised")}
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            Organise notes, tests, class files and teaching spaces in one place.
+                                            {t("public.stayOrganisedDescription")}
                                         </div>
                                     </div>
 
                                     <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-md backdrop-blur">
                                         <div className="text-sm font-bold text-slate-900">
-                                            Built for Schools
+                                            {t("public.builtForSchools")}
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            Professional, secure and designed for real secondary school classrooms.
+                                            {t("public.builtForSchoolsDescription")}
                                         </div>
                                     </div>
                                 </div>
 
                                 <div className="mt-8 flex flex-wrap items-center gap-3 text-sm text-slate-500">
                                     <div className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-sm backdrop-blur">
-                                        Trusted by pilot teachers
+                                        {t("public.trustedPilots")}
                                     </div>
                                     <div className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-sm backdrop-blur">
-                                        Teacher-first design
+                                        {t("public.teacherFirst")}
                                     </div>
                                     <div className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-sm backdrop-blur">
-                                        Built in Ireland
+                                        {t("public.builtInIreland")}
                                     </div>
                                 </div>
 
                                 {/* Social row under left block */}
                                 <div className="mt-8 flex items-center gap-4">
                                     <div className="text-sm font-semibold text-slate-600">
-                                        See Elume in action
+                                        {t("public.seeInAction")}
                                     </div>
 
                                     <div className="flex flex-wrap items-center gap-3">
@@ -434,19 +436,18 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                             </span>
                                         </div>
                                         <div className="text-sm text-slate-600">
-                                            The AI-Powered Teaching Platform
+                                            {t("public.platform")}
                                         </div>
                                     </div>
                                 </div>
 
                                 <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 text-sm text-emerald-900">
-                                    Smarter tools for lesson planning, quizzes, reports,
-                                    whiteboards and class management.
+                                    {t("public.mobileDescription")}
                                 </div>
 
                                 <div className="mt-4">
                                     <div className="text-sm font-semibold text-slate-600">
-                                        See Elume in action
+                                        {t("public.seeInAction")}
                                     </div>
                                     <div className="mt-3 flex flex-wrap items-center gap-3">
                                         <SocialIconLink
@@ -534,7 +535,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                 <div className="mb-5 flex items-center justify-between">
                                     <div>
                                         <div className="text-2xl font-black tracking-tight text-slate-900">
-                                            {brandingState.kind === "ready" ? `Sign in to ${brandingState.branding.name}` : "Welcome back"}
+                                            {brandingState.kind === "ready" ? `${t("login.signIn")} ${brandingState.branding.name}` : t("login.welcomeBack")}
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
                                             {brandingState.kind === "ready" ? "Sign in to your school on Elume." : "Sign in to access your classes and tools."}
@@ -561,7 +562,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                 {!brandingBlocksLogin && <form className="space-y-4" onSubmit={submit}>
                                     <label className="block">
                                         <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                                            Email
+                                            {t("login.email")}
                                         </span>
                                         <input
                                             className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
@@ -576,7 +577,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
 
                                     <label className="block">
                                         <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                                            Password
+                                            {t("login.password")}
                                         </span>
                                         <input
                                             type="password"
@@ -601,7 +602,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                             }}
                                             className="text-sm font-semibold text-emerald-700 transition hover:text-emerald-800 hover:underline"
                                         >
-                                            Forgot password?
+                                            {t("login.forgotPassword")}
                                         </button>
                                     </div>
 
@@ -627,7 +628,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                         onClick={() => navigate("/register")}
                                         className="w-full rounded-2xl border-2 border-slate-200 bg-white/90 px-5 py-3.5 text-base font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
                                     >
-                                        Create teacher account
+                                        {t("login.createAccount")}
                                     </button>
                                 </form>}
 
@@ -687,7 +688,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                                     Account recovery
                                                 </div>
                                                 <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">
-                                                    Reset your password
+                                                    {t("login.resetPassword")}
                                                 </h3>
                                                 <p className="mt-2 text-sm leading-6 text-slate-600">
                                                     Enter your email and we’ll send you a secure password reset link.
@@ -706,7 +707,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                         <form className="mt-5 space-y-4" onSubmit={submitForgotPassword}>
                                             <label className="block">
                                                 <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                                                    Email
+                                                    {t("login.email")}
                                                 </span>
                                                 <input
                                                     type="email"
@@ -735,7 +736,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                                 disabled={forgotPasswordLoading}
                                                 className="w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-base font-black text-white shadow-lg transition hover:shadow-xl disabled:opacity-60"
                                             >
-                                                {forgotPasswordLoading ? "Sending link..." : "Send reset link"}
+                                                {forgotPasswordLoading ? t("common.loading") : t("login.sendReset")}
                                             </button>
                                         </form>
                                     </div>

@@ -73,13 +73,14 @@ export function UiLanguageProvider({ children }: { children: React.ReactNode }) 
     setOverrides({});
     setIsGaeilgeReviewer(false);
 
-    if (preference.language !== "ga" || accountKey === "anonymous") return () => { cancelled = true; };
+    if (preference.language !== "ga") return () => { cancelled = true; };
 
-    void apiFetch("/ui-translations/ga")
+    const endpoint = accountKey === "anonymous" ? "/public/ui-translations/ga" : "/ui-translations/ga";
+    void apiFetch(endpoint)
       .then((payload) => {
         if (cancelled || activeAccountKeyRef.current !== requestAccountKey) return;
         setOverrides(payload?.overrides && typeof payload.overrides === "object" ? payload.overrides : {});
-        setIsGaeilgeReviewer(payload?.is_gaeilge_reviewer === true);
+        setIsGaeilgeReviewer(accountKey !== "anonymous" && payload?.is_gaeilge_reviewer === true);
       })
       .catch(() => {
         // Shared corrections are optional enhancement data; static Gaeilge remains available.

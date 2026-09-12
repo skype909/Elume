@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiFetch } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
+import LanguageSwitch from "./Components/LanguageSwitch";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 function passwordPolicyError(password: string) {
     if (password.length < 8) return "Password must be at least 8 characters.";
@@ -12,6 +14,7 @@ function passwordPolicyError(password: string) {
 }
 
 export default function ResetPasswordPage() {
+    const { t } = useUiLanguage();
     const [params] = useSearchParams();
     const token = useMemo(() => (params.get("token") || "").trim(), [params]);
     const [newPassword, setNewPassword] = useState("");
@@ -26,7 +29,7 @@ export default function ResetPasswordPage() {
         setSuccess(null);
 
         if (!token) {
-            setError("This reset link is invalid or incomplete.");
+            setError(t("resetPassword.invalid"));
             return;
         }
         const passwordError = passwordPolicyError(newPassword);
@@ -35,7 +38,7 @@ export default function ResetPasswordPage() {
             return;
         }
         if (newPassword !== confirmPassword) {
-            setError("Passwords do not match.");
+            setError(t("register.passwordMismatch"));
             return;
         }
 
@@ -48,11 +51,11 @@ export default function ResetPasswordPage() {
                     new_password: newPassword,
                 }),
             });
-            setSuccess(data?.message || "Password reset successful.");
+            setSuccess(data?.message || t("resetPassword.success"));
             setNewPassword("");
             setConfirmPassword("");
         } catch (err: any) {
-            setError(err?.message || "Could not reset password.");
+            setError(err?.message || t("resetPassword.failure"));
         } finally {
             setLoading(false);
         }
@@ -60,6 +63,7 @@ export default function ResetPasswordPage() {
 
     return (
         <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
+            <div className="absolute right-4 top-4 z-20"><LanguageSwitch /></div>
             <div className="pointer-events-none absolute inset-0 overflow-hidden">
                 <div className="absolute -left-24 top-[-60px] h-80 w-80 rounded-full bg-cyan-300/25 blur-3xl" />
                 <div className="absolute right-[-80px] top-24 h-96 w-96 rounded-full bg-emerald-300/20 blur-3xl" />
@@ -73,22 +77,22 @@ export default function ResetPasswordPage() {
                         </div>
                         <div>
                             <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">
-                                Account recovery
+                                {t("resetPassword.recovery")}
                             </div>
                             <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-900">
-                                Reset your password
+                                {t("resetPassword.title")}
                             </h1>
                         </div>
                     </div>
 
                     <p className="mb-5 text-sm leading-6 text-slate-600">
-                        Choose a new password for your Elume account. This page does not require login.
+                        {t("resetPassword.help")}
                     </p>
 
                     <form className="space-y-4" onSubmit={submit}>
                         <label className="block">
                             <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                                New password
+                                {t("resetPassword.new")}
                             </span>
                             <input
                                 type="password"
@@ -103,7 +107,7 @@ export default function ResetPasswordPage() {
 
                         <label className="block">
                             <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                                Confirm password
+                                {t("resetPassword.confirm")}
                             </span>
                             <input
                                 type="password"
@@ -117,7 +121,7 @@ export default function ResetPasswordPage() {
                         </label>
 
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-6 text-slate-600">
-                            Use at least 8 characters, including an uppercase letter, a lowercase letter, and a number.
+                            {t("register.passwordHelp")}
                         </div>
 
                         {error && (
@@ -137,13 +141,13 @@ export default function ResetPasswordPage() {
                             disabled={loading || !token}
                             className="w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-base font-black text-white shadow-lg transition hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            {loading ? "Updating password..." : "Set new password"}
+                            {loading ? t("resetPassword.loading") : t("resetPassword.submit")}
                         </button>
                     </form>
 
                     <div className="mt-5 text-center text-sm text-slate-600">
                         <Link to="/" className="font-semibold text-emerald-700 transition hover:text-emerald-800 hover:underline">
-                            Back to login
+                            {t("resetPassword.back")}
                         </Link>
                     </div>
                 </div>

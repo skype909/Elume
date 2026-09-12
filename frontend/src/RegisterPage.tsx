@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
+import LanguageSwitch from "./Components/LanguageSwitch";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 function passwordPolicyError(password: string) {
   if (password.length < 8) return "Password must be at least 8 characters.";
@@ -13,6 +15,7 @@ function passwordPolicyError(password: string) {
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const { t } = useUiLanguage();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [schoolName, setSchoolName] = useState("");
@@ -36,12 +39,12 @@ export default function RegisterPage() {
       !password.trim() ||
       !confirmPassword.trim()
     ) {
-      setError("Please complete all fields.");
+      setError(t("register.completeFields"));
       return;
     }
 
     if (!/\S+@\S+\.\S+/.test(email.trim())) {
-      setError("Please enter a valid email address.");
+      setError(t("register.validEmail"));
       return;
     }
 
@@ -52,7 +55,7 @@ export default function RegisterPage() {
     }
 
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError(t("register.passwordMismatch"));
       return;
     }
 
@@ -70,10 +73,10 @@ export default function RegisterPage() {
         }),
       });
 
-      setSuccess(data?.message || "Account created. Please verify your email before signing in.");
+      setSuccess(data?.message || t("register.success"));
       setTimeout(() => navigate("/"), 1200);
     } catch (err: any) {
-      setError(err?.message || "Could not create account.");
+      setError(err?.message || t("register.failure"));
     } finally {
       setLoading(false);
     }
@@ -81,6 +84,7 @@ export default function RegisterPage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50">
+      <div className="absolute right-4 top-4 z-20"><LanguageSwitch /></div>
       {/* Background glow blobs */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute -left-24 top-[-60px] h-80 w-80 rounded-full bg-cyan-300/30 blur-3xl" />
@@ -222,7 +226,7 @@ export default function RegisterPage() {
                 <div className="mb-5 flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-black tracking-tight text-slate-900">
-                      Create teacher account
+                      {t("register.title")}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
                       Register now, verify your email, then log in to choose your plan.
@@ -277,7 +281,7 @@ export default function RegisterPage() {
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block">
                       <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                        First name
+                        {t("register.firstName")}
                       </span>
                       <input
                         className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
@@ -291,7 +295,7 @@ export default function RegisterPage() {
 
                     <label className="block">
                       <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                        Last name
+                        {t("register.lastName")}
                       </span>
                       <input
                         className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
@@ -306,7 +310,7 @@ export default function RegisterPage() {
 
                   <label className="block">
                     <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                      School name
+                      {t("register.schoolName")}
                     </span>
                     <input
                       className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
@@ -319,7 +323,7 @@ export default function RegisterPage() {
 
                   <label className="block">
                     <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                      Email
+                      {t("login.email")}
                     </span>
                     <input
                       type="email"
@@ -336,7 +340,7 @@ export default function RegisterPage() {
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block">
                       <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                        Password
+                      {t("login.password")}
                       </span>
                       <input
                         type="password"
@@ -352,7 +356,7 @@ export default function RegisterPage() {
 
                     <label className="block">
                       <span className="mb-1.5 block text-sm font-bold text-slate-800">
-                        Confirm password
+                        {t("register.confirmPassword")}
                       </span>
                       <input
                         type="password"
@@ -368,7 +372,7 @@ export default function RegisterPage() {
                   </div>
 
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-6 text-slate-600">
-                    Use at least 8 characters, including an uppercase letter, a lowercase letter, and a number.
+                    {t("register.passwordHelp")}
                   </div>
 
                   {error && (
@@ -390,7 +394,7 @@ export default function RegisterPage() {
                   >
                     <span className="absolute inset-0 bg-white/0 transition group-hover:bg-white/10" />
                     <span className="relative">
-                      {loading ? "Creating account…" : "Create teacher account"}
+                      {loading ? t("register.loading") : t("register.submit")}
                     </span>
                   </button>
                 </form>
@@ -421,7 +425,7 @@ export default function RegisterPage() {
                 <div className="mt-5 text-center text-sm text-slate-600">
                   Already have an account?{" "}
                   <Link to="/" className="font-semibold text-emerald-700 hover:underline">
-                    Log in
+                    {t("login.signIn")}
                   </Link>
                 </div>
               </div>
