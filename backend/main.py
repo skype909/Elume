@@ -14100,7 +14100,7 @@ def _synchronise_aac_calendar(db: Session, project: models.AacProjectModel, user
 
 @app.put("/classes/{class_id}/aac/students/{student_id}")
 def update_aac_student_progress(class_id: int, student_id: int, payload: schemas.AacProgressUpdate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    if user.role != "teacher": raise HTTPException(403, "AAC check-ins are teacher-only.")
+    if user.role not in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN, ROLE_PLATFORM_ADMIN}: raise HTTPException(403, "AAC check-ins are limited to staff reviewers.")
     project = _aac_project_or_404(class_id, db, user)
     get_owned_class_or_404(class_id, db, user)
     return aac_progress.save_check_in(db, project, student_id, payload, user.id)
@@ -14108,7 +14108,7 @@ def update_aac_student_progress(class_id: int, student_id: int, payload: schemas
 
 @app.get("/classes/{class_id}/aac/students")
 def get_aac_student_progress(class_id: int, tracker_id: Optional[str] = None, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    if user.role != "teacher": raise HTTPException(403, "AAC check-ins are teacher-only.")
+    if user.role not in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN, ROLE_PLATFORM_ADMIN}: raise HTTPException(403, "AAC check-ins are limited to staff reviewers.")
     project = _aac_project_or_404(class_id, db, user)
     get_owned_class_or_404(class_id, db, user)
     return aac_progress.workspace(db, project, tracker_id)
