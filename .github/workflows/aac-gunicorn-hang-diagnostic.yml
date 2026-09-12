@@ -48,7 +48,7 @@ jobs:
         run: |
           timeout 720s python diagnostics/aac_gunicorn_hang/run_compare.py \
             --healthy dc8f9dec4eaa9e12844c8f251416a919fef68474 \
-            --suspect 8dc6f504257ba3b43e133ebeff9fb590ab89fd36
+            --suspect 5564523a53fa0f44e770e05c7ceeace3e9f07eb0
       - name: Upload sanitized diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4

@@ -75,6 +75,13 @@ def check_progress(port, class_id, token, request, json_request, auth_probe, log
             assert json_request(port,"PUT",f"/students/{alice}",token,{"active":False})[0] == 200
             archived = get(base+"/students")["students"][0]
             assert archived["active"] is False and archived["check_in"] == saved
+            admin = jwt.encode({"sub":"4"}, os.environ["DIAGNOSTIC_JWT_SECRET"], algorithm="HS256")
+            assert request(port,"DELETE",f"/classes/{class_id}",token=token)[0] == 409
+            assert json_request(port,"DELETE","/admin/users",admin,{"email":"pfitzgerald@preskilkenny.ie","hard_delete":True})[0] == 409
+            assert get(base+"/students")["students"][0]["check_in"] == saved
+            assert request(port,"DELETE","/classes/3",token=token)[0] == 200
+            assert json_request(port,"DELETE","/admin/users",admin,{"email":"candidate-empty@example.test","hard_delete":True})[0] == 200
+            write(log,"DELETION:owner-and-admin-protected=409 history=retained ordinary-owner-and-admin=200")
             write(log,"PROGRESS:both-reviewers=save-reload fresh-auth-client=pass cross-owner-class-student=reject individual-date-isolation=pass rename-reorder-dates=retained contention=200+409 stage-removal=reviewed-history student-delete=blocked archive=retained")
         finally: stop.set()
         write(log,f"PROGRESS:concurrent-auth-count={auth_work.result()}")
@@ -93,13 +100,15 @@ with engine.connect() as c:
     return subprocess.check_output([sys.executable,"-c",code],cwd=source/"backend",env=env,timeout=15,text=True).strip()
 
 
-def check_recovery(root, harness, revision, workdir, database_url, token, request, write, dump_stacks):
+def check_recovery(root, harness, revision, candidate, workdir, database_url, token, request, write, dump_stacks):
     source = workdir/"recovery"; log = workdir/"logs/recovery.log"
     subprocess.run(["git","worktree","add","--detach",str(source),revision],cwd=root,check=True,stdout=subprocess.DEVNULL)
     main = source/"backend/main.py"
     # Deterministic recovery source: exact baseline plus middleware registration.
     original = subprocess.check_output(["git","show",f"{revision}:backend/main.py"],cwd=root)
-    main.write_bytes(original + b"\nfrom aac_recovery_guard import RecoveryGuard\napp.add_middleware(RecoveryGuard)\n")
+    from recovery_source import assemble
+    final = subprocess.check_output(["git","show",f"{candidate}:backend/main.py"],cwd=root)
+    main.write_bytes(assemble(original,final))
     shutil.copyfile(harness/"aac_recovery_guard.py",source/"backend/aac_recovery_guard.py")
     before = database_fingerprint(source,database_url)
     env = {**os.environ,"DATABASE_URL":database_url,"JWT_SECRET":os.environ["DIAGNOSTIC_JWT_SECRET"],"ELUME_UPLOADS_DIR":str(workdir/"recovery-uploads"),"PYTHONPATH":os.pathsep.join((str(harness),str(source/"backend"))),"PYTHONDONTWRITEBYTECODE":"1"}
@@ -114,12 +123,20 @@ def check_recovery(root, harness, revision, workdir, database_url, token, reques
             except OSError: time.sleep(.2)
         else: raise TimeoutError("Recovery worker startup failed")
         for _ in range(8): assert request(18184,"GET","/auth/me",timeout=3)[0] == 401
-        for method,path in [("PUT","/classes/1/aac/revision"),("POST","/classes/1/aac/new-draft"),("PUT","/classes/1/aac/students/1"),("DELETE","/students/1"),("DELETE","/classes/1")]:
+        for method,path in [("PUT","/classes/1/aac/revision"),("POST","/classes/1/aac/new-draft"),("PUT","/classes/1/aac/students/1")]:
             assert request(18184,method,path,token=token)[0] == 503
+        for path in ['/students/1','/classes/1']:
+            assert request(18184,'DELETE',path,token=token)[0] == 409
+        admin=jwt.encode({'sub':'4'},os.environ['DIAGNOSTIC_JWT_SECRET'],algorithm='HS256')
+        def admin_delete(email):
+            return request(18184,'DELETE','/admin/users',token=admin,body=json.dumps({'email':email,'hard_delete':True}).encode(),content_type='application/json')[0]
+        assert admin_delete('pfitzgerald@preskilkenny.ie') == 409
         assert request(18184,"GET","/classes/1/aac",token=token)[0] == 200
         after = database_fingerprint(source,database_url)
         assert before == after
-        write(log,"RECOVERY:worker-startup=complete auth=8x401-json old-plan-read=200 AAC-writes-and-roster-class-deletes=503 database-progress-and-history-fingerprint=unchanged RESULT:pass")
+        assert request(18184,'DELETE','/classes/5',token=token)[0] == 200
+        assert admin_delete('recovery-empty@example.test') == 200
+        write(log,"RECOVERY:worker-startup=complete auth=8x401-json old-plan-read=200 AAC-writes=503 protected-student-owner-admin-deletes=409 protected-database-fingerprint=unchanged ordinary-owner-admin-deletes=200 RESULT:pass")
     except Exception as exc:
         dump_stacks(process,log); write(log,f"RESULT:fail:{type(exc).__name__}"); raise
     finally:

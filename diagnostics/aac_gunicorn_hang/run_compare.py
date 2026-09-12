@@ -69,7 +69,14 @@ dan=models.UserModel(email='dcampion@preskilkenny.ie',password_hash='x',role='te
 other=models.ClassModel(owner_user_id=dan.id,name='Synthetic Dan class',subject='Physics',aac_planner_enabled=True); db.add(other); db.flush()
 db.add(models.StudentModel(class_id=other.id,first_name='Synthetic Dan student',active=True))
 other_project=models.AacProjectModel(class_id=other.id,owner_user_id=dan.id,title='Synthetic Dan tracker',subject='Physics'); db.add(other_project); db.flush()
-db.add(models.AacPlanRevisionModel(project_id=other_project.id,version=1,state='draft',plan_json={'stages':[{'id':'dan-stage','name':'Dan stage','completion_date':'2026-11-01'}]})); db.commit()
+db.add(models.AacPlanRevisionModel(project_id=other_project.id,version=1,state='draft',plan_json={'stages':[{'id':'dan-stage','name':'Dan stage','completion_date':'2026-11-01'}]}))
+admin=models.UserModel(email='admin@elume.ie',password_hash='x',role='platform_admin',is_active=True,email_verified=True); db.add(admin); db.flush()
+for phase in ['candidate','recovery']:
+ empty_owner=models.UserModel(email=phase+'-empty@example.test',password_hash='x',role='teacher',is_active=True,email_verified=True); db.add(empty_owner); db.flush()
+ for owner in [user,empty_owner]:
+  empty_class=models.ClassModel(owner_user_id=owner.id,name='Synthetic empty '+phase,subject='Physics'); db.add(empty_class); db.flush()
+  db.add(models.StudentModel(class_id=empty_class.id,first_name='Synthetic no history',active=True)); db.flush()
+db.commit()
 print(klass.id); print(jwt.encode({'sub':str(user.id)},os.environ['DIAGNOSTIC_JWT_SECRET'],algorithm='HS256'))"""
     env = {**os.environ, "DIAGNOSTIC_DATABASE_URL": database_url, "DIAGNOSTIC_JWT_SECRET": SECRET, "PYTHONDONTWRITEBYTECODE": "1"}
     result = subprocess.run([sys.executable, "-c", script], cwd=source / "backend", env=env, capture_output=True, text=True, timeout=45, check=True)
@@ -167,7 +174,7 @@ def main() -> int:
     run_revision("healthy", args.healthy, 18182, workdir, os.environ["DIAGNOSTIC_DATABASE_URL"])
     run_revision("suspect", args.suspect, 18183, workdir, os.environ["DIAGNOSTIC_DATABASE_URL"])
     from jose import jwt
-    check_recovery(ROOT,HARNESS,args.healthy,workdir,os.environ["DIAGNOSTIC_DATABASE_URL"],jwt.encode({"sub":"1"},SECRET,algorithm="HS256"),request,write,dump_stacks)
+    check_recovery(ROOT,HARNESS,args.healthy,args.suspect,workdir,os.environ["DIAGNOSTIC_DATABASE_URL"],jwt.encode({"sub":"1"},SECRET,algorithm="HS256"),request,write,dump_stacks)
     return 0
 
 if __name__ == "__main__": raise SystemExit(main())
