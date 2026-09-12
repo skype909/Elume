@@ -22,10 +22,10 @@ test("opens Student Hub without focusing a join or name input", () => {
     renderStudentHub();
 
     expect(screen.getByLabelText("CLASS CODE")).toBeInTheDocument();
-    expect(screen.getByLabelText("TEACHER ADMIN PIN")).toBeInTheDocument();
+    expect(screen.getByLabelText("CLASS PIN")).toBeInTheDocument();
     expect(screen.getByLabelText("Student name")).toBeInTheDocument();
     expect(document.activeElement).not.toBe(screen.getByLabelText("CLASS CODE"));
-    expect(document.activeElement).not.toBe(screen.getByLabelText("TEACHER ADMIN PIN"));
+    expect(document.activeElement).not.toBe(screen.getByLabelText("CLASS PIN"));
     expect(document.activeElement).not.toBe(screen.getByLabelText("Student name"));
     expect(screen.getByRole("button", { name: "Browse Exam Papers" })).toBeInTheDocument();
 });
@@ -53,7 +53,7 @@ test("keeps each join code editable only after the student selects and taps its 
     expect(collabCode).toHaveValue("BOARD9");
 });
 
-test("masks, sanitises, and submits the Teacher Admin PIN while preserving the class join request", async () => {
+test("keeps the student Class PIN visible, numeric, sanitised, and submitted with the class join request", async () => {
     localStorage.setItem("elume_student_name_v1", "Aoife");
     const fetchMock = global.fetch as jest.Mock;
     fetchMock.mockResolvedValue({
@@ -63,9 +63,11 @@ test("masks, sanitises, and submits the Teacher Admin PIN while preserving the c
     renderStudentHub();
 
     const classCode = screen.getByLabelText("CLASS CODE");
-    const pin = screen.getByLabelText("TEACHER ADMIN PIN");
-    expect(pin).toHaveAttribute("type", "password");
+    const pin = screen.getByLabelText("CLASS PIN");
+    expect(pin).toHaveAttribute("type", "text");
     expect(pin).toHaveAttribute("inputmode", "numeric");
+    expect(pin).toHaveAttribute("placeholder", "Enter class PIN");
+    expect(screen.queryByRole("button", { name: "What is the Teacher Admin PIN?" })).not.toBeInTheDocument();
 
     fireEvent.change(classCode, { target: { value: "class1" } });
     fireEvent.change(pin, { target: { value: "12ab345678" } });
@@ -80,17 +82,4 @@ test("masks, sanitises, and submits the Teacher Admin PIN while preserving the c
             body: JSON.stringify({ code: "CLASS1", name: "Aoife", pin: "123456" }),
         })
     );
-});
-
-test("shows compact Teacher Admin PIN guidance on demand", () => {
-    renderStudentHub();
-
-    const help = screen.getByRole("button", { name: "What is the Teacher Admin PIN?" });
-    expect(screen.queryByText(/This is the Admin PIN set by your teacher/)).not.toBeInTheDocument();
-    fireEvent.click(help);
-    expect(screen.getByText(/Dashboard → Teacher Admin/)).toBeInTheDocument();
-    expect(screen.getByText(/different from the Class Code/)).toBeInTheDocument();
-    expect(help).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(help);
-    expect(screen.queryByText(/This is the Admin PIN set by your teacher/)).not.toBeInTheDocument();
 });

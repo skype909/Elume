@@ -9,7 +9,7 @@ import YoutubeLogo from "./assets/Youtube_Logo.png";
 import canvaLogo from "./assets/canva-logo.jpeg";
 import QRCode from "react-qr-code";
 import ELogo2 from "./assets/ELogo2.png";
-import { Settings, Timer, Bell, Play, Pause, RotateCcw } from "lucide-react";
+import { Settings, Timer, Bell, Play, Pause, RotateCcw, CircleHelp } from "lucide-react";
 import { apiFetch, openProtectedFileInNewTab } from "./api";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
 import UiText from "./Components/UiText";
@@ -77,6 +77,85 @@ function loadClassAdminPin(): string {
     } catch {}
   }
   return "2026";
+}
+
+export function matchesClassAdminPin(draft: string): boolean {
+  return draft.trim() === loadClassAdminPin();
+}
+
+export function ClassAdminPinGate({
+  draft,
+  error,
+  helpOpen,
+  onDraftChange,
+  onSubmit,
+  onCancel,
+  onToggleHelp,
+}: {
+  draft: string;
+  error: string | null;
+  helpOpen: boolean;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  onToggleHelp: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-[0_30px_90px_rgba(15,23,42,0.24)]">
+        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">Dashboard Admin</div>
+        <div className="mt-2 text-2xl font-black tracking-tight text-slate-900">Enter Class Admin PIN</div>
+        <div className="mt-3 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm leading-6 text-slate-700">
+          <p><span className="font-bold text-slate-900">Teacher verification required.</span> Class Admin contains student performance and assessment information.</p>
+          <p className="mt-1">You can change your Teacher PIN from Dashboard -&gt; Admin.</p>
+        </div>
+
+        <div className="mt-5 flex items-center gap-2">
+          <label htmlFor="class-admin-pin" className="text-sm font-bold text-slate-800">Teacher Admin PIN</label>
+          <button
+            type="button"
+            onClick={onToggleHelp}
+            aria-label="What is the Teacher Admin PIN?"
+            aria-expanded={helpOpen}
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-cyan-200 bg-cyan-50 text-cyan-700 transition hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300"
+          >
+            <CircleHelp aria-hidden="true" size={14} strokeWidth={2.5} />
+          </button>
+        </div>
+
+        {helpOpen ? (
+          <div className="mt-3 rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs leading-5 text-slate-700">
+            This PIN is set in Dashboard → Teacher Admin. It is different from the Class PIN used by students.
+          </div>
+        ) : null}
+
+        <input
+          id="class-admin-pin"
+          type="password"
+          name="class-admin-pin"
+          autoComplete="off"
+          spellCheck={false}
+          autoCapitalize="off"
+          inputMode="numeric"
+          autoFocus
+          value={draft}
+          onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onSubmit();
+          }}
+          className="mt-3 w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-4 text-center text-2xl font-black tracking-[0.28em] text-slate-900 outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100"
+          placeholder="••••"
+        />
+
+        {error ? <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div> : null}
+
+        <div className="mt-5 flex gap-3">
+          <button type="button" onClick={onCancel} className="flex-1 rounded-2xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button type="button" onClick={onSubmit} className="flex-1 rounded-2xl border-2 border-cyan-500 bg-cyan-500 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-cyan-600">Continue</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 type ClassItem = { id: number; name: string; subject: string; color?: string | null };
@@ -424,6 +503,7 @@ export default function ClassPage() {
   const [adminPinOpen, setAdminPinOpen] = useState(false);
   const [adminPinDraft, setAdminPinDraft] = useState("");
   const [adminPinError, setAdminPinError] = useState<string | null>(null);
+  const [adminPinHelpOpen, setAdminPinHelpOpen] = useState(false);
   const [postToDelete, setPostToDelete] = useState<number | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [bellOpen, setBellOpen] = useState(false);
@@ -493,14 +573,16 @@ export default function ClassPage() {
   function openClassAdminPinModal() {
     setAdminPinDraft("");
     setAdminPinError(null);
+    setAdminPinHelpOpen(false);
     setAdminPinOpen(true);
   }
 
   function submitClassAdminPin() {
-    if (adminPinDraft.trim() === loadClassAdminPin()) {
+    if (matchesClassAdminPin(adminPinDraft)) {
       setAdminPinOpen(false);
       setAdminPinDraft("");
       setAdminPinError(null);
+      setAdminPinHelpOpen(false);
       navigate(`/class/${classId}/admin`);
       return;
     }
@@ -1195,13 +1277,7 @@ export default function ClassPage() {
               <button
                 key={item.id}
                 type="button"
-                onClick={() => {
-                  if (item.to === `/class/${classId}/admin`) {
-                    openClassAdminPinModal();
-                    return;
-                  }
-                  navigate(item.to);
-                }}
+                onClick={item.id === "class-admin" ? openClassAdminPinModal : () => navigate(item.to)}
                 className={className}
               >
                 <UiText translationKey={item.labelKey} />
@@ -2361,67 +2437,23 @@ export default function ClassPage() {
           <RightPanel />
 
           {adminPinOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
-              <div className="w-full max-w-md rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-[0_30px_90px_rgba(15,23,42,0.24)]">
-                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
-                  Dashboard Admin
-                </div>
-                <div className="mt-2 text-2xl font-black tracking-tight text-slate-900">
-                  Enter Class Admin PIN
-                </div>
-                <div className="mt-3 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm leading-6 text-slate-700">
-                  <p><span className="font-bold text-slate-900">Teacher verification required.</span> Class Admin contains student performance and assessment information.</p>
-                  <p className="mt-1">You can change your Teacher PIN from Dashboard -&gt; Admin.</p>
-                </div>
-
-                <input
-                  type="text"
-                  name="class-admin-pin"
-                  autoComplete="off"
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  inputMode="numeric"
-                  autoFocus
-                  value={adminPinDraft}
-                  onChange={(e) => {
-                    setAdminPinDraft(e.target.value);
-                    if (adminPinError) setAdminPinError(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submitClassAdminPin();
-                  }}
-                  className="mt-5 w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-4 text-center text-2xl font-black tracking-[0.28em] text-slate-900 outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100"
-                  placeholder="••••"
-                />
-
-                {adminPinError ? (
-                  <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-                    {adminPinError}
-                  </div>
-                ) : null}
-
-                <div className="mt-5 flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdminPinOpen(false);
-                      setAdminPinDraft("");
-                      setAdminPinError(null);
-                    }}
-                    className="flex-1 rounded-2xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={submitClassAdminPin}
-                    className="flex-1 rounded-2xl border-2 border-cyan-500 bg-cyan-500 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-cyan-600"
-                  >
-                    Continue
-                  </button>
-                </div>
-              </div>
-            </div>
+            <ClassAdminPinGate
+              draft={adminPinDraft}
+              error={adminPinError}
+              helpOpen={adminPinHelpOpen}
+              onDraftChange={(value) => {
+                setAdminPinDraft(value);
+                if (adminPinError) setAdminPinError(null);
+              }}
+              onSubmit={submitClassAdminPin}
+              onCancel={() => {
+                setAdminPinOpen(false);
+                setAdminPinDraft("");
+                setAdminPinError(null);
+                setAdminPinHelpOpen(false);
+              }}
+              onToggleHelp={() => setAdminPinHelpOpen((open) => !open)}
+            />
           )}
 
           <ConfirmModal
