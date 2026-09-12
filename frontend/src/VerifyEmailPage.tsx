@@ -10,14 +10,14 @@ export default function VerifyEmailPage() {
   const navigate = useNavigate();
   const token = useMemo(() => new URLSearchParams(location.search).get("token") || "", [location.search]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("Verifying your email…");
+  const [message, setMessage] = useState(t("verifyEmail.verifying"));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function verify() {
       if (!token) {
-        setError("Missing verification token.");
+        setError(t("verifyEmail.missingToken"));
         setLoading(false);
         return;
       }
@@ -32,14 +32,14 @@ export default function VerifyEmailPage() {
         if (accessToken) {
           localStorage.setItem("elume_token", accessToken);
           setToken(accessToken);
-          setMessage(data?.message || "Email verified. Taking you into Elume setup...");
+          setMessage(data?.message || t("verifyEmail.setup"));
           navigate(nextPath.startsWith("/") ? nextPath : `/${nextPath}`, { replace: true });
           return;
         }
-        setMessage(data?.message || "Email verified. You can now sign in to Elume.");
+        setMessage(data?.message || t("verifyEmail.success"));
       } catch (err: any) {
         if (cancelled) return;
-        setError(err?.message || "Could not verify email.");
+        setError(err?.message || t("verifyEmail.failure"));
       } finally {
         if (!cancelled) setLoading(false);
       }

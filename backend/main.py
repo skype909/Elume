@@ -2876,6 +2876,30 @@ GAEILGE_REVIEWABLE_KEYS = {
     "class.timer",
     "class.teamGenerator",
 }
+# Public teacher-flow copy added after the initial Gaeilge launch. These remain
+# deliberately scoped to the logged-out landing and account journey.
+GAEILGE_REVIEWABLE_KEYS.update({
+    "login.defaultGuidance", "login.schoolGuidance", "login.teacherLogin", "login.schoolLoading", "login.schoolReady",
+    "login.schoolUnavailable", "login.goToElume", "login.schoolUnknown", "login.schoolBrandingError", "login.passwordPlaceholder",
+    "login.signingIn", "login.secureBilling", "login.paymentsPoweredBy", "login.secureAccess", "login.teacherFirst",
+    "login.schoolReadyBadge", "login.studentHub", "login.studentsStart", "login.studentHubHelp", "login.openStudentHub",
+    "login.recovery", "login.recoveryHelp", "login.resetSent", "login.resetFailure", "login.footer",
+    "register.passwordMinimum", "register.passwordUppercase", "register.passwordLowercase", "register.passwordNumber",
+    "register.freeTrialHero", "register.heroTitle", "register.heroAccent", "register.heroDescription", "register.trialTitle",
+    "register.trialDescription", "register.earlyPricingTitle", "register.earlyPricingDescription", "register.annualValueTitle",
+    "register.annualValueDescription", "register.builtForSchoolsDescription", "register.earlyRates", "register.mobileTrialDescription",
+    "register.formDescription", "register.teacherSignup", "register.trialBadge", "register.pricingBadge", "register.afterVerify",
+    "register.pricingLead", "register.monthlyPrice", "register.or", "register.yearlyPrice", "register.launchOffer",
+    "register.annualActiveLead", "register.annualActiveDate", "register.stepRegister", "register.stepVerify", "register.stepPlan",
+    "register.firstNamePlaceholder", "register.lastNamePlaceholder", "register.schoolPlaceholder", "register.passwordPlaceholder",
+    "register.confirmPasswordPlaceholder", "register.whatNext", "register.nextHelp", "register.secureSignup", "register.alreadyAccount",
+    "register.footer",
+    "verifyEmail.verifying", "verifyEmail.missingToken", "verifyEmail.setup", "verifyEmail.success", "verifyEmail.failure",
+    "schoolInvite.defaultInviter", "schoolInvite.invitedTeacher", "schoolInvite.invitedAdmin", "schoolInvite.sent",
+    "schoolInvite.existingAccountHelp", "schoolInvite.joinSchool", "schoolInvite.joinSchoolAdmin", "schoolInvite.existingPasswordRequired",
+    "schoolInvite.setupTeacher", "schoolInvite.setupAdmin", "schoolInvite.password", "schoolInvite.successTeacher",
+    "schoolInvite.successAdmin", "schoolInvite.acceptAdmin",
+})
 UI_TRANSLATION_VALUE_MAX_LENGTH = 500
 PUBLIC_GAEILGE_TRANSLATION_KEYS = {key for key in GAEILGE_REVIEWABLE_KEYS if key.startswith(("public.", "login.", "register.", "verifyEmail.", "resetPassword.", "schoolInvite."))}
 

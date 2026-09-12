@@ -5,11 +5,11 @@ import elumeLogo from "./assets/ELogo2.png";
 import LanguageSwitch from "./Components/LanguageSwitch";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
 
-function passwordPolicyError(password: string) {
-  if (password.length < 8) return "Password must be at least 8 characters.";
-  if (!/[A-Z]/.test(password)) return "Password must include at least one uppercase letter.";
-  if (!/[a-z]/.test(password)) return "Password must include at least one lowercase letter.";
-  if (!/[0-9]/.test(password)) return "Password must include at least one number.";
+function passwordPolicyError(password: string, t: (key: string) => string) {
+  if (password.length < 8) return t("register.passwordMinimum");
+  if (!/[A-Z]/.test(password)) return t("register.passwordUppercase");
+  if (!/[a-z]/.test(password)) return t("register.passwordLowercase");
+  if (!/[0-9]/.test(password)) return t("register.passwordNumber");
   return null;
 }
 
@@ -48,7 +48,7 @@ export default function RegisterPage() {
       return;
     }
 
-    const passwordError = passwordPolicyError(password.trim());
+    const passwordError = passwordPolicyError(password.trim(), t);
     if (passwordError) {
       setError(passwordError);
       return;
@@ -105,7 +105,7 @@ export default function RegisterPage() {
               <div className="max-w-xl">
                 <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200/70 bg-white/70 px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm backdrop-blur">
                   <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.9)]" />
-                  Start with a 14-day free trial
+                  {t("register.freeTrialHero")}
                 </div>
 
                 <div className="mt-6 flex items-center gap-4">
@@ -124,70 +124,69 @@ export default function RegisterPage() {
                       </span>
                     </h1>
                     <p className="mt-1 text-lg font-medium text-slate-600">
-                      The AI-Powered Teaching Platform
+                      {t("public.platform")}
                     </p>
                   </div>
                 </div>
 
                 <h2 className="mt-8 text-5xl font-black leading-tight tracking-tight text-slate-900">
-                  Build your teacher workspace
+                  {t("register.heroTitle")}
                   <span className="block bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500 bg-clip-text text-transparent">
-                    and get started fast.
+                    {t("register.heroAccent")}
                   </span>
                 </h2>
 
                 <p className="mt-5 text-lg leading-8 text-slate-600">
-                  Create your Elume account, verify your email, then log in to choose your plan.
-                  No plan is selected on this page. Your 14-day free trial begins once you complete billing setup after verification.
+                  {t("register.heroDescription")}
                 </p>
 
                 <div className="mt-8 grid max-w-lg grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-md backdrop-blur">
                     <div className="text-sm font-bold text-slate-900">
-                      14-Day Trial
+                      {t("register.trialTitle")}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Register first, verify your email, then choose your plan and begin your free trial.
+                      {t("register.trialDescription")}
                     </div>
                   </div>
 
                   <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-md backdrop-blur">
                     <div className="text-sm font-bold text-slate-900">
-                      Early Adopter Pricing
+                      {t("register.earlyPricingTitle")}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Join now at €6 monthly or €60 yearly during our early launch phase.
+                      {t("register.earlyPricingDescription")}
                     </div>
                   </div>
 
                   <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-md backdrop-blur">
                     <div className="text-sm font-bold text-slate-900">
-                      Best Annual Value
+                      {t("register.annualValueTitle")}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Annual accounts purchased now stay active until the end of September 2027.
+                      {t("register.annualValueDescription")}
                     </div>
                   </div>
 
                   <div className="rounded-2xl border border-white/70 bg-white/75 p-4 shadow-md backdrop-blur">
                     <div className="text-sm font-bold text-slate-900">
-                      Built for Schools
+                      {t("public.builtForSchools")}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Teacher-first, practical and designed for real secondary school classrooms.
+                      {t("register.builtForSchoolsDescription")}
                     </div>
                   </div>
                 </div>
 
                 <div className="mt-8 flex flex-wrap items-center gap-3 text-sm text-slate-500">
                   <div className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-sm backdrop-blur">
-                    Trusted by pilot teachers
+                    {t("public.trustedPilots")}
                   </div>
                   <div className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-sm backdrop-blur">
-                    Early adopter rates
+                    {t("register.earlyRates")}
                   </div>
                   <div className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-sm backdrop-blur">
-                    Built in Ireland
+                    {t("public.builtInIreland")}
                   </div>
                 </div>
               </div>
@@ -212,13 +211,13 @@ export default function RegisterPage() {
                       </span>
                     </div>
                     <div className="text-sm text-slate-600">
-                      The AI-Powered Teaching Platform
+                      {t("public.platform")}
                     </div>
                   </div>
                 </div>
 
                 <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 text-sm text-emerald-900">
-                  Create your account now, then verify your email and choose your plan to start your 14-day free trial.
+                  {t("register.mobileTrialDescription")}
                 </div>
               </div>
 
@@ -229,12 +228,12 @@ export default function RegisterPage() {
                       {t("register.title")}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Register now, verify your email, then log in to choose your plan.
+                      {t("register.formDescription")}
                     </div>
                   </div>
 
                   <div className="hidden rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 sm:block">
-                    Teacher Sign Up
+                    {t("register.teacherSignup")}
                   </div>
                 </div>
 
@@ -242,37 +241,37 @@ export default function RegisterPage() {
                   <div className="rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50 via-white to-cyan-50 px-4 py-4 shadow-sm">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-white">
-                        14-day free trial
+                        {t("register.trialBadge")}
                       </span>
                       <span className="rounded-full bg-violet-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-violet-700">
-                        Early adopter pricing
+                        {t("register.pricingBadge")}
                       </span>
                     </div>
 
                     <div className="mt-3 space-y-2 text-sm leading-6 text-slate-700">
                       <p>
-                        After you verify your email and log in, you’ll choose your Elume plan and begin your free trial.
+                        {t("register.afterVerify")}
                       </p>
                       <p>
-                        Early adopter prices are <span className="font-black text-slate-900">€6 monthly</span> or{" "}
-                        <span className="font-black text-slate-900">€60 yearly</span>.
+                        {t("register.pricingLead")} <span className="font-black text-slate-900">{t("register.monthlyPrice")}</span> {t("register.or")}{" "}
+                        <span className="font-black text-slate-900">{t("register.yearlyPrice")}</span>.
                       </p>
                       <p>
-                        <span className="font-bold text-slate-900">Special launch offer:</span> annual accounts purchased now will remain active until the{" "}
-                        <span className="font-black text-emerald-700">end of September 2027</span>.
+                        <span className="font-bold text-slate-900">{t("register.launchOffer")}</span> {t("register.annualActiveLead")}{" "}
+                        <span className="font-black text-emerald-700">{t("register.annualActiveDate")}</span>.
                       </p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-3 gap-2 text-center text-xs text-slate-500">
                     <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                      Register first
+                      {t("register.stepRegister")}
                     </div>
                     <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                      Verify email
+                      {t("register.stepVerify")}
                     </div>
                     <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                      Choose plan
+                      {t("register.stepPlan")}
                     </div>
                   </div>
                 </div>
@@ -287,7 +286,7 @@ export default function RegisterPage() {
                         className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                         value={firstName}
                         onChange={(e) => setFirstName(e.target.value)}
-                        placeholder="First name"
+                        placeholder={t("register.firstNamePlaceholder")}
                         autoComplete="given-name"
                         required
                       />
@@ -301,7 +300,7 @@ export default function RegisterPage() {
                         className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                         value={lastName}
                         onChange={(e) => setLastName(e.target.value)}
-                        placeholder="Last name"
+                        placeholder={t("register.lastNamePlaceholder")}
                         autoComplete="family-name"
                         required
                       />
@@ -316,7 +315,7 @@ export default function RegisterPage() {
                       className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                       value={schoolName}
                       onChange={(e) => setSchoolName(e.target.value)}
-                      placeholder="Your school"
+                      placeholder={t("register.schoolPlaceholder")}
                       required
                     />
                   </label>
@@ -349,7 +348,7 @@ export default function RegisterPage() {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         autoComplete="new-password"
-                        placeholder="Create password"
+                        placeholder={t("register.passwordPlaceholder")}
                         required
                       />
                     </label>
@@ -365,7 +364,7 @@ export default function RegisterPage() {
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         autoComplete="new-password"
-                        placeholder="Confirm password"
+                        placeholder={t("register.confirmPasswordPlaceholder")}
                         required
                       />
                     </label>
@@ -402,28 +401,28 @@ export default function RegisterPage() {
                 <div className="mt-6 space-y-3">
                   <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-3 text-center shadow-sm">
                     <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      What happens next
+                      {t("register.whatNext")}
                     </div>
                     <div className="mt-1 text-sm text-slate-700">
-                      Verify your email, log in, choose your plan, and start using Elume.
+                      {t("register.nextHelp")}
                     </div>
                   </div>
 
                   <div className="grid grid-cols-3 gap-2 text-center text-xs text-slate-500">
                     <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                      Secure signup
+                      {t("register.secureSignup")}
                     </div>
                     <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                      Teacher-first
+                      {t("login.teacherFirst")}
                     </div>
                     <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                      School-ready
+                      {t("login.schoolReadyBadge")}
                     </div>
                   </div>
                 </div>
 
                 <div className="mt-5 text-center text-sm text-slate-600">
-                  Already have an account?{" "}
+                  {t("register.alreadyAccount")}{" "}
                   <Link to="/" className="font-semibold text-emerald-700 hover:underline">
                     {t("login.signIn")}
                   </Link>
@@ -431,7 +430,7 @@ export default function RegisterPage() {
               </div>
 
               <div className="mt-4 text-center text-xs text-slate-500">
-                Built to help teachers save time, stay organised and make lessons shine.
+                {t("register.footer")}
               </div>
             </div>
           </div>

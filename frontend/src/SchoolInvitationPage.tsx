@@ -15,19 +15,23 @@ type InvitationInfo = {
   inviter_email?: string | null;
 };
 
-function passwordPolicyError(password: string) {
-  if (password.length < 8) return "Password must be at least 8 characters.";
-  if (!/[A-Z]/.test(password)) return "Password must include at least one uppercase letter.";
-  if (!/[a-z]/.test(password)) return "Password must include at least one lowercase letter.";
-  if (!/[0-9]/.test(password)) return "Password must include at least one number.";
+function passwordPolicyError(password: string, t: (key: string) => string) {
+  if (password.length < 8) return t("register.passwordMinimum");
+  if (!/[A-Z]/.test(password)) return t("register.passwordUppercase");
+  if (!/[a-z]/.test(password)) return t("register.passwordLowercase");
+  if (!/[0-9]/.test(password)) return t("register.passwordNumber");
   return null;
 }
 
-function inviterLabel(invitation: InvitationInfo) {
+function inviterLabel(invitation: InvitationInfo, fallback: string) {
   const name = invitation.inviter_name?.trim() || "";
   const email = invitation.inviter_email?.trim() || "";
   if (name && email && name.toLowerCase() !== email.toLowerCase()) return `${name} (${email})`;
-  return name || email || "Your school administrator";
+  return name || email || fallback;
+}
+
+function interpolate(template: string, values: Record<string, string>) {
+  return Object.entries(values).reduce((text, [key, value]) => text.split(`{{${key}}}`).join(value), template);
 }
 
 export default function SchoolInvitationPage() {
@@ -45,7 +49,6 @@ export default function SchoolInvitationPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [existingPassword, setExistingPassword] = useState("");
   const isSchoolAdminInvitation = invitation?.intended_role === "school_admin";
-  const invitationAction = isSchoolAdminInvitation ? "manage" : "join";
 
   useEffect(() => {
     let cancelled = false;
@@ -80,11 +83,11 @@ export default function SchoolInvitationPage() {
     setSuccess(null);
     if (invitation.has_existing_account) {
       if (!existingPassword) {
-        setError("Enter your existing Elume password to confirm account ownership.");
+        setError(t("schoolInvite.existingPasswordRequired"));
         return;
       }
     } else {
-      const passwordError = passwordPolicyError(password);
+      const passwordError = passwordPolicyError(password, t);
       if (passwordError) {
         setError(passwordError);
         return;
@@ -107,9 +110,10 @@ export default function SchoolInvitationPage() {
           existing_password: existingPassword,
         },
       });
-      const successMessage = isSchoolAdminInvitation
-        ? `You’ve joined ${invitation.school_name} as a School Admin. Sign in to continue.`
-        : `You’ve joined ${invitation.school_name}. Sign in to continue.`;
+      const successMessage = interpolate(
+        t(isSchoolAdminInvitation ? "schoolInvite.successAdmin" : "schoolInvite.successTeacher"),
+        { school: invitation.school_name },
+      );
       try {
         sessionStorage.setItem(INVITATION_LOGIN_NOTICE_KEY, successMessage);
       } catch {
@@ -155,14 +159,14 @@ export default function SchoolInvitationPage() {
             <>
               <div className="mb-5 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
                 <div className="font-bold text-slate-900">{invitation.school_name}</div>
-                <div className="mt-2 leading-6"><span className="font-semibold text-slate-900">{inviterLabel(invitation)}</span> has invited you to {invitationAction} {invitation.school_name} on Elume.</div>
-                <div className="mt-2 text-xs font-semibold text-emerald-700">Invitation sent through Elume</div>
+                <div className="mt-2 leading-6">{interpolate(t(isSchoolAdminInvitation ? "schoolInvite.invitedAdmin" : "schoolInvite.invitedTeacher"), { inviter: inviterLabel(invitation, t("schoolInvite.defaultInviter")), school: invitation.school_name })}</div>
+                <div className="mt-2 text-xs font-semibold text-emerald-700">{t("schoolInvite.sent")}</div>
               </div>
 
               <form className="space-y-4" onSubmit={submit}>
                 {invitation.has_existing_account ? (
                   <>
-                    <p className="text-sm leading-6 text-slate-600">An Elume account already exists for this email. Enter its password to confirm that you own the account before {isSchoolAdminInvitation ? "joining this school as a School Admin" : "joining this school"}.</p>
+                    <p className="text-sm leading-6 text-slate-600">{interpolate(t("schoolInvite.existingAccountHelp"), { action: t(isSchoolAdminInvitation ? "schoolInvite.joinSchoolAdmin" : "schoolInvite.joinSchool") })}</p>
                     <label className="block">
                       <span className="mb-1.5 block text-sm font-bold text-slate-800">Existing Elume password</span>
                       <input type="password" value={existingPassword} onChange={(event) => setExistingPassword(event.target.value)} autoComplete="current-password" required className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
@@ -170,14 +174,14 @@ export default function SchoolInvitationPage() {
                   </>
                 ) : (
                   <>
-                    <p className="text-sm leading-6 text-slate-600">{isSchoolAdminInvitation ? `Set up your School Admin account for ${invitation.school_name}.` : `Set up your teacher account for ${invitation.school_name}.`}</p>
+                    <p className="text-sm leading-6 text-slate-600">{interpolate(t(isSchoolAdminInvitation ? "schoolInvite.setupAdmin" : "schoolInvite.setupTeacher"), { school: invitation.school_name })}</p>
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <label className="block"><span className="mb-1.5 block text-sm font-bold text-slate-800">First name</span><input value={firstName} onChange={(event) => setFirstName(event.target.value)} autoComplete="given-name" required className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" /></label>
-                      <label className="block"><span className="mb-1.5 block text-sm font-bold text-slate-800">Last name</span><input value={lastName} onChange={(event) => setLastName(event.target.value)} autoComplete="family-name" required className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" /></label>
+                      <label className="block"><span className="mb-1.5 block text-sm font-bold text-slate-800">{t("schoolInvite.firstName")}</span><input value={firstName} onChange={(event) => setFirstName(event.target.value)} autoComplete="given-name" required className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" /></label>
+                      <label className="block"><span className="mb-1.5 block text-sm font-bold text-slate-800">{t("schoolInvite.lastName")}</span><input value={lastName} onChange={(event) => setLastName(event.target.value)} autoComplete="family-name" required className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" /></label>
                     </div>
-                    <label className="block"><span className="mb-1.5 block text-sm font-bold text-slate-800">Password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" required minLength={8} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" /></label>
-                    <label className="block"><span className="mb-1.5 block text-sm font-bold text-slate-800">Confirm password</span><input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" required minLength={8} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" /></label>
-                    <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-6 text-slate-600">Use at least 8 characters, including an uppercase letter, a lowercase letter, and a number.</p>
+                    <label className="block"><span className="mb-1.5 block text-sm font-bold text-slate-800">{t("schoolInvite.password")}</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" required minLength={8} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" /></label>
+                    <label className="block"><span className="mb-1.5 block text-sm font-bold text-slate-800">{t("schoolInvite.confirmPassword")}</span><input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" required minLength={8} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" /></label>
+                    <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-6 text-slate-600">{t("register.passwordHelp")}</p>
                   </>
                 )}
 
@@ -185,7 +189,7 @@ export default function SchoolInvitationPage() {
                 {error && <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</p>}
 
                 <button type="submit" disabled={submitting} className="w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-5 py-3 text-base font-black text-white shadow-lg transition hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60">
-                  {submitting ? t("schoolInvite.accepting") : isSchoolAdminInvitation ? t("register.title") : t("schoolInvite.accept")}
+                  {submitting ? t("schoolInvite.accepting") : isSchoolAdminInvitation ? t("schoolInvite.acceptAdmin") : t("schoolInvite.accept")}
                 </button>
               </form>
             </>

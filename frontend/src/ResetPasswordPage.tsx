@@ -5,11 +5,11 @@ import elumeLogo from "./assets/ELogo2.png";
 import LanguageSwitch from "./Components/LanguageSwitch";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
 
-function passwordPolicyError(password: string) {
-    if (password.length < 8) return "Password must be at least 8 characters.";
-    if (!/[A-Z]/.test(password)) return "Password must include at least one uppercase letter.";
-    if (!/[a-z]/.test(password)) return "Password must include at least one lowercase letter.";
-    if (!/[0-9]/.test(password)) return "Password must include at least one number.";
+function passwordPolicyError(password: string, t: (key: string) => string) {
+    if (password.length < 8) return t("register.passwordMinimum");
+    if (!/[A-Z]/.test(password)) return t("register.passwordUppercase");
+    if (!/[a-z]/.test(password)) return t("register.passwordLowercase");
+    if (!/[0-9]/.test(password)) return t("register.passwordNumber");
     return null;
 }
 
@@ -32,7 +32,7 @@ export default function ResetPasswordPage() {
             setError(t("resetPassword.invalid"));
             return;
         }
-        const passwordError = passwordPolicyError(newPassword);
+        const passwordError = passwordPolicyError(newPassword, t);
         if (passwordError) {
             setError(passwordError);
             return;

@@ -124,6 +124,47 @@ describe("platform access navigation", () => {
   });
 });
 
+describe("public Gaeilge account flow", () => {
+  function setAnonymousPublicResponses() {
+    localStorage.clear();
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === "/public/ui-translations/ga") return Promise.resolve({ overrides: {} });
+      return Promise.resolve({});
+    });
+  }
+
+  test("defaults logged-out visitors to English and persists a Gaeilge choice without reviewer controls", async () => {
+    setAnonymousPublicResponses();
+    router.__setLocation({ pathname: "/" });
+    const firstRender = renderApp();
+
+    expect(await screen.findByText("Sign in to access your classes and tools.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Gaeilge" }));
+
+    expect(await screen.findByText("Sínigh isteach chun rochtain a fháil ar do ranganna agus ar do chuid uirlisí.")).toBeInTheDocument();
+    expect(screen.queryByText("Sign in to access your classes and tools.")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Review Gaeilge translation/)).not.toBeInTheDocument();
+    firstRender.unmount();
+
+    renderApp();
+    expect(await screen.findByText("Fáilte ar ais")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Gaeilge" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("translates the registration trial and pricing narrative while English remains available", async () => {
+    setAnonymousPublicResponses();
+    router.__setLocation({ pathname: "/register" });
+    renderApp();
+
+    expect(await screen.findByText("Early Adopter Pricing")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Gaeilge" }));
+
+    expect(await screen.findByText("Praghsáil Luath-Uchtaitheora")).toBeInTheDocument();
+    expect(screen.getByText("Clárú múinteora")).toBeInTheDocument();
+    expect(screen.queryByText("Early Adopter Pricing")).not.toBeInTheDocument();
+  });
+});
+
 describe("server-authoritative billing access", () => {
   test("an allowed pilot, school, or administrator account is not sent to checkout", async () => {
     mockApiFetch.mockImplementation((path: string) => {

@@ -49,7 +49,7 @@ function SocialIconLink({
 
 export default function LoginPage({ onLoggedIn }: Props) {
     const navigate = useNavigate();
-    const { t } = useUiLanguage();
+    const { language, t } = useUiLanguage();
     const [schoolSlug] = useState(() => resolveSchoolBrandingSlug());
     const [brandingState, setBrandingState] = useState<BrandingState>(() => schoolSlug ? { kind: "loading" } : { kind: "none" });
     const [email, setEmail] = useState("");
@@ -134,7 +134,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
     }, [schoolSlug]);
 
     useEffect(() => {
-        document.title = "Elume – AI Tools for Secondary School Teachers";
+        document.title = language === "ga" ? "Elume – Uirlisí IS do mhúinteoirí iar-bhunscoile" : "Elume – AI Tools for Secondary School Teachers";
 
         let meta = document.querySelector('meta[name="description"]');
 
@@ -146,9 +146,9 @@ export default function LoginPage({ onLoggedIn }: Props) {
 
         meta.setAttribute(
             "content",
-            "Elume is an AI teaching platform for secondary school teachers. Create quizzes, organise class resources, build exam materials and use live classroom tools."
+            t("public.description")
         );
-    }, []);
+    }, [language, t]);
 
     async function submitForgotPassword(e: React.FormEvent) {
         e.preventDefault();
@@ -164,11 +164,9 @@ export default function LoginPage({ onLoggedIn }: Props) {
                 }),
             });
 
-            setForgotPasswordSuccess(
-                "If that email is registered, a password reset link has been sent."
-            );
+            setForgotPasswordSuccess(t("login.resetSent"));
         } catch (err: any) {
-            setForgotPasswordError(err?.message || "Could not send reset link");
+            setForgotPasswordError(err?.message || t("login.resetFailure"));
         } finally {
             setForgotPasswordLoading(false);
         }
@@ -538,12 +536,12 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                             {brandingState.kind === "ready" ? `${t("login.signIn")} ${brandingState.branding.name}` : t("login.welcomeBack")}
                                         </div>
                                         <div className="mt-1 text-sm text-slate-600">
-                                            {brandingState.kind === "ready" ? "Sign in to your school on Elume." : "Sign in to access your classes and tools."}
+                                            {brandingState.kind === "ready" ? t("login.schoolGuidance") : t("login.defaultGuidance")}
                                         </div>
                                     </div>
 
                                     <div className="hidden rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 sm:block">
-                                        Teacher Login
+                                        {t("login.teacherLogin")}
                                     </div>
                                 </div>
 
@@ -553,11 +551,11 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                     </div>
                                 )}
 
-                                {brandingState.kind === "loading" && <div className="mb-5 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm font-medium text-cyan-800">Loading your school sign-in…</div>}
-                                {brandingState.kind === "ready" && <div className="mb-5 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4"><SchoolBrand name={brandingState.branding.name} logoUrl={brandingState.branding.logo_url} poweredByElume /><p className="mt-2 text-sm font-medium text-slate-700">Sign in to {brandingState.branding.name} on Elume.</p></div>}
-                                {brandingState.kind === "unavailable" && <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4"><SchoolBrand name={brandingState.branding.name} logoUrl={brandingState.branding.logo_url} poweredByElume /><p className="mt-2 text-sm font-medium text-amber-900">School access is currently unavailable. Please contact your school or return to Elume login.</p><a href={normalElumeLoginUrl()} className="mt-3 inline-flex rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100">Go to Elume login</a></div>}
-                                {brandingState.kind === "unknown" && <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">We couldn’t find this Elume school. <a href={normalElumeLoginUrl()} className="font-bold underline underline-offset-2">Go to Elume login</a></div>}
-                                {brandingState.kind === "error" && <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">We couldn’t load school branding right now. You can still sign in to Elume.</div>}
+                                {brandingState.kind === "loading" && <div className="mb-5 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm font-medium text-cyan-800">{t("login.schoolLoading")}</div>}
+                                {brandingState.kind === "ready" && <div className="mb-5 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4"><SchoolBrand name={brandingState.branding.name} logoUrl={brandingState.branding.logo_url} poweredByElume /><p className="mt-2 text-sm font-medium text-slate-700">{t("login.schoolReady").replace("{{school}}", brandingState.branding.name)}</p></div>}
+                                {brandingState.kind === "unavailable" && <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4"><SchoolBrand name={brandingState.branding.name} logoUrl={brandingState.branding.logo_url} poweredByElume /><p className="mt-2 text-sm font-medium text-amber-900">{t("login.schoolUnavailable")}</p><a href={normalElumeLoginUrl()} className="mt-3 inline-flex rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100">{t("login.goToElume")}</a></div>}
+                                {brandingState.kind === "unknown" && <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">{t("login.schoolUnknown")} <a href={normalElumeLoginUrl()} className="font-bold underline underline-offset-2">{t("login.goToElume")}</a></div>}
+                                {brandingState.kind === "error" && <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">{t("login.schoolBrandingError")}</div>}
 
                                 {!brandingBlocksLogin && <form className="space-y-4" onSubmit={submit}>
                                     <label className="block">
@@ -585,7 +583,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                             value={password}
                                             onChange={(e) => setPassword(e.target.value)}
                                             autoComplete="current-password"
-                                            placeholder="Enter your password"
+                                            placeholder={t("login.passwordPlaceholder")}
                                             required
                                             minLength={6}
                                         />
@@ -619,7 +617,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                     >
                                         <span className="absolute inset-0 bg-white/0 transition group-hover:bg-white/10" />
                                         <span className="relative">
-                                            {loading ? "Signing in…" : "Log in"}
+                                            {loading ? t("login.signingIn") : t("login.signIn")}
                                         </span>
                                     </button>
 
@@ -635,23 +633,23 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                 <div className="mt-6 space-y-3">
                                     <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-3 text-center shadow-sm">
                                         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                            Secure billing
+                                            {t("login.secureBilling")}
                                         </div>
                                         <div className="mt-1 text-sm text-slate-700">
-                                            Payments powered by{" "}
+                                            {t("login.paymentsPoweredBy")}{" "}
                                             <span className="font-black text-indigo-600">Stripe</span>
                                         </div>
                                     </div>
 
                                     <div className="grid grid-cols-3 gap-2 text-center text-xs text-slate-500">
                                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                                            Secure access
+                                            {t("login.secureAccess")}
                                         </div>
                                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                                            Teacher-first
+                                            {t("login.teacherFirst")}
                                         </div>
                                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                                            School-ready
+                                            {t("login.schoolReadyBadge")}
                                         </div>
                                     </div>
                                 </div>
@@ -660,22 +658,22 @@ export default function LoginPage({ onLoggedIn }: Props) {
                             {/* Student Hub back under login */}
                             <div className="mt-4 rounded-[28px] border border-white/70 bg-white/80 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl">
                                 <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-700">
-                                    Student Hub
+                                    {t("login.studentHub")}
                                 </div>
 
                                 <div className="mt-1 text-2xl font-black tracking-tight text-slate-900">
-                                    Students start here
+                                    {t("login.studentsStart")}
                                 </div>
 
                                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                                    Joining a class? Open Student Hub to enter your class code and PIN.
+                                    {t("login.studentHubHelp")}
                                 </p>
 
                                 <a
                                     href={`${window.location.origin}/#/student`}
                                     className="mt-4 flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-cyan-500 via-teal-500 to-emerald-500 px-5 py-3.5 text-base font-black text-white shadow-lg transition duration-200 hover:scale-[1.01] hover:shadow-xl active:scale-[0.995]"
                                 >
-                                    Open Student Hub
+                                    {t("login.openStudentHub")}
                                 </a>
                             </div>
 
@@ -685,13 +683,13 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                         <div className="flex items-start justify-between gap-4">
                                             <div>
                                                 <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">
-                                                    Account recovery
+                                                    {t("login.recovery")}
                                                 </div>
                                                 <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-900">
                                                     {t("login.resetPassword")}
                                                 </h3>
                                                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                                                    Enter your email and we’ll send you a secure password reset link.
+                                                    {t("login.recoveryHelp")}
                                                 </p>
                                             </div>
 
@@ -700,7 +698,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                                 onClick={() => setShowForgotPasswordModal(false)}
                                                 className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
                                             >
-                                                Close
+                                                {t("common.close")}
                                             </button>
                                         </div>
 
@@ -744,8 +742,7 @@ export default function LoginPage({ onLoggedIn }: Props) {
                             )}
 
                             <div className="mt-4 text-center text-xs text-slate-500">
-                                Designed to help teachers save time, stay organised and make
-                                lessons shine.
+                                {t("login.footer")}
                             </div>
                         </div>
                     </div>
