@@ -15,6 +15,41 @@ const approvedProject = { ...approvableDraft, status: "approved", revision: { ..
 
 beforeEach(() => { mockRouteClassId = "18"; mockedApi.mockReset(); });
 
+test("recorded stage removal requires explicit historical-retention review", async () => {
+  mockedApi.mockImplementation(async (path: string, options: any) => {
+    if (path === "/api/classes/18/aac") return { enabled: true, project: draft };
+    if (path.endsWith("/documents")) return [];
+    if (path.endsWith("/revision")) {
+      const body = JSON.parse(options.body);
+      if (!body.reviewed_removed_stage_ids?.includes("stage-a")) throw Object.assign(new Error("Review removal"), { status: 409, response: { detail: { removed_stages: [{ id: "stage-a", name: "Research" }] } } });
+      return { ...draft, revision: { ...draft.revision, plan: { stages: [] } } };
+    }
+    return {};
+  });
+  render(<AacPlannerPage embedded />);
+  fireEvent.click(await screen.findByLabelText("Remove stage 1"));
+  fireEvent.click(screen.getByRole("button", { name: "Save tracker" }));
+  expect(await screen.findByRole("dialog", { name: "Review stage removal" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Remove reviewed stages and retain history" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review stage removal" })).not.toBeInTheDocument());
+  const saves = mockedApi.mock.calls.filter(([path]) => path.endsWith("/revision"));
+  expect(JSON.parse(saves[1][1]?.body as string).reviewed_removed_stage_ids).toEqual(["stage-a"]);
+});
+
+test("Track this class opens only the connected server roster", async () => {
+  mockedApi.mockImplementation(async (path: string) => {
+    if (path === "/api/classes/18/aac") return { enabled: true, project: draft };
+    if (path.endsWith("/documents")) return [];
+    if (path.endsWith("/aac/students")) return { tracker_id:"stable", read_only:false, stages:[], retired_stages:[], students:[], trackers:[{id:"stable", title:"Fictional", current:true}] };
+    return {};
+  });
+  render(<AacPlannerPage embedded />);
+  fireEvent.click(await screen.findByRole("button", { name: "Track this class" }));
+  await screen.findByLabelText("Tracker history");
+  expect(mockedApi).toHaveBeenCalledWith("/classes/18/aac/students");
+  expect(screen.queryByText(/Local demonstration/)).not.toBeInTheDocument();
+});
+
 test("hides the AAC workspace when the server denies reviewer-pilot access", async () => {
   mockedApi.mockRejectedValue(Object.assign(new Error("AAC draft pilot is not enabled"), { status: 403 }));
   const { container } = render(<AacPlannerPage embedded />);
@@ -50,9 +85,10 @@ test("supports manual teacher editing without an AI request or calendar action",
   });
   render(<AacPlannerPage embedded />);
   const stage = await screen.findByLabelText("Stage 1 name");
-  expect(screen.queryByRole("button", { name: "Track this class" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Track this class" })).toBeEnabled();
   expect(screen.queryByText(/student progress is stored in this browser/)).not.toBeInTheDocument();
   fireEvent.change(stage, { target: { value: "Teacher-edited research" } });
+  expect(screen.getByRole("button", { name: "Track this class" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Save tracker" }));
   await waitFor(() => expect(mockedApi).toHaveBeenCalledWith("/api/classes/18/aac/revision", expect.objectContaining({ method: "PUT" })));
   expect(mockedApi.mock.calls.some(([path]) => String(path).includes("/approve") || String(path).includes("calendar"))).toBe(false);

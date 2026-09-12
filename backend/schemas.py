@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, StrictInt
+from datetime import date, datetime
+from typing import Dict, List, Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 
 class CurrentUserOut(BaseModel):
@@ -432,6 +432,8 @@ class AacTrackerSetup(BaseModel):
 
 
 class AacRevisionDraft(BaseModel):
+    tracker_id: Optional[str] = None
+    reviewed_removed_stage_ids: List[str] = []
     source_requirements: List[dict] = []
     plan: dict = {}
     assumptions: List[str] = []
@@ -450,11 +452,18 @@ class AacApproveRequest(BaseModel):
 
 
 class AacProgressUpdate(BaseModel):
-    current_stage: Optional[str] = None
-    checkpoints: List[dict] = []
-    observation: Optional[str] = None
-    next_action: Optional[str] = None
-    next_check_in_at: Optional[datetime] = None
+    model_config = ConfigDict(extra="forbid")
+    tracker_id: str = Field(min_length=1, max_length=100)
+    expected_version: int = Field(ge=0)
+    stages: Dict[str, "AacStageProgress"] = Field(default_factory=dict, max_length=100)
+    note: str = Field(default="", max_length=500)
+    follow_up: Optional[date] = None
+
+
+class AacStageProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["not_started", "in_progress", "ready_for_review", "teacher_reviewed"]
+    target: Optional[date] = None
 
 # -------------------------
 # AI calendar parsing

@@ -98,6 +98,7 @@ from schemas import (
 
 import models  # IMPORTANT: needed because we reference models.Topic, models.Note, etc.
 import schemas
+import aac_progress
 from ai_usage import AI_FEATURES, allowance_available, allowance_message, allowance_warning, current_allowance_period, feature_policy, resource_feature
 from ai_privacy import append_report_comment_sign_off, cat4_facts_for_ai, report_comment_ai_input, restore_report_comment_student_name
 from structured_documents import ValidationError as StructuredDocumentValidationError, normalise_create_resources_result, structured_lesson_plan_validation_summary, validate_structured_lesson_plan_document
@@ -13706,7 +13707,7 @@ def _aac_project_out(project: models.AacProjectModel, db: Session, *, recalculat
                 ],
             }
         schedule = build_schedule(schedule_plan)
-        return {"id": item.id, "version": item.version, "state": item.state,
+        return {"id": item.id, "tracker_id": aac_progress.tracker_id(item), "version": item.version, "state": item.state,
             "source_requirements": item.source_requirements_json, "plan": item.plan_json,
             "assumptions": item.assumptions_json, "source_document_ids": item.source_document_ids_json,
             "planning_inputs": item.planning_inputs_json, "warnings": schedule["warnings"],
@@ -13787,7 +13788,7 @@ def start_new_aac_draft(class_id: int, db: Session = Depends(get_db), user: mode
         project_id=project.id,
         version=latest_version + 1,
         source_requirements_json=[],
-        plan_json={"weekly_minutes": 30, "stages": [], "tracker_setup_pending": True},
+        plan_json={"weekly_minutes": 30, "stages": [], "tracker_setup_pending": True, "tracker_id": str(uuid.uuid4())},
         assumptions_json=[],
         source_document_ids_json=[],
         planning_inputs_json={"weekly_minutes": 30},
@@ -13831,6 +13832,7 @@ def save_aac_revision(class_id: int, payload: schemas.AacRevisionDraft, db: Sess
     project = db.query(models.AacProjectModel).filter_by(class_id=class_id, owner_user_id=user.id).with_for_update().first()
     if not project: raise HTTPException(status_code=404, detail="AAC Planner is not set up for this class.")
     latest = db.query(models.AacPlanRevisionModel).filter_by(project_id=project.id).order_by(models.AacPlanRevisionModel.version.desc()).with_for_update().first()
+    payload.plan = aac_progress.prepare_plan(db, project, latest, payload)
     if latest and latest.state == "draft":
         latest.source_requirements_json, latest.plan_json, latest.assumptions_json, latest.source_document_ids_json, latest.planning_inputs_json, latest.updated_at = payload.source_requirements, payload.plan, payload.assumptions, payload.source_document_ids, payload.planning_inputs, datetime.utcnow()
     else:
@@ -14078,14 +14080,18 @@ def _synchronise_aac_calendar(db: Session, project: models.AacProjectModel, user
 
 @app.put("/classes/{class_id}/aac/students/{student_id}")
 def update_aac_student_progress(class_id: int, student_id: int, payload: schemas.AacProgressUpdate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    require_aac_reviewer_access(user)
-    raise HTTPException(status_code=409, detail="AAC reviewer pilot is draft-only; student progress is not enabled.")
+    if user.role != "teacher": raise HTTPException(403, "AAC check-ins are teacher-only.")
     project = _aac_project_or_404(class_id, db, user)
-    if not db.query(models.StudentModel).filter_by(id=student_id, class_id=class_id).first(): raise HTTPException(status_code=404, detail="Student not found in this class.")
-    row = db.query(models.AacStudentProgressModel).filter_by(project_id=project.id, student_id=student_id).first()
-    if not row: row = models.AacStudentProgressModel(project_id=project.id, student_id=student_id, updated_by_user_id=user.id); db.add(row)
-    row.current_stage, row.checkpoints_json, row.observation, row.next_action, row.next_check_in_at, row.last_checked_in_at, row.updated_by_user_id, row.updated_at = payload.current_stage, payload.checkpoints, payload.observation, payload.next_action, payload.next_check_in_at, datetime.utcnow(), user.id, datetime.utcnow()
-    db.commit(); return {"student_id": student_id, "saved": True}
+    get_owned_class_or_404(class_id, db, user)
+    return aac_progress.save_check_in(db, project, student_id, payload, user.id)
+
+
+@app.get("/classes/{class_id}/aac/students")
+def get_aac_student_progress(class_id: int, tracker_id: Optional[str] = None, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    if user.role != "teacher": raise HTTPException(403, "AAC check-ins are teacher-only.")
+    project = _aac_project_or_404(class_id, db, user)
+    get_owned_class_or_404(class_id, db, user)
+    return aac_progress.workspace(db, project, tracker_id)
 
 # Calendar Routes (single canonical source of truth)
 # - class_id = NULL => global event
@@ -14468,7 +14474,7 @@ def update_student(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    s = db.query(StudentModel).filter(StudentModel.id == student_id).first()
+    s = db.query(StudentModel).filter(StudentModel.id == student_id).with_for_update().first()
     if not s:
         raise HTTPException(status_code=404, detail="Student not found")
     get_owned_class_or_404(s.class_id, db, user)
@@ -14496,10 +14502,13 @@ def delete_student(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_current_user),
 ):
-    s = db.query(StudentModel).filter(StudentModel.id == student_id).first()
+    s = db.query(StudentModel).filter(StudentModel.id == student_id).with_for_update().first()
     if not s:
         raise HTTPException(status_code=404, detail="Student not found")
     get_owned_class_or_404(s.class_id, db, user)
+
+    if db.query(models.AacStudentProgressModel.id).filter_by(student_id=student_id).first():
+        raise HTTPException(status_code=409, detail="This student has AAC progress history. Archive the student instead of permanently deleting them; their history will be retained.")
 
     db.query(AssessmentResultModel).filter(
         AssessmentResultModel.student_id == student_id

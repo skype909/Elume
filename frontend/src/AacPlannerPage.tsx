@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "./api";
+import AacStudentProgress from "./AacStudentProgress";
 
 const API = "/api";
 type Project = {
@@ -71,6 +72,7 @@ type Stage = {
 };
 type Revision = {
   id: number;
+  tracker_id?: string;
   state: string;
   review_token?: string;
   source_requirements: any[];
@@ -78,7 +80,7 @@ type Revision = {
   source_document_ids: number[];
   planning_inputs: Record<string, any>;
   schedule?: { capacity_minutes?: number; estimated_minutes?: number; completion_target?: string; warnings?: string[]; stages?: { id: string; name: string; estimated_minutes?: number; provisional_estimate?: boolean; completion_date?: string | null; proposed_completion_date?: string | null }[] };
-  plan: { stages?: any[]; candidate_deadlines?: any[]; interruptions?: any[]; tracker_setup_pending?: boolean };
+  plan: { stages?: any[]; retired_stages?: any[]; candidate_deadlines?: any[]; interruptions?: any[]; tracker_setup_pending?: boolean };
 };
 type WorkspaceProject = Project & {
   examination_year?: number | null;
@@ -175,6 +177,9 @@ export default function AacPlannerPage({
   const [currentStage, setCurrentStage] = useState("fifth_year");
   const [inputs, setInputs] = useState<Record<string, any>>(defaultInputs);
   const [stages, setStages] = useState<Stage[]>([]);
+  const [showProgress, setShowProgress] = useState(false);
+  const [removedStageReview, setRemovedStageReview] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => { setShowProgress(false); setRemovedStageReview([]); }, [classId]);
   const [requirements, setRequirements] = useState<any[]>([]);
   const [assumptions, setAssumptions] = useState<string[]>([]);
   const [selectedDocs, setSelectedDocs] = useState<number[]>([]);
@@ -362,7 +367,7 @@ export default function AacPlannerPage({
       if (version === requestVersion.current && currentClassId.current === classId) setError(err?.message || "Your current tracker was kept because a new tracker could not be started.");
     } finally { setBusy(false); }
   };
-  const save = async (options: { stages?: Stage[]; quiet?: boolean } = {}): Promise<WorkspaceProject | null> => {
+  const save = async (options: { stages?: Stage[]; quiet?: boolean; reviewedRemovedIds?: string[] } = {}): Promise<WorkspaceProject | null> => {
     if (!project?.revision) return null;
     setSaving(true);
     setError(null);
@@ -370,6 +375,8 @@ export default function AacPlannerPage({
       const next = await apiFetch(`${API}/classes/${classId}/aac/revision`, {
         method: "PUT",
         body: JSON.stringify({
+          tracker_id: project.revision.tracker_id,
+          reviewed_removed_stage_ids: options.reviewedRemovedIds || [],
           source_requirements: requirements,
           plan: {
             stages: options.stages ?? stages,
@@ -383,9 +390,11 @@ export default function AacPlannerPage({
         }),
       });
       hydrate(next);
+      setRemovedStageReview([]);
       if (!options.quiet) setNotice("Tracker saved. The approved plan and calendar remain unchanged.");
       return next;
     } catch (err: any) {
+      if (Array.isArray(err?.response?.detail?.removed_stages)) setRemovedStageReview(err.response.detail.removed_stages);
       setError(err?.message || "Your draft wasn’t saved. Please try again.");
       return null;
     } finally {
@@ -731,6 +740,8 @@ export default function AacPlannerPage({
           Upload your brief, review the key dates and organise your stages.
         </p>
       </header>
+      {enabled && project?.revision && !startingNewDraft && (stages.length > 0 || Boolean(project.revision.plan?.retired_stages?.length)) && <div><button type="button" disabled={dirty || saving || busy} onClick={() => setShowProgress(true)} className="rounded-xl bg-teal-700 px-5 py-3 font-bold text-white disabled:opacity-50">Track this class</button>{dirty && <span className="ml-3">Save the plan before opening student progress.</span>}</div>}
+      {removedStageReview.length > 0 && <div role="dialog" aria-label="Review stage removal" className="rounded-2xl border border-amber-300 bg-amber-50 p-5"><h2 className="text-xl font-bold">Review stages with recorded progress</h2><p>Removing these stages hides them from the active grid. Student check-ins and the removed stage details will remain in read-only history.</p><ul>{removedStageReview.map((stage) => <li key={stage.id}>{stage.name}</li>)}</ul><div className="mt-3 flex gap-3"><button type="button" disabled={saving} onClick={() => setRemovedStageReview([])} className="rounded-xl border px-4 py-2">Keep editing</button><button type="button" disabled={saving} onClick={() => void save({ reviewedRemovedIds: removedStageReview.map((s) => s.id) })} className="rounded-xl bg-amber-800 px-4 py-2 font-bold text-white">Remove reviewed stages and retain history</button></div></div>}
       {error && (
         <div
           role="alert"
@@ -1341,6 +1352,7 @@ export default function AacPlannerPage({
       </section>
     );
   }
+  if (showProgress && enabled && project?.revision && !startingNewDraft) return <AacStudentProgress key={classId} classId={classId} onBack={() => { setShowProgress(false); void load(); }} />;
   return embedded ? (
     <section className="space-y-7 text-lg leading-7 [&_h1]:text-3xl [&_h1]:leading-tight [&_h2]:text-2xl [&_h2]:leading-tight [&_h3]:text-2xl [&_h3]:leading-tight [&_h4]:text-xl [&_h4]:leading-tight [&_p]:leading-7 [&_p.text-sm]:text-lg [&_li]:leading-7 [&_li.text-sm]:text-lg [&_label]:text-lg [&_label]:leading-7 [&_input]:min-h-12 [&_input]:text-lg [&_input]:leading-7 [&_select]:min-h-12 [&_select]:text-lg [&_select]:leading-7 [&_textarea]:min-h-12 [&_textarea]:text-lg [&_textarea]:leading-7 [&_button]:min-h-12 [&_button]:whitespace-normal [&_button]:px-4 [&_button]:text-lg [&_button]:leading-6 [&_summary]:text-lg [&_summary]:leading-7 [&_span.text-xs]:text-base [&_span.text-xs]:leading-6">{page}</section>
   ) : (
