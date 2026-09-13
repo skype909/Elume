@@ -54,6 +54,16 @@ export type BoardObject = {
     src?: string;
     createdBy: string;
     updatedAt: number;
+    templateBackground?: {
+        templateId: string;
+        title: string;
+    };
+};
+
+export type TemplateBackground = {
+    templateId: string;
+    title: string;
+    src: string;
 };
 
 export type BoardSnapshot = {
@@ -119,6 +129,8 @@ type Props = {
     boardHeight?: number;
     onSnapshotReady?: (getSnapshot: () => BoardSnapshot) => void;
     initialSnapshot?: BoardSnapshot | null;
+    templateBackground?: TemplateBackground | null;
+    templateRequestId?: number;
 };
 
 type Interaction =
@@ -249,8 +261,50 @@ function objectContainsPoint(obj: BoardObject, pt: StrokePoint) {
     );
 }
 
+export function isTemplateBackground(obj: BoardObject) {
+    return obj.type === "image" && Boolean(obj.templateBackground);
+}
+
+export function replaceTemplateBackground(
+    objects: BoardObject[],
+    template: TemplateBackground | null,
+    updatedAt = Date.now()
+) {
+    const withoutExistingTemplate = objects.filter((obj) => !isTemplateBackground(obj));
+    if (!template) return withoutExistingTemplate;
+
+    return [
+        ...withoutExistingTemplate,
+        {
+            id: `template-background:${template.templateId}`,
+            type: "image" as const,
+            x: 0,
+            y: 0,
+            w: 1600,
+            h: 1200,
+            src: template.src,
+            createdBy: "elume-template",
+            updatedAt,
+            templateBackground: {
+                templateId: template.templateId,
+                title: template.title,
+            },
+        },
+    ];
+}
+
+export function normaliseTemplateBackgrounds(objects: BoardObject[]) {
+    const templates = objects.filter(isTemplateBackground);
+    if (templates.length <= 1) return objects;
+    const newest = templates.reduce((latest, current) =>
+        (current.updatedAt || 0) >= (latest.updatedAt || 0) ? current : latest
+    );
+    return [...objects.filter((obj) => !isTemplateBackground(obj)), newest];
+}
+
 export function findTopObjectAtPoint(objects: BoardObject[], pt: StrokePoint) {
     for (let i = objects.length - 1; i >= 0; i--) {
+        if (isTemplateBackground(objects[i])) continue;
         if (objectContainsPoint(objects[i], pt)) return objects[i];
     }
     return null;
@@ -287,6 +341,8 @@ export default function CollabBoard({
     boardHeight,
     onSnapshotReady,
     initialSnapshot,
+    templateBackground,
+    templateRequestId,
 }: Props) {
     const viewportRef = useRef<HTMLDivElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -347,6 +403,8 @@ export default function CollabBoard({
         scrollTop: 0,
     });
     const appliedInitialSnapshotRef = useRef<BoardSnapshot | null>(null);
+    const appliedTemplateRequestRef = useRef<number | null>(null);
+    const broadcastedTemplateRequestRef = useRef<number | null>(null);
     const boardPanRef = useRef<{ active: boolean; startX: number; startY: number; scrollLeft: number; scrollTop: number }>({
         active: false,
         startX: 0,
@@ -363,11 +421,11 @@ export default function CollabBoard({
     const isPannableViewport = viewportMode === "pan";
     const usesVirtualBoardViewport = isPannableViewport || boardWidth !== undefined || boardHeight !== undefined;
     const backgroundObjects = useMemo(
-        () => objects.filter((obj) => obj.type === "image" && obj.id !== selectedObjectId),
+        () => objects.filter((obj) => obj.type === "image" && (isTemplateBackground(obj) || obj.id !== selectedObjectId)),
         [objects, selectedObjectId]
     );
     const foregroundObjects = useMemo(
-        () => objects.filter((obj) => obj.type !== "image" || obj.id === selectedObjectId),
+        () => objects.filter((obj) => !isTemplateBackground(obj) && (obj.type !== "image" || obj.id === selectedObjectId)),
         [objects, selectedObjectId]
     );
 
@@ -563,19 +621,22 @@ export default function CollabBoard({
         remotePreviewStrokesRef.current.clear();
         liveStrokeRef.current = null;
         historyRef.current = [];
-        setObjects([]);
+        setObjects((previous) => {
+            const templateObjects = previous.filter(isTemplateBackground);
+            if (shouldBroadcast && editable) {
+                broadcastSnapshotSync({ strokes: [], objects: templateObjects.map(cloneObject) });
+            }
+            return templateObjects;
+        });
         setSelectedObjectId(null);
         redrawCommitted();
         clearPreview();
 
-        if (shouldBroadcast && editable) {
-            broadcastSnapshotSync({ strokes: [], objects: [] });
-        }
     }, [clearPreview, editable, redrawCommitted]);
 
     function restoreSnapshot(snapshot: BoardSnapshot) {
         strokesRef.current = snapshot.strokes.map(cloneStroke);
-        setObjects(snapshot.objects.map(cloneObject));
+        setObjects(normaliseTemplateBackgrounds(snapshot.objects.map(cloneObject)));
         redrawCommitted();
         clearPreview();
         setSelectedObjectId(null);
@@ -834,7 +895,7 @@ export default function CollabBoard({
         setObjects((prev) => {
             const hit = [...prev]
                 .reverse()
-                .find((obj) => objectContainsPoint(obj, pt) && canEdit(obj.createdBy, participantId));
+                .find((obj) => !isTemplateBackground(obj) && objectContainsPoint(obj, pt) && canEdit(obj.createdBy, participantId));
 
             if (!hit) return prev;
 
@@ -1334,7 +1395,7 @@ export default function CollabBoard({
                     setObjects((prev) => {
                         const exists = prev.some((obj) => obj.id === incoming.id);
                         if (exists) return prev;
-                        return [...prev, incoming];
+                        return normaliseTemplateBackgrounds([...prev, incoming]);
                     });
                     return;
                 }
@@ -1344,11 +1405,11 @@ export default function CollabBoard({
                     if (!shouldApplyReplayedBoardMutation(data.replay, incoming.createdBy, participantId, readOnly)) return;
 
                     setObjects((prev) =>
-                        prev.map((obj) => {
+                        normaliseTemplateBackgrounds(prev.map((obj) => {
                             if (obj.id !== incoming.id) return obj;
                             if ((obj.updatedAt || 0) > (incoming.updatedAt || 0)) return obj;
                             return incoming;
-                        })
+                        }))
                     );
                     return;
                 }
@@ -1369,7 +1430,7 @@ export default function CollabBoard({
 
                     strokesRef.current = data.snapshot.strokes.map(cloneStroke);
                     remotePreviewStrokesRef.current.clear();
-                    setObjects(data.snapshot.objects.map(cloneObject));
+                    setObjects(normaliseTemplateBackgrounds(data.snapshot.objects.map(cloneObject)));
                     redrawCommittedRef.current();
                     clearPreviewRef.current();
                     setSelectedObjectId(null);
@@ -1415,6 +1476,8 @@ export default function CollabBoard({
 
     useEffect(() => {
         appliedInitialSnapshotRef.current = null;
+        appliedTemplateRequestRef.current = null;
+        broadcastedTemplateRequestRef.current = null;
     }, [roomKey, sessionCode]);
 
     useEffect(() => {
@@ -1425,6 +1488,33 @@ export default function CollabBoard({
         remotePreviewStrokesRef.current.clear();
         restoreSnapshot(initialSnapshot);
     }, [initialSnapshot]);
+
+    useEffect(() => {
+        if (!editable) return;
+        if (templateRequestId === undefined) return;
+        if (appliedTemplateRequestRef.current === templateRequestId) return;
+
+        const nextObjects = replaceTemplateBackground(objects, templateBackground ?? null);
+        appliedTemplateRequestRef.current = templateRequestId;
+        setObjects(nextObjects);
+        setSelectedObjectId(null);
+        if (hasOpenSocket()) {
+            broadcastedTemplateRequestRef.current = templateRequestId;
+            broadcastSnapshotSync({
+                strokes: strokesRef.current.map(cloneStroke),
+                objects: nextObjects.map(cloneObject),
+            });
+        }
+    }, [editable, objects, templateBackground, templateRequestId]);
+
+    useEffect(() => {
+        if (!editable || !hasOpenSocket() || templateRequestId === undefined) return;
+        if (appliedTemplateRequestRef.current !== templateRequestId) return;
+        if (broadcastedTemplateRequestRef.current === templateRequestId) return;
+
+        broadcastedTemplateRequestRef.current = templateRequestId;
+        broadcastSnapshotSync(createSnapshot());
+    }, [editable, isConnected, objects, templateRequestId]);
 
     useEffect(() => {
         function onClearBoard(event: Event) {
@@ -1779,6 +1869,7 @@ export default function CollabBoard({
 
     function startMoveObject(e: React.PointerEvent, obj: BoardObject) {
         if (!hasOpenSocket()) return;
+        if (isTemplateBackground(obj)) return;
         const directEditObject =
             obj.type === "sticky" || obj.type === "speech";
 
@@ -1807,6 +1898,7 @@ export default function CollabBoard({
 
     function startResizeObject(e: React.PointerEvent, obj: BoardObject) {
         if (!hasOpenSocket()) return;
+        if (isTemplateBackground(obj)) return;
         const directEditObject =
             obj.type === "sticky" || obj.type === "speech";
 
@@ -2061,6 +2153,23 @@ export default function CollabBoard({
         }
 
         if (obj.type === "image" && obj.src) {
+            if (isTemplateBackground(obj)) {
+                return (
+                    <div
+                        key={obj.id}
+                        className="pointer-events-none absolute select-none"
+                        style={{ left: obj.x, top: obj.y, width: obj.w, height: obj.h }}
+                        data-template-background={obj.templateBackground?.templateId}
+                    >
+                        <img
+                            src={obj.src}
+                            alt=""
+                            draggable={false}
+                            className="h-full w-full object-contain"
+                        />
+                    </div>
+                );
+            }
             return (
                 <div
                     key={obj.id}

@@ -3,6 +3,12 @@ import { useNavigate, useParams } from "react-router-dom";
 import elumeLogo from "./assets/ELogo2.png";
 import CollabBoard from "./CollabBoard";
 import type { BoardSnapshot } from "./CollabBoard";
+import {
+    COLLABORATION_TEMPLATE_SUBJECTS,
+    templatesForSubject,
+    type CollaborationTemplate,
+    type CollaborationTemplateSubject,
+} from "./collaborationTemplates";
 import { apiFetch } from "./api";
 import DepartmentShareModal from "./Components/DepartmentShareModal";
 import InlineNotice from "./Components/InlineNotice";
@@ -225,6 +231,11 @@ export default function CollaborationPage() {
     const [isSavingBoard, setIsSavingBoard] = useState(false);
     const [isUsingSavedBoard, setIsUsingSavedBoard] = useState(false);
     const [sharingTemplateId, setSharingTemplateId] = useState<number | null>(null);
+    const [showElumeTemplatesModal, setShowElumeTemplatesModal] = useState(false);
+    const [templateSubject, setTemplateSubject] = useState<CollaborationTemplateSubject>("Science");
+    const [templatePreview, setTemplatePreview] = useState<CollaborationTemplate | null>(null);
+    const [selectedElumeTemplate, setSelectedElumeTemplate] = useState<CollaborationTemplate | null>(null);
+    const [templateRequestId, setTemplateRequestId] = useState<number | undefined>(undefined);
 
 
     const pollRef = useRef<number | null>(null);
@@ -458,6 +469,13 @@ export default function CollaborationPage() {
         } catch (error: unknown) {
             showError(error, "We couldn’t load your saved boards just yet. Give it another try.");
         }
+    }
+
+    function selectElumeTemplate(template: CollaborationTemplate | null) {
+        setSelectedElumeTemplate(template);
+        setTemplateRequestId((current) => (current ?? 0) + 1);
+        setTemplatePreview(null);
+        setShowElumeTemplatesModal(false);
     }
 
     async function launchSavedBoard(template: SavedBoard) {
@@ -771,6 +789,10 @@ export default function CollaborationPage() {
         setIsStartingBreakout(false);
         setFocusedReviewBoard(null);
         setBoardRound(1);
+        setSelectedElumeTemplate(null);
+        setTemplateRequestId(undefined);
+        setTemplatePreview(null);
+        setShowElumeTemplatesModal(false);
     }
 
     function handleFullReset() {
@@ -889,9 +911,20 @@ export default function CollaborationPage() {
                                                     : "bg-emerald-600 hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-xl"
                                             )}
                                         >
-                                            {isCreating ? "Creating session..." : "Start by creating session"}
+                                            {isCreating ? "Creating session..." : "Start"}
                                         </button>
                                     )}
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setTemplatePreview(null);
+                                            setShowElumeTemplatesModal(true);
+                                        }}
+                                        className="min-h-11 rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 via-white to-cyan-50 px-4 py-2 text-sm font-black text-violet-800 shadow-sm transition hover:-translate-y-0.5 hover:border-violet-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-100"
+                                    >
+                                        Load Elume Template
+                                    </button>
 
                                     {!hasSession && (
                                         <button
@@ -1199,6 +1232,14 @@ export default function CollaborationPage() {
                                                 onSnapshotReady={(getSnapshot) => {
                                                     teacherBoardSnapshotRef.current = getSnapshot;
                                                 }}
+                                                templateBackground={selectedElumeTemplate ? {
+                                                    templateId: selectedElumeTemplate.id,
+                                                    title: selectedElumeTemplate.title,
+                                                    src: selectedElumeTemplate.src,
+                                                } : null}
+                                                templateRequestId={templateRequestId}
+                                                boardWidth={1600}
+                                                boardHeight={1200}
                                             />
                                         ) : (
                                             <div className="grid min-h-[760px] place-items-center rounded-[28px] border border-dashed border-slate-300 bg-slate-50">
@@ -1210,6 +1251,19 @@ export default function CollaborationPage() {
                                                     <div className="mt-2 text-sm text-slate-600">
                                                         Create a session first, then invite students and assign breakout rooms.
                                                     </div>
+
+                                                    {selectedElumeTemplate ? (
+                                                        <div className="mx-auto mt-5 max-w-md overflow-hidden rounded-2xl border border-violet-200 bg-white p-3 text-left shadow-sm">
+                                                            <div className="flex items-center gap-3">
+                                                                <img src={selectedElumeTemplate.src} alt="" className="h-16 w-24 rounded-lg border border-slate-100 bg-slate-50 object-contain" />
+                                                                <div>
+                                                                    <div className="text-[10px] font-black uppercase tracking-[0.16em] text-violet-700">Template ready</div>
+                                                                    <div className="mt-1 text-sm font-black text-slate-900">{selectedElumeTemplate.title}</div>
+                                                                    <div className="mt-1 text-xs text-slate-600">It will be added as the locked 1600 × 1200 board background when you start.</div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ) : null}
 
                                                     <button
                                                         className={`mt-6 ${btnGlow}`}
@@ -1329,7 +1383,7 @@ export default function CollaborationPage() {
                                                 readOnly
                                                 viewportMode="pan"
                                                 boardWidth={1600}
-                                                boardHeight={960}
+                                                boardHeight={1200}
                                                 onExportReady={(fn) => {
                                                     focusedReviewBoardExportRef.current = fn;
                                                 }}
@@ -1404,7 +1458,7 @@ export default function CollaborationPage() {
                                                                 readOnly
                                                                 viewportMode="pan"
                                                                 boardWidth={1600}
-                                                                boardHeight={960}
+                                                                boardHeight={1200}
                                                             />
 
                                                             <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
@@ -1424,7 +1478,7 @@ export default function CollaborationPage() {
                                                                         readOnly
                                                                         viewportMode="pan"
                                                                         boardWidth={1600}
-                                                                        boardHeight={960}
+                                                                        boardHeight={1200}
                                                                     />
 
                                                                     <div className="pointer-events-none absolute -left-[99999px] top-0 opacity-0">
@@ -1443,7 +1497,7 @@ export default function CollaborationPage() {
                                                                             readOnly
                                                                             viewportMode="pan"
                                                                             boardWidth={1600}
-                                                                            boardHeight={960}
+                                                                            boardHeight={1200}
                                                                             onExportReady={(fn) => {
                                                                                 reviewBoardExportRefs.current[panel.selectedBoard] = fn;
                                                                             }}
@@ -1544,6 +1598,87 @@ export default function CollaborationPage() {
                     </div>
                 </div>
             </div>
+
+            {showElumeTemplatesModal && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-3 backdrop-blur-sm md:p-6" role="dialog" aria-modal="true" aria-labelledby="elume-template-library-title">
+                    <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[32px] border border-white/70 bg-white/95 shadow-[0_30px_90px_rgba(15,23,42,0.28)]">
+                        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 md:px-7">
+                            <div>
+                                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-violet-700">Elume library</div>
+                                <h2 id="elume-template-library-title" className="mt-1 text-2xl font-black tracking-tight text-slate-900">Elume Collaboration Templates</h2>
+                                <p className="mt-2 text-sm text-slate-600">Choose a ready-made activity for your collaboration board.</p>
+                            </div>
+                            <button type="button" onClick={() => { setTemplatePreview(null); setShowElumeTemplatesModal(false); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-600 shadow-sm hover:bg-slate-50">Close</button>
+                        </div>
+
+                        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-5 md:flex-row md:p-7">
+                            <div className="flex shrink-0 gap-2 overflow-x-auto pb-1 md:w-44 md:flex-col md:overflow-visible">
+                                {COLLABORATION_TEMPLATE_SUBJECTS.map((subject) => (
+                                    <button
+                                        key={subject}
+                                        type="button"
+                                        onClick={() => { setTemplateSubject(subject); setTemplatePreview(null); }}
+                                        className={cls(
+                                            "min-h-11 shrink-0 rounded-2xl px-4 py-3 text-left text-sm font-black transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-100",
+                                            templateSubject === subject ? "bg-gradient-to-r from-violet-600 to-cyan-600 text-white shadow-md" : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-violet-50"
+                                        )}
+                                    >
+                                        {subject}
+                                    </button>
+                                ))}
+                                <button
+                                    type="button"
+                                    onClick={() => selectElumeTemplate(null)}
+                                    className="min-h-11 shrink-0 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-left text-sm font-black text-slate-700 transition hover:bg-slate-50"
+                                >
+                                    Blank Board
+                                </button>
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                                <div className="mb-4 flex items-center justify-between gap-3">
+                                    <div className="text-lg font-black text-slate-900">{templateSubject}</div>
+                                    <div className="rounded-full border border-violet-100 bg-violet-50 px-3 py-1 text-xs font-black text-violet-700">5 templates</div>
+                                </div>
+                                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                                    {templatesForSubject(templateSubject).map((template) => (
+                                        <button
+                                            key={template.id}
+                                            type="button"
+                                            onClick={() => setTemplatePreview(template)}
+                                            className="overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:border-violet-300 hover:shadow-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-100"
+                                        >
+                                            <div className="aspect-[4/3] bg-slate-50 p-2">
+                                                <img src={template.src} alt="" className="h-full w-full object-contain" />
+                                            </div>
+                                            <div className="border-t border-slate-100 px-4 py-3 text-sm font-black text-slate-900">{template.title}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {templatePreview ? (
+                            <div className="border-t border-violet-100 bg-gradient-to-r from-violet-50 via-white to-cyan-50 p-5 md:px-7">
+                                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                                    <div className="aspect-[4/3] w-full shrink-0 overflow-hidden rounded-2xl border border-white bg-white p-2 shadow-sm sm:w-[360px]">
+                                        <img src={templatePreview.src} alt="" className="h-full w-full object-contain" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-[11px] font-black uppercase tracking-[0.16em] text-violet-700">{templatePreview.subject}</div>
+                                        <div className="mt-1 text-lg font-black text-slate-900">{templatePreview.title}</div>
+                                        <div className="mt-1 text-sm text-slate-600">Locked 1600 × 1200 background. Draw and add notes above it.</div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button type="button" onClick={() => setTemplatePreview(null)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">Cancel</button>
+                                        <button type="button" onClick={() => selectElumeTemplate(templatePreview)} className="rounded-2xl bg-gradient-to-r from-violet-600 to-cyan-600 px-5 py-3 text-sm font-black text-white shadow-md hover:from-violet-700 hover:to-cyan-700">Use Template</button>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+            )}
 
             {showSavedBoardsModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm">
