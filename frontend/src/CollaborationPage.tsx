@@ -16,6 +16,7 @@ import { userFacingError } from "./userFacingError";
 import { TeacherToolPalette } from "./TeacherToolPalette";
 import { TeacherHighlighterSettings } from "./TeacherHighlighterSettings";
 import { ColourSwatch, StrokeSizeButton } from "./BoardControlOptions";
+import { Maximize2, Minimize2 } from "lucide-react";
 
 const API_BASE = "/api";
 
@@ -171,14 +172,18 @@ function SectionCard({
     hint,
     right,
     children,
+    className,
+    bodyClassName,
 }: {
     title: string;
     hint?: string;
     right?: React.ReactNode;
     children: React.ReactNode;
+    className?: string;
+    bodyClassName?: string;
 }) {
     return (
-        <div className="rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
+        <div className={cls("rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl", className)}>
             <div className="flex items-start justify-between gap-4">
                 <div>
                     <div className="text-xl font-black tracking-tight text-slate-900">{title}</div>
@@ -186,7 +191,7 @@ function SectionCard({
                 </div>
                 {right}
             </div>
-            <div className="mt-5">{children}</div>
+            <div className={cls("mt-5", bodyClassName)}>{children}</div>
         </div>
     );
 }
@@ -236,10 +241,15 @@ export default function CollaborationPage() {
     const [templatePreview, setTemplatePreview] = useState<CollaborationTemplate | null>(null);
     const [selectedElumeTemplate, setSelectedElumeTemplate] = useState<CollaborationTemplate | null>(null);
     const [templateRequestId, setTemplateRequestId] = useState<number | undefined>(undefined);
+    const [isTeacherFullscreen, setIsTeacherFullscreen] = useState(false);
+    const [teacherFullscreenHeight, setTeacherFullscreenHeight] = useState(760);
 
 
     const pollRef = useRef<number | null>(null);
     const joinCodeRef = useRef("");
+    const teacherWorkspaceRef = useRef<HTMLDivElement | null>(null);
+    const fullscreenButtonRef = useRef<HTMLButtonElement | null>(null);
+    const wasTeacherFullscreenRef = useRef(false);
 
     const btnGlow =
         "relative inline-flex items-center gap-3 rounded-2xl border-2 border-violet-600 " +
@@ -287,6 +297,28 @@ export default function CollaborationPage() {
         setNotice({ variant: "warning", message });
     }
 
+    function enterTeacherFullscreen() {
+        const workspace = teacherWorkspaceRef.current;
+        if (!workspace) return;
+
+        // Set the application fallback immediately. A rejected native request still leaves
+        // the teacher with the same expanded, tool-complete workspace.
+        setIsTeacherFullscreen(true);
+        if (typeof workspace.requestFullscreen === "function") {
+            workspace.requestFullscreen().catch(() => {
+                // The fixed-position focus workspace is intentionally the fallback.
+            });
+        }
+    }
+
+    function exitTeacherFullscreen() {
+        if (document.fullscreenElement === teacherWorkspaceRef.current && typeof document.exitFullscreen === "function") {
+            document.exitFullscreen().catch(() => setIsTeacherFullscreen(false));
+            return;
+        }
+        setIsTeacherFullscreen(false);
+    }
+
     function showStartBreakoutFailure(error: unknown) {
         if (error instanceof Error && error.message === "No session code available. Create the session first.") {
             showWarning("Create a Collaboration session before starting breakout rooms.");
@@ -298,6 +330,65 @@ export default function CollaborationPage() {
     useEffect(() => {
         joinCodeRef.current = joinCode;
     }, [joinCode]);
+
+    useEffect(() => {
+        const syncFullscreenState = () => {
+            if (document.fullscreenElement !== teacherWorkspaceRef.current) {
+                setIsTeacherFullscreen(false);
+            }
+        };
+
+        document.addEventListener("fullscreenchange", syncFullscreenState);
+        return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+    }, []);
+
+    useEffect(() => {
+        if (!isTeacherFullscreen) return;
+
+        const updateHeight = () => {
+            // The board's own header and the compact focus header remain above this viewport.
+            setTeacherFullscreenHeight(Math.max(420, window.innerHeight - 154));
+        };
+
+        updateHeight();
+        window.addEventListener("resize", updateHeight);
+        return () => window.removeEventListener("resize", updateHeight);
+    }, [isTeacherFullscreen]);
+
+    useEffect(() => {
+        if (!isTeacherFullscreen) return;
+
+        const handleEscape = (event: KeyboardEvent) => {
+            if (event.key === "Escape" && document.fullscreenElement !== teacherWorkspaceRef.current) {
+                setIsTeacherFullscreen(false);
+            }
+        };
+
+        window.addEventListener("keydown", handleEscape);
+        return () => window.removeEventListener("keydown", handleEscape);
+    }, [isTeacherFullscreen]);
+
+    useEffect(() => {
+        if (!isTeacherFullscreen) return;
+
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [isTeacherFullscreen]);
+
+    useEffect(() => {
+        if (wasTeacherFullscreenRef.current && !isTeacherFullscreen) {
+            fullscreenButtonRef.current?.focus();
+        }
+        wasTeacherFullscreenRef.current = isTeacherFullscreen;
+    }, [isTeacherFullscreen]);
+
+    useEffect(() => {
+        if (hasSession) return;
+        setIsTeacherFullscreen(false);
+    }, [hasSession]);
 
     const joinUrl = useMemo(
         () => (joinCode ? `${window.location.origin}/#/collab/join/${joinCode}` : ""),
@@ -869,7 +960,7 @@ export default function CollaborationPage() {
                             />
                         </div>
                     ) : null}
-                    <div className="mb-3 rounded-[22px] border border-white/70 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-xl md:px-5">
+                    <div className={cls("mb-3 rounded-[22px] border border-white/70 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-xl md:px-5", isTeacherFullscreen && "hidden")}>
                         <div className="flex flex-col gap-2">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div className="flex items-center gap-3">
@@ -1063,9 +1154,17 @@ export default function CollaborationPage() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[236px_minmax(0,1fr)_320px]">
-                        <div className="sticky top-3 z-20 self-start">
-                            <div className="rounded-[28px] border border-slate-200/80 bg-white/95 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                    <div
+                        ref={teacherWorkspaceRef}
+                        className={cls(
+                            "grid grid-cols-1 gap-5",
+                            !isTeacherFullscreen && "xl:grid-cols-[236px_minmax(0,1fr)_320px]",
+                            isTeacherFullscreen && "fixed inset-0 z-[60] grid-cols-[236px_minmax(0,1fr)] gap-4 overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50 p-4 xl:grid-cols-[236px_minmax(0,1fr)]"
+                        )}
+                        data-teacher-focus-mode={isTeacherFullscreen ? "active" : "inactive"}
+                    >
+                        <div className={cls("z-20 self-start", !isTeacherFullscreen && "sticky top-3")}>
+                            <div className={cls("rounded-[28px] border border-slate-200/80 bg-white/95 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl", isTeacherFullscreen && "max-h-[calc(100dvh-2rem)] overflow-y-auto")}>
                                 <TeacherToolPalette selectedTool={tool} onToolChange={(nextTool) => setTool(nextTool)} />
 
                                 {(tool === "pen" || tool === "eraser" || tool === "highlighter") && <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-3">
@@ -1163,12 +1262,26 @@ export default function CollaborationPage() {
                             </div>
                         </div>
 
-                        <div className="space-y-5">
+                        <div className={cls("space-y-5", isTeacherFullscreen && "min-h-0")}>
                             <SectionCard
                                 title={sessionTitle}
                                 hint="Teacher board stage"
+                                className={cls(isTeacherFullscreen && "flex h-full min-h-0 flex-col rounded-[28px] p-4")}
+                                bodyClassName={cls(isTeacherFullscreen && "min-h-0 flex-1")}
                                 right={
                                     <div className="flex flex-wrap items-center gap-2">
+                                        {hasSession && effectiveSessionState !== "review" && (
+                                            <button
+                                                ref={fullscreenButtonRef}
+                                                type="button"
+                                                onClick={isTeacherFullscreen ? exitTeacherFullscreen : enterTeacherFullscreen}
+                                                aria-label={isTeacherFullscreen ? "Exit Full Screen" : "Full Screen"}
+                                                className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 via-white to-cyan-50 px-4 py-2 text-xs font-black text-violet-800 shadow-sm transition hover:-translate-y-0.5 hover:border-violet-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-100"
+                                            >
+                                                {isTeacherFullscreen ? <Minimize2 size={16} aria-hidden="true" /> : <Maximize2 size={16} aria-hidden="true" />}
+                                                {isTeacherFullscreen ? "Exit Full Screen" : "Full Screen"}
+                                            </button>
+                                        )}
                                         <button
                                             type="button"
                                             onClick={() => setPdfImportRequestNonce((n) => n + 1)}
@@ -1188,7 +1301,7 @@ export default function CollaborationPage() {
                                 }
                             >
                                 {effectiveSessionState !== "review" ? (
-                                    <div className="relative">
+                                    <div className={cls("relative", isTeacherFullscreen && "h-full")}>
                                         {hasSession ? (
                                             <CollabBoard
                                                 sessionCode={joinCode}
@@ -1222,7 +1335,7 @@ export default function CollaborationPage() {
                                                 penSize={penSize}
                                                 highlighterColor={highlightColor}
                                                 eraserSize={eraserSize}
-                                                height={760}
+                                                height={isTeacherFullscreen ? teacherFullscreenHeight : 760}
                                                 classId={String(classId)}
                                                 apiBase={API_BASE}
                                                 apiFetch={apiFetch}
@@ -1523,7 +1636,7 @@ export default function CollaborationPage() {
                             </SectionCard>
                         </div>
 
-                        <SectionCard
+                        {!isTeacherFullscreen && <SectionCard
                             title="Students"
                             hint="Joined participants and room assignments"
                             right={
@@ -1595,7 +1708,7 @@ export default function CollaborationPage() {
                                     </div>
                                 ))}
                             </div>
-                        </SectionCard>
+                        </SectionCard>}
                     </div>
                 </div>
             </div>
