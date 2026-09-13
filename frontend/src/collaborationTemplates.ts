@@ -1,4 +1,5 @@
 export type CollaborationTemplateSubject =
+  | "Teaching Templates"
   | "Science"
   | "English"
   | "Maths"
@@ -18,6 +19,7 @@ export type CollaborationTemplate = {
 };
 
 export const COLLABORATION_TEMPLATE_SUBJECTS: CollaborationTemplateSubject[] = [
+  "Teaching Templates",
   "Science",
   "English",
   "Maths",
@@ -71,6 +73,11 @@ export const COLLABORATION_TEMPLATES: CollaborationTemplate[] = [
   ["French", "Mon Profil", "french/03_mon_profil.png"],
   ["French", "Complete the Conversation", "french/04_complete_the_conversation.png"],
   ["French", "Le Mot Manquant", "french/05_le_mot_manquant.png"],
+  ["Teaching Templates", "Mind Map", "teaching/01_mind_map.png"],
+  ["Teaching Templates", "KWL Board", "teaching/02_kwl_board.png"],
+  ["Teaching Templates", "Compare & Contrast", "teaching/03_compare_contrast.png"],
+  ["Teaching Templates", "Cause & Effect", "teaching/04_cause_effect.png"],
+  ["Teaching Templates", "Frayer Model", "teaching/05_frayer_model.png"],
 ].map(([subject, title, path], index) => ({
   id: `elume-${String(index + 1).padStart(2, "0")}`,
   subject: subject as CollaborationTemplateSubject,

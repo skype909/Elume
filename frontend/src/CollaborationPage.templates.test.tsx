@@ -26,8 +26,15 @@ test("a template chosen before session creation is retained as a pending draft t
 
   fireEvent.click(screen.getByRole("button", { name: "Load Elume Template" }));
   expect(screen.getByRole("heading", { name: "Elume Collaboration Templates" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Teaching Templates" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Gaeilge" })).toBeVisible();
   expect(screen.getAllByRole("button", { name: "Science" })).toHaveLength(1);
+  const teachingButton = screen.getByRole("button", { name: "Teaching Templates" });
+  const scienceButton = screen.getByRole("button", { name: "Science" });
+  expect(teachingButton.compareDocumentPosition(scienceButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByText("Mind Map")).toBeVisible();
+  expect(screen.getByText("5 templates")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Blank Board" })).toBeVisible();
 
   fireEvent.click(screen.getByRole("button", { name: "English" }));
   fireEvent.click(screen.getByRole("button", { name: "Character Profile" }));

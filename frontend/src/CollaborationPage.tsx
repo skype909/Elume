@@ -232,7 +232,7 @@ export default function CollaborationPage() {
     const [isUsingSavedBoard, setIsUsingSavedBoard] = useState(false);
     const [sharingTemplateId, setSharingTemplateId] = useState<number | null>(null);
     const [showElumeTemplatesModal, setShowElumeTemplatesModal] = useState(false);
-    const [templateSubject, setTemplateSubject] = useState<CollaborationTemplateSubject>("Science");
+    const [templateSubject, setTemplateSubject] = useState<CollaborationTemplateSubject>("Teaching Templates");
     const [templatePreview, setTemplatePreview] = useState<CollaborationTemplate | null>(null);
     const [selectedElumeTemplate, setSelectedElumeTemplate] = useState<CollaborationTemplate | null>(null);
     const [templateRequestId, setTemplateRequestId] = useState<number | undefined>(undefined);
@@ -918,6 +918,7 @@ export default function CollaborationPage() {
                                     <button
                                         type="button"
                                         onClick={() => {
+                                            setTemplateSubject("Teaching Templates");
                                             setTemplatePreview(null);
                                             setShowElumeTemplatesModal(true);
                                         }}
@@ -1613,19 +1614,28 @@ export default function CollaborationPage() {
 
                         <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-5 md:flex-row md:p-7">
                             <div className="flex shrink-0 gap-2 overflow-x-auto pb-1 md:w-44 md:flex-col md:overflow-visible">
-                                {COLLABORATION_TEMPLATE_SUBJECTS.map((subject) => (
-                                    <button
-                                        key={subject}
-                                        type="button"
-                                        onClick={() => { setTemplateSubject(subject); setTemplatePreview(null); }}
-                                        className={cls(
-                                            "min-h-11 shrink-0 rounded-2xl px-4 py-3 text-left text-sm font-black transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-100",
-                                            templateSubject === subject ? "bg-gradient-to-r from-violet-600 to-cyan-600 text-white shadow-md" : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-violet-50"
-                                        )}
-                                    >
-                                        {subject}
-                                    </button>
-                                ))}
+                                {COLLABORATION_TEMPLATE_SUBJECTS.map((subject) => {
+                                    const isTeachingTemplates = subject === "Teaching Templates";
+                                    return (
+                                        <button
+                                            key={subject}
+                                            type="button"
+                                            onClick={() => { setTemplateSubject(subject); setTemplatePreview(null); }}
+                                            className={cls(
+                                                "min-h-11 shrink-0 rounded-2xl px-4 py-3 text-left text-sm font-black transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-100",
+                                                isTeachingTemplates
+                                                    ? templateSubject === subject
+                                                        ? "bg-gradient-to-r from-violet-600 via-cyan-600 to-emerald-500 text-white shadow-lg"
+                                                        : "border border-cyan-200 bg-gradient-to-r from-violet-50 via-cyan-50 to-emerald-50 text-slate-800 shadow-sm hover:border-violet-300 hover:shadow-md"
+                                                    : templateSubject === subject
+                                                        ? "bg-gradient-to-r from-violet-600 to-cyan-600 text-white shadow-md"
+                                                        : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-violet-50"
+                                            )}
+                                        >
+                                            {subject}
+                                        </button>
+                                    );
+                                })}
                                 <button
                                     type="button"
                                     onClick={() => selectElumeTemplate(null)}
