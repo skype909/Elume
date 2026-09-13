@@ -188,8 +188,35 @@ class StructuredLessonPlanTests(unittest.TestCase):
             normalise_create_resources_result("lesson_plan", payload, "Fallback", expected_duration_minutes=58)
 
     def test_requested_lesson_duration_rejects_range_flow_values_without_affecting_legacy_documents(self):
-        with self.assertRaisesRegex(ValueError, "invalid lesson flow minutes for requested duration"):
+        with self.assertRaisesRegex(ValueError, "lesson flow duration total mismatch"):
             normalise_create_resources_result("lesson_plan", lesson_plan_payload(), "Fallback", expected_duration_minutes=55)
+
+    def test_requested_duration_normalises_contiguous_legacy_ranges_for_junior_cycle(self):
+        payload = lesson_plan_payload()
+        payload["document"]["level"] = "Junior Cycle"
+        payload["document"]["duration"] = "58 minutes"
+        payload["document"]["lesson_flow"] = [
+            {"minutes": "0-8 min", "phase": "Starter", "teacher_action": "Set retrieval work.", "student_action": "Complete retrieval work."},
+            {"minutes": "8-45 min", "phase": "Development", "teacher_action": "Model the content.", "student_action": "Complete guided practice."},
+            {"minutes": "45-58 min", "phase": "Plenary", "teacher_action": "Lead the final check.", "student_action": "Complete an exit response."},
+        ]
+        result = normalise_create_resources_result("lesson_plan", payload, "Junior", expected_duration_minutes=58)
+        timeline = next(block for block in result["document"]["blocks"] if block["type"] == "timeline")
+        self.assertEqual(result["document"]["level"], "Junior Cycle")
+        self.assertEqual([item["minutes"] for item in timeline["items"]], ["8", "37", "13"])
+
+    def test_requested_duration_normalises_contiguous_legacy_ranges_for_leaving_cert(self):
+        payload = lesson_plan_payload()
+        payload["document"]["level"] = "Leaving Cert"
+        payload["document"]["duration"] = "60 minutes"
+        payload["document"]["lesson_flow"] = [
+            {"minutes": "0-10 min", "phase": "Starter", "teacher_action": "Set retrieval work.", "student_action": "Complete retrieval work."},
+            {"minutes": "10-50 min", "phase": "Development", "teacher_action": "Model the content.", "student_action": "Complete guided practice."},
+            {"minutes": "50-60 min", "phase": "Plenary", "teacher_action": "Lead the final check.", "student_action": "Complete an exit response."},
+        ]
+        result = normalise_create_resources_result("lesson_plan", payload, "Senior", expected_duration_minutes=60)
+        timeline = next(block for block in result["document"]["blocks"] if block["type"] == "timeline")
+        self.assertEqual([item["minutes"] for item in timeline["items"]], ["10", "40", "10"])
 
     def test_ai_invalid_non_text_lesson_flow_minutes_are_rejected(self):
         for invalid_minutes in (5.5, 0, -5, True):

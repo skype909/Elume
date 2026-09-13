@@ -2,8 +2,12 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 import StructuredLessonPlanPreview, { isStructuredLessonPlanDocument, type StructuredLessonPlanDocument } from "./Components/StructuredLessonPlanPreview";
+import StructuredAnnualPlanPreview, { isStructuredAnnualPlanDocument, type StructuredAnnualPlanDocument } from "./Components/StructuredAnnualPlanPreview";
 import AiAssistanceNotice from "./Components/AiAssistanceNotice";
 import { applyLessonPlanDurationDefault, deriveLessonPlanDuration, type TeacherTimetableState } from "./createResourcesDuration";
+import { calculateTeachingCapacity, weeklyClassesFromTimetable, type ClosureRange, type WeeklyClass } from "./schemeOfWorkPlanning";
+import { proposeCalendarFromExtractedText } from "./schemeOfWorkCalendar";
+import { canAddCreateResourceFiles, isCreateResourceImage } from "./createResourcesUploads";
 import { tileVisualForClass } from "./classAppearanceViews";
 
 type ClassItem = { id: number; name: string; subject: string; color?: string | null };
@@ -21,7 +25,7 @@ type Scope = {
 
 type OutputKind = "ideas" | "lesson_plan" | "worksheet" | "scheme" | "dept_plan";
 type DetailLevel = "Concise" | "Detailed";
-type PhaseLevel = "Junior Cycle" | "Leaving Cert" | "Common Level";
+type PhaseLevel = "Junior Cycle" | "Leaving Cert";
 type SaveBucket = "notes" | "tests" | "links";
 type SourceBucket = "notes" | "links";
 
@@ -57,6 +61,10 @@ type UploadedManualFile = {
   id: string;
   file: File;
   createdAt: string;
+  purpose: "topics" | "calendar" | "supporting";
+  status: "processing" | "ready" | "error";
+  text?: string;
+  error?: string;
 };
 
 type GeneratedDoc = {
@@ -74,7 +82,11 @@ type GeneratedDoc = {
   brandingChoice?: BrandingChoice;
   worksheetIncludeAnswers?: boolean;
   content: string;
-  document?: StructuredLessonPlanDocument;
+  document?: StructuredLessonPlanDocument | StructuredAnnualPlanDocument;
+  annualPlanning?: {
+    topics: string[]; academicYear: string; startDate: string; endDate: string;
+    weeklyClasses: WeeklyClass[]; closures: ClosureRange[]; capacity: ReturnType<typeof calculateTeachingCapacity>;
+  };
   aiGenerated?: boolean;
 };
 
@@ -133,6 +145,30 @@ type OutputTileStyle = {
 
 function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+}
+
+function describeAiGenerationFailure(errorMessage: string) {
+  const message = errorMessage.toLowerCase();
+  if (
+    message.includes("openai_api_key is missing") ||
+    message.includes("missing bearer authentication") ||
+    message.includes("authenticationerror") ||
+    message.includes("invalid api key")
+  ) {
+    return "AI generation is temporarily unavailable because the AI service could not authenticate. Please try again later or contact Elume support.";
+  }
+  if (
+    message.includes("connection error") ||
+    message.includes("connecterror") ||
+    message.includes("winerror 10061") ||
+    message.includes("proxy")
+  ) {
+    return "AI generation cannot reach the AI service right now. Please try again shortly.";
+  }
+  if (message.includes("could not validate") || message.includes("validation")) {
+    return "AI returned a document that did not meet Elume’s structured validation. No incomplete generated document was saved; try again.";
+  }
+  return "AI generation failed before Elume received a usable structured document. Review the planning inputs and try again.";
 }
 
 function getEmailFromToken(): string | null {
@@ -650,6 +686,7 @@ export default function CreateResources() {
   const [newSourceTitle, setNewSourceTitle] = useState("");
   const [newSourceText, setNewSourceText] = useState("");
   const [uploadedManualFiles, setUploadedManualFiles] = useState<UploadedManualFile[]>([]);
+  const [uploadPurpose, setUploadPurpose] = useState<"topics" | "calendar" | "supporting">("supporting");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState<string | null>(null);
   const [aiQuotaNotice, setAiQuotaNotice] = useState<string | null>(null);
@@ -663,6 +700,14 @@ export default function CreateResources() {
   const [ideaPostStatus, setIdeaPostStatus] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"pdf" | "docx" | null>(null);
+  const [schemeTopics, setSchemeTopics] = useState<string[]>([]);
+  const [schemeTopicDraft, setSchemeTopicDraft] = useState("");
+  const [schemeAcademicYear, setSchemeAcademicYear] = useState("");
+  const [schemeStartDate, setSchemeStartDate] = useState("");
+  const [schemeEndDate, setSchemeEndDate] = useState("");
+  const [schemeWeeklyClasses, setSchemeWeeklyClasses] = useState<WeeklyClass[]>([]);
+  const [schemeClosures, setSchemeClosures] = useState<ClosureRange[]>([]);
+  const [calendarReviewWarnings, setCalendarReviewWarnings] = useState<string[]>([]);
 
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const manualFileRef = useRef<HTMLInputElement | null>(null);
@@ -682,6 +727,12 @@ export default function CreateResources() {
     () => deriveLessonPlanDuration(timetableState, scope.mode === "single" ? scope.classId : null),
     [scope, timetableState]
   );
+  const schemeCapacity = useMemo(
+    () => calculateTeachingCapacity(schemeStartDate, schemeEndDate, schemeWeeklyClasses, schemeClosures),
+    [schemeStartDate, schemeEndDate, schemeWeeklyClasses, schemeClosures]
+  );
+  const filesStillProcessing = uploadedManualFiles.some((item) => item.status === "processing");
+  const unreadableFiles = uploadedManualFiles.filter((item) => item.status === "error");
   const destinationOptions = useMemo(() => destinationOptionsForOutput(outputKind), [outputKind]);
   const sourceOptions = useMemo(() => sourceOptionsForOutput(outputKind), [outputKind]);
   const previewIdeas = useMemo(() => (preview?.kind === "ideas" ? parseIdeaPreviewBlocks(preview.content) : []), [preview]);
@@ -760,6 +811,12 @@ export default function CreateResources() {
     if (next.minutes !== lessonLengthMinutes) setLessonLengthMinutes(next.minutes);
     if (next.manuallyEdited !== lessonLengthManuallyEdited) setLessonLengthManuallyEdited(next.manuallyEdited);
   }, [lessonLengthManuallyEdited, lessonLengthMinutes, scopeKey, timetableLessonLength]);
+
+  useEffect(() => {
+    if (outputKind !== "scheme" || scope.mode !== "single") return;
+    const imported = weeklyClassesFromTimetable(timetableState, scope.classId ?? scopeClassId);
+    if (imported.length) setSchemeWeeklyClasses((current) => current.length ? current : imported);
+  }, [outputKind, scope, scopeClassId, timetableState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1040,24 +1097,58 @@ export default function CreateResources() {
     setManualSources((prev) => prev.filter((item) => item.id !== id));
   }
 
-  function addUploadedFiles(fileList: FileList | null) {
+  async function addUploadedFiles(fileList: FileList | null) {
     if (!fileList?.length) return;
-    const accepted = Array.from(fileList).filter((file) =>
-      /\.(pdf|doc|docx|ppt|pptx|txt)$/i.test(file.name)
-    );
+    const accepted = Array.from(fileList).filter((file) => /\.(pdf|doc|docx|ppt|pptx|txt|jpg|jpeg|png)$/i.test(file.name));
     if (!accepted.length) return;
-
-    const next = accepted.map((file) => ({
-      id: uid("upload"),
-      file,
-      createdAt: new Date().toISOString(),
-    }));
-
+    if (!canAddCreateResourceFiles(uploadedManualFiles.map((item) => item.file), accepted)) { setAiErr("Images: 12/12. Upload PDFs, documents or photos. Maximum 12 images per plan."); return; }
+    const next = accepted.map((file) => ({ id: uid("upload"), file, createdAt: new Date().toISOString(), purpose: uploadPurpose, status: "processing" as const }));
     setUploadedManualFiles((prev) => [...next, ...prev]);
+    await Promise.all(next.map(async (item) => {
+      const body = new FormData(); body.append("file", item.file); body.append("purpose", item.purpose);
+      try {
+        const result = await apiFetch("/ai/create-resources/extract-source", { method: "POST", body }) as { text: string };
+        setUploadedManualFiles((current) => current.map((candidate) => candidate.id === item.id ? { ...candidate, status: "ready", text: result.text } : candidate));
+        if (item.purpose === "topics") {
+          const extractedTopics = result.text.split(/\r?\n|,/).map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim()).filter((line) => line.length >= 2 && line.length <= 180);
+          if (extractedTopics.length) setSchemeTopics((current) => [...current, ...extractedTopics.filter((topic) => !current.some((existing) => existing.localeCompare(topic, undefined, { sensitivity: "accent" }) === 0))]);
+        }
+        if (item.purpose === "calendar") {
+          const proposal = proposeCalendarFromExtractedText(result.text, item.file.name);
+          if (proposal.startDate && !schemeStartDate) setSchemeStartDate(proposal.startDate);
+          if (proposal.endDate && !schemeEndDate) setSchemeEndDate(proposal.endDate);
+          if (proposal.closures.length) setSchemeClosures((current) => [...current, ...proposal.closures.filter((next) => !current.some((existing) => existing.start === next.start && existing.end === next.end))]);
+          setCalendarReviewWarnings(proposal.warnings);
+        }
+      } catch (error: any) {
+        setUploadedManualFiles((current) => current.map((candidate) => candidate.id === item.id ? { ...candidate, status: "error", error: error?.message || "Elume could not read this source." } : candidate));
+      }
+    }));
   }
 
   function removeUploadedFile(id: string) {
     setUploadedManualFiles((prev) => prev.filter((item) => item.id !== id));
+  }
+
+  function addSchemeTopics(value = schemeTopicDraft) {
+    const next = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+    if (!next.length) return;
+    setSchemeTopics((current) => [...current, ...next]);
+    setSchemeTopicDraft("");
+  }
+
+  function moveSchemeTopic(index: number, direction: -1 | 1) {
+    setSchemeTopics((current) => {
+      const target = index + direction;
+      if (target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
+  function updateSchemeWeeklyClass(id: string, patch: Partial<WeeklyClass>) {
+    setSchemeWeeklyClasses((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
   }
 
   const sortedSources = useMemo(() => {
@@ -1089,6 +1180,13 @@ export default function CreateResources() {
           : "Workspace: General repository";
 
     let body = "";
+    const fallbackLessonDuration = Math.max(1, Math.round(lessonLengthMinutes));
+    const fallbackStarterMinutes = Math.min(5, fallbackLessonDuration);
+    const fallbackAfterStarter = fallbackLessonDuration - fallbackStarterMinutes;
+    const fallbackClosureMinutes = Math.min(5, fallbackAfterStarter);
+    const fallbackTeachingAndActivity = fallbackAfterStarter - fallbackClosureMinutes;
+    const fallbackTeachingMinutes = Math.round(fallbackTeachingAndActivity * 0.6);
+    const fallbackActivityMinutes = fallbackTeachingAndActivity - fallbackTeachingMinutes;
     const footerLines = [
       `Teacher: ${teacherNameShort}`,
       teacherSchoolName ? `School: ${teacherSchoolName}` : "",
@@ -1157,7 +1255,7 @@ export default function CreateResources() {
       body = [
         `# Lesson Plan: ${teacherPrompt || "Lesson topic"}`,
         ``,
-        `Subject | ${level} | 60 Minutes`,
+        `Subject | ${level} | ${fallbackLessonDuration} Minutes`,
         ``,
         `## Learning Overview`,
         `- Topic: ${teacherPrompt || "Lesson topic"}`,
@@ -1173,13 +1271,13 @@ export default function CreateResources() {
         `- I can answer a short question or exit task clearly in my own words.`,
         ``,
         `## Lesson Flow`,
-        `### Starter (5 Minutes)`,
+        `### Starter (${fallbackStarterMinutes} Minutes)`,
         `- Open with a short retrieval question linked to prior learning and use the responses to surface misconceptions quickly.`,
-        `### Teaching and Development (35 Minutes)`,
+        `### Teaching and Development (${fallbackTeachingMinutes} Minutes)`,
         `- Introduce the key content in small steps, model one example clearly, and use targeted questioning to check understanding as you go.`,
-        `### Activity and Application (20 Minutes)`,
+        `### Activity and Application (${fallbackActivityMinutes} Minutes)`,
         `- Students complete a focused task based on today’s content while the teacher circulates, prompts, and gives short live feedback.`,
-        `### Plenary and Closure (5 Minutes)`,
+        `### Plenary and Closure (${fallbackClosureMinutes} Minutes)`,
         `- End with a short review question, exit prompt, or mini-check that confirms what students can now explain or do.`,
         ``,
         `## Resources`,
@@ -1234,23 +1332,11 @@ export default function CreateResources() {
 
     if (kind === "scheme") {
       body = [
-        `# Scheme of Work`,
+        `# Scheme of Work - Full Year`,
         ``,
-        `Theme: ${teacherPrompt}`,
+        `Planning request: ${teacherPrompt}`,
         ``,
-        `## Week 1`,
-        `- Lesson 1`,
-        `- Lesson 2`,
-        ``,
-        `## Week 2`,
-        `- Lesson 3`,
-        `- Lesson 4`,
-        ``,
-        `## Assessment points`,
-        `- ...`,
-        ``,
-        `## Resources`,
-        `- ...`,
+        `A full-year Scheme of Work requires confirmed topics, calendar dates and weekly teaching capacity. Elume will not substitute a short unit plan when those inputs or structured validation are unavailable.`,
       ].join("\n");
     }
 
@@ -1320,7 +1406,26 @@ export default function CreateResources() {
     };
   }
 
+  function selectOutputKind(kind: OutputKind) {
+    if (kind === outputKind) return;
+    // A preview belongs to its generated resource type. Keeping a lesson-plan
+    // preview visible after switching to an annual scheme makes its Save action
+    // look like an annual-plan action even though it is not.
+    setOutputKind(kind);
+    setPreview(null);
+    setSaveStatus(null);
+    setSavedResourceLocation(null);
+    setExportError(null);
+    setIdeaPostStatus(null);
+  }
+
   async function runGenerate() {
+    if (outputKind === "scheme") {
+      if (!schemeTopics.filter(Boolean).length) { setAiErr("Add and confirm the topics or chapters for this academic year before generating."); return; }
+      if (!schemeAcademicYear.trim() || !schemeStartDate || !schemeEndDate || schemeEndDate < schemeStartDate) { setAiErr("Confirm the academic year and valid start/end dates before generating."); return; }
+      if (!schemeWeeklyClasses.some((lesson) => lesson.minutes > 0) || schemeCapacity.lessons <= 0 || schemeCapacity.minutes <= 0) { setAiErr("Confirm at least one weekly class and the resulting annual teaching capacity before generating."); return; }
+      if (calendarReviewWarnings.length) { setAiErr("Resolve the highlighted calendar ambiguity before generating a full-year plan."); return; }
+    }
     const teacherPrompt = prompt.trim();
     if (!teacherPrompt) return;
 
@@ -1362,17 +1467,28 @@ export default function CreateResources() {
         search_selected_folder_first: Boolean(sourceFolder) && scope.mode === "single",
       },
       worksheet_options: outputKind === "worksheet" ? { include_answer_key: worksheetIncludeAnswers } : null,
+      annual_plan: outputKind === "scheme" ? {
+        academic_year: schemeAcademicYear || null,
+        start_date: schemeStartDate || null,
+        end_date: schemeEndDate || null,
+        topics: schemeTopics.filter(Boolean),
+        weekly_classes: schemeWeeklyClasses,
+        closures: schemeClosures,
+        capacity: schemeCapacity,
+        class_subject: scope.mode === "single" ? classById.get(scope.classId ?? scopeClassId)?.subject ?? null : null,
+      } : null,
       manual_file_sources: uploadedManualFiles.map((item) => ({
         id: item.id,
         filename: item.file.name,
         mime_type: item.file.type || null,
         size_bytes: item.file.size,
+        purpose: item.purpose,
       })),
-      manual_sources: sortedSources.map((s) => ({
+      manual_sources: [...sortedSources.map((s) => ({
         id: s.id,
         title: s.title,
         text: s.text,
-      })),
+      })), ...uploadedManualFiles.filter((item) => item.status === "ready" && item.text).map((item) => ({ id: item.id, title: `${item.purpose}: ${item.file.name}`, text: item.text || "" }))],
       branding: {
         brandingChoice,
         defaultBranding: "elume",
@@ -1408,11 +1524,19 @@ export default function CreateResources() {
         (data as any)?.draft?.title ??
         `${labelForOutput(outputKind)}${META_SEPARATOR}${teacherPrompt}`.slice(0, 90);
       const content = (data as any)?.content ?? (data as any)?.draft?.content ?? "";
-      const document = outputKind === "lesson_plan" && isStructuredLessonPlanDocument((data as any)?.document)
-        ? (data as any).document
-        : undefined;
+      const responseDocument = (data as any)?.document;
+      const document = outputKind === "lesson_plan" && isStructuredLessonPlanDocument(responseDocument)
+        ? responseDocument
+        : outputKind === "scheme" && isStructuredAnnualPlanDocument(responseDocument)
+          ? responseDocument
+          : undefined;
 
       if (!content) {
+        if (outputKind === "scheme") {
+          setPreview(null);
+          setAiErr("Elume could not produce a validated full-year plan. No incomplete plain-text plan has been saved; review the planning inputs and try again.");
+          return;
+        }
         const fallback = localGenerate(outputKind, teacherPrompt);
         setPreview(fallback);
         setAiErr("AI draft endpoint returned no content, so a local draft preview was created instead.");
@@ -1433,6 +1557,7 @@ export default function CreateResources() {
           worksheetIncludeAnswers: outputKind === "worksheet" ? worksheetIncludeAnswers : undefined,
           content,
           document,
+          annualPlanning: outputKind === "scheme" ? { topics: schemeTopics, academicYear: schemeAcademicYear, startDate: schemeStartDate, endDate: schemeEndDate, weeklyClasses: schemeWeeklyClasses, closures: schemeClosures, capacity: schemeCapacity } : undefined,
           aiGenerated: true,
         });
         const feature = outputKind === "ideas" ? "three_ideas" : outputKind === "scheme" ? "scheme_of_work" : outputKind === "dept_plan" ? "department_plan" : outputKind;
@@ -1450,9 +1575,14 @@ export default function CreateResources() {
         setAiErr(message);
         return;
       }
+      if (outputKind === "scheme") {
+        setPreview(null);
+        setAiErr(`Elume could not produce a validated full-year plan. No incomplete plain-text plan has been saved. ${describeAiGenerationFailure(message)}`);
+        return;
+      }
       const fallback = localGenerate(outputKind, teacherPrompt);
       setPreview(fallback);
-      setAiErr("Preview generated locally while AI connection is being finalised.");
+      setAiErr(`Preview generated locally because ${describeAiGenerationFailure(message)}`);
     } finally {
       setAiBusy(false);
     }
@@ -1472,6 +1602,10 @@ export default function CreateResources() {
       !preview.content.trim()
     ) {
       setSavedResourceLocation(null);
+      if (preview.kind === "scheme") {
+        setSaveStatus("Saved to your Create Resources history. Annual schemes of work are downloaded as DOCX or PDF and are not saved to Class Resources.");
+        return;
+      }
       setSaveStatus("Saved to your Create Resources history. Choose a single class and the suggested resource destination to save it to Class Resources.");
       return;
     }
@@ -1493,6 +1627,24 @@ export default function CreateResources() {
     }
     setSavedResourceLocation({ classId: scope.classId, folder: preview.saveFolder });
     setSaveStatus(`${labelForOutput(preview.kind)} saved to Class Resources > ${preview.saveFolder}`);
+  }
+
+  function reopenHistoryItem(item: GeneratedDoc) {
+    setPreview(item);
+    setOutputKind(item.kind);
+    setPrompt(item.prompt);
+    setSaveBucket(item.saveBucket);
+    setSaveFolder(item.saveFolder || "");
+    if (item.annualPlanning) {
+      setSchemeTopics(item.annualPlanning.topics);
+      setSchemeAcademicYear(item.annualPlanning.academicYear);
+      setSchemeStartDate(item.annualPlanning.startDate);
+      setSchemeEndDate(item.annualPlanning.endDate);
+      setSchemeWeeklyClasses(item.annualPlanning.weeklyClasses);
+      setSchemeClosures(item.annualPlanning.closures);
+      setCalendarReviewWarnings([]);
+    }
+    setSaveStatus("Reopened from your Create Resources history.");
   }
 
   async function postIdeaToClassTimeline(idea: IdeaPreviewBlock) {
@@ -1531,7 +1683,7 @@ export default function CreateResources() {
     const body = {
       title: preview.title,
       content: preview.content,
-      document: preview.kind === "lesson_plan" && preview.document ? preview.document : null,
+      document: preview.document || null,
       teacher: preview.teacherDisplayNameShort || teacherNameShort,
       meta: {
         kind: preview.kind,
@@ -1651,7 +1803,7 @@ export default function CreateResources() {
     const body = {
       title: preview.title,
       content: preview.content,
-      document: preview.kind === "lesson_plan" && preview.document ? preview.document : null,
+      document: preview.document || null,
       teacher: preview.teacherDisplayNameShort || teacherNameShort,
       meta: {
         kind: preview.kind,
@@ -1701,7 +1853,7 @@ export default function CreateResources() {
     if (outputKind === "ideas") return "e.g. Give me 3 starter ideas for respiration for a mixed-ability third year class";
     if (outputKind === "lesson_plan") return "e.g. Create a lesson plan on photosynthesis with a practical starter and exit ticket";
     if (outputKind === "worksheet") return "e.g. Create a printable worksheet on photosynthesis for second year, with short questions and an answer key";
-    if (outputKind === "scheme") return "e.g. Build a 4-week scheme of work on fractions for two first-year groups";
+    if (outputKind === "scheme") return "e.g. Plan this full academic year so every confirmed topic has realistic teaching, assessment and revision time";
     return "e.g. Create a department plan for common assessment and revision before Christmas";
   }, [outputKind]);
 
@@ -1769,7 +1921,7 @@ export default function CreateResources() {
                   <button
                     key={kind}
                     type="button"
-                    onClick={() => setOutputKind(kind)}
+                    onClick={() => selectOutputKind(kind)}
                     className={[
                       "group flex min-h-[132px] flex-col rounded-[26px] border p-3 text-left transition duration-200",
                       "shadow-[0_10px_28px_rgba(15,23,42,0.06)]",
@@ -1842,7 +1994,6 @@ export default function CreateResources() {
                           <select value={level} onChange={(e) => setLevel(e.target.value as PhaseLevel)} className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
                             <option value="Junior Cycle">Junior Cycle</option>
                             <option value="Leaving Cert">Leaving Cert</option>
-                            <option value="Common Level">Common Level</option>
                           </select>
                         </div>
 
@@ -1880,6 +2031,45 @@ export default function CreateResources() {
                           </div>
                         )}
                       </div>
+
+                      {outputKind === "scheme" && (
+                        <div className="rounded-[24px] border border-violet-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(245,243,255,0.92),rgba(236,254,255,0.88))] p-4 shadow-[0_12px_28px_rgba(109,40,217,0.08)]">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <div className="text-base font-extrabold text-slate-900">Scheme of Work — Full Year</div>
+                              <p className="mt-1 text-sm text-slate-600">Plan one academic year from confirmed topics, contact time and school-calendar dates.</p>
+                            </div>
+                            <div className="rounded-full border border-violet-200 bg-white px-3 py-1 text-xs font-bold text-violet-800">{schemeCapacity.lessons} lessons · {schemeCapacity.minutes} minutes{schemeCapacity.estimated ? " estimate" : ""}</div>
+                          </div>
+
+                          <div className="mt-4 grid gap-3 md:grid-cols-3">
+                            <label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-600">Academic year<input value={schemeAcademicYear} onChange={(e) => setSchemeAcademicYear(e.target.value)} placeholder="e.g. 2026–2027" className="mt-2 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-slate-800" /></label>
+                            <label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-600">Start date<input type="date" value={schemeStartDate} onChange={(e) => { setSchemeStartDate(e.target.value); setCalendarReviewWarnings([]); }} className="mt-2 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-slate-800" /></label>
+                            <label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-600">End date<input type="date" value={schemeEndDate} onChange={(e) => { setSchemeEndDate(e.target.value); setCalendarReviewWarnings([]); }} className="mt-2 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-slate-800" /></label>
+                          </div>
+
+                          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                            <div className="rounded-2xl border border-white/85 bg-white/90 p-3">
+                              <div className="text-sm font-bold text-slate-900">Topics and chapters</div>
+                              <p className="mt-1 text-xs text-slate-500">Paste one per line or comma-separated. Review order and remove anything that should not be taught this year.</p>
+                              <textarea value={schemeTopicDraft} onChange={(e) => setSchemeTopicDraft(e.target.value)} rows={4} placeholder="Topic or chapter one&#10;Topic or chapter two" className="mt-3 w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800" />
+                              <button type="button" className={`${btn} mt-2`} onClick={() => addSchemeTopics()} disabled={!schemeTopicDraft.trim()}>Add topics</button>
+                              <ol className="mt-3 space-y-2">{schemeTopics.map((topic, index) => <li key={`${topic}-${index}`} className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm"><span className="font-bold text-slate-500">{index + 1}</span><input value={topic} onChange={(e) => setSchemeTopics((items) => items.map((item, i) => i === index ? e.target.value : item))} className="min-w-0 flex-1 bg-transparent outline-none" /><button type="button" onClick={() => moveSchemeTopic(index, -1)} disabled={index === 0} aria-label="Move topic up">↑</button><button type="button" onClick={() => moveSchemeTopic(index, 1)} disabled={index === schemeTopics.length - 1} aria-label="Move topic down">↓</button><button type="button" onClick={() => setSchemeTopics((items) => items.filter((_, i) => i !== index))} aria-label="Exclude topic">×</button></li>)}</ol>
+                            </div>
+                            <div className="rounded-2xl border border-white/85 bg-white/90 p-3">
+                              <div className="text-sm font-bold text-slate-900">Weekly classes and closures</div>
+                              <p className="mt-1 text-xs text-slate-500">{schemeWeeklyClasses.length ? "Imported from Teacher Admin; edit this planning copy without changing your timetable." : "Set up your timetable in Teacher Admin to fill this in automatically, or enter your weekly classes below."}</p>
+                              <div className="mt-3 space-y-2">{schemeWeeklyClasses.map((lesson) => <div key={lesson.id} className="grid grid-cols-[1fr_6rem_5rem_auto] gap-2"><input value={lesson.label} onChange={(e) => updateSchemeWeeklyClass(lesson.id, { label: e.target.value })} className="rounded-xl border border-slate-200 px-2 py-2 text-sm" /><select value={lesson.weekday ?? ""} aria-label={`${lesson.label} weekday`} onChange={(e) => updateSchemeWeeklyClass(lesson.id, { weekday: e.target.value ? Number(e.target.value) : null })} className="rounded-xl border border-slate-200 px-2 py-2 text-sm"><option value="">Weekday</option><option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option><option value="4">Thu</option><option value="5">Fri</option></select><input type="number" min={1} value={lesson.minutes} onChange={(e) => updateSchemeWeeklyClass(lesson.id, { minutes: Number(e.target.value) })} aria-label={`${lesson.label} minutes`} className="rounded-xl border border-slate-200 px-2 py-2 text-sm" /><button type="button" onClick={() => setSchemeWeeklyClasses((items) => items.filter((item) => item.id !== lesson.id))}>Remove</button></div>)}</div>
+                              <button type="button" className={`${btn} mt-2`} onClick={() => setSchemeWeeklyClasses((items) => [...items, { id: uid("weekly"), label: "Weekly class", minutes: 60, weekday: null }])}>Add weekly class</button>
+                              <div className="mt-3 border-t border-slate-100 pt-3 text-sm font-bold text-slate-900">Non-teaching dates</div>
+                              {schemeClosures.map((closure) => <div key={closure.id} className="mt-2 grid grid-cols-[1fr_1fr_1.2fr_auto] gap-2"><input type="date" value={closure.start} aria-label="Closure start" onChange={(e) => setSchemeClosures((items) => items.map((item) => item.id === closure.id ? { ...item, start: e.target.value } : item))} className="rounded-xl border border-slate-200 px-2 py-2 text-sm" /><input type="date" value={closure.end} aria-label="Closure end" onChange={(e) => setSchemeClosures((items) => items.map((item) => item.id === closure.id ? { ...item, end: e.target.value } : item))} className="rounded-xl border border-slate-200 px-2 py-2 text-sm" /><input value={closure.label || ""} aria-label="Closure source or label" onChange={(e) => setSchemeClosures((items) => items.map((item) => item.id === closure.id ? { ...item, label: e.target.value } : item))} placeholder="Source / label" className="rounded-xl border border-slate-200 px-2 py-2 text-sm" /><button type="button" onClick={() => setSchemeClosures((items) => items.filter((item) => item.id !== closure.id))} aria-label="Remove closure">Remove</button></div>)}
+                              <button type="button" className={`${btn} mt-2`} onClick={() => setSchemeClosures((items) => [...items, { id: uid("closure"), start: "", end: "", label: "Closure" }])}>Add holiday, exam or closure</button>
+                              {calendarReviewWarnings.map((warning) => <p key={warning} className="mt-2 text-xs font-semibold text-amber-800">{warning}</p>)}
+                              {schemeCapacity.warnings.map((warning) => <p key={warning} className="mt-2 text-xs font-semibold text-amber-800">{warning}</p>)}
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
@@ -1927,49 +2117,57 @@ export default function CreateResources() {
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
-                        <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Destination folder</label>
-                        <select
-                          value={selectedDestinationChoiceId}
-                          onChange={(e) => {
-                            const nextChoice = destinationChoices.find((choice) => choice.id === e.target.value);
-                            if (!nextChoice) return;
-                            setSaveBucket(nextChoice.bucket);
-                            setSaveFolder(nextChoice.folder);
-                          }}
-                          className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800"
-                        >
-                          {destinationChoices.map((choice) => (
-                            <option key={choice.id} value={choice.id}>
-                              {choice.label}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-                          <span>
-                            {loadingDestinationFolders
-                              ? "Loading destination folders..."
-                              : saveBucket === "links"
-                              ? "Teacher-facing resource folders are prepared here."
-                              : saveBucket === "tests"
-                              ? "Worksheet destinations stay ready for printing and reuse."
-                              : scope.mode === "single"
-                              ? "This controls where the generated resource is saved."
-                              : "Destination folders are only specific when working from a single class."}
-                          </span>
-                          <span>Recommended: {recommendedDestinationLabel}</span>
+                      {outputKind !== "scheme" && (
+                        <div className="rounded-2xl border border-white/85 bg-white/88 p-3 shadow-sm">
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Destination folder</label>
+                          <select
+                            value={selectedDestinationChoiceId}
+                            onChange={(e) => {
+                              const nextChoice = destinationChoices.find((choice) => choice.id === e.target.value);
+                              if (!nextChoice) return;
+                              setSaveBucket(nextChoice.bucket);
+                              setSaveFolder(nextChoice.folder);
+                            }}
+                            className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800"
+                          >
+                            {destinationChoices.map((choice) => (
+                              <option key={choice.id} value={choice.id}>
+                                {choice.label}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                            <span>
+                              {loadingDestinationFolders
+                                ? "Loading destination folders..."
+                                : saveBucket === "links"
+                                ? "Teacher-facing resource folders are prepared here."
+                                : saveBucket === "tests"
+                                ? "Worksheet destinations stay ready for printing and reuse."
+                                : scope.mode === "single"
+                                ? "This controls where the generated resource is saved."
+                                : "Destination folders are only specific when working from a single class."}
+                            </span>
+                            <span>Recommended: {recommendedDestinationLabel}</span>
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   </div>
 
                   <div className="grid gap-3 md:grid-cols-[1fr_auto]">
                     <div className="rounded-2xl border border-cyan-100 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,254,255,0.90))] px-4 py-3 text-sm text-slate-700 shadow-sm">
-                      AI reads from <span className="font-semibold text-slate-900">{displayLabelForBucket(sourceBucket as SaveBucket)}{sourceFolder ? ` / ${sourceFolder}` : ""}</span> and saves to <span className="font-semibold text-slate-900">{saveDestinationLabel}</span>.
+                      {outputKind === "scheme" ? (
+                        <>AI reads from <span className="font-semibold text-slate-900">{displayLabelForBucket(sourceBucket as SaveBucket)}{sourceFolder ? ` / ${sourceFolder}` : ""}</span>. Full-year schemes are available as DOCX or PDF and are not saved to Class Resources.</>
+                      ) : (
+                        <>AI reads from <span className="font-semibold text-slate-900">{displayLabelForBucket(sourceBucket as SaveBucket)}{sourceFolder ? ` / ${sourceFolder}` : ""}</span> and saves to <span className="font-semibold text-slate-900">{saveDestinationLabel}</span>.</>
+                      )}
                     </div>
-                    <div className="self-end rounded-2xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(236,254,255,0.88))] px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-sm">
-                      Destination: {saveDestinationLabel}
-                    </div>
+                    {outputKind !== "scheme" && (
+                      <div className="self-end rounded-2xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(236,254,255,0.88))] px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-sm">
+                        Destination: {saveDestinationLabel}
+                      </div>
+                    )}
                   </div>
 
                   {outputKind === "worksheet" && (
@@ -2031,7 +2229,7 @@ export default function CreateResources() {
                       ref={manualFileRef}
                       type="file"
                       multiple
-                      accept=".pdf,.doc,.docx,.ppt,.pptx,.txt"
+                      accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.jpg,.jpeg,.png"
                       className="hidden"
                       onChange={(e) => {
                         addUploadedFiles(e.target.files);
@@ -2042,8 +2240,13 @@ export default function CreateResources() {
                     <div>
                       <div className="text-sm font-extrabold text-slate-900">Optional manual sources</div>
                       <div className="mt-1 text-xs text-slate-600">
-                        Add uploaded files or pasted text notes if you want to guide the AI beyond the class and folder context.
+                        Upload PDFs, documents or photos. Maximum 12 images per plan.
                       </div>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/80 bg-white/90 px-3 py-2 text-xs">
+                      <label className="font-bold text-slate-700">Use upload as <select value={uploadPurpose} onChange={(e) => setUploadPurpose(e.target.value as "topics" | "calendar" | "supporting")} className="ml-2 rounded-lg border border-slate-200 bg-white px-2 py-1"><option value="topics">Topics</option><option value="calendar">School calendar</option><option value="supporting">Supporting material</option></select></label>
+                      <span className="font-bold text-emerald-800">Images: {uploadedManualFiles.filter((item) => isCreateResourceImage(item.file)).length}/12</span>
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-3">
@@ -2086,8 +2289,9 @@ export default function CreateResources() {
                               <div className="min-w-0">
                                 <div className="truncate text-sm font-extrabold text-slate-900">{item.file.name}</div>
                                 <div className="mt-1 text-xs text-slate-500">
-                                  Uploaded file{META_SEPARATOR}{ext || "FILE"}{META_SEPARATOR}{(item.file.size / 1024).toFixed(1)} KB
+                                  {item.purpose === "topics" ? "Topics" : item.purpose === "calendar" ? "School calendar" : "Supporting material"}{META_SEPARATOR}{ext || "FILE"}{META_SEPARATOR}{(item.file.size / 1024).toFixed(1)} KB{META_SEPARATOR}{item.status === "processing" ? "Processing…" : item.status === "ready" ? "Read" : "Could not be read"}
                                 </div>
+                                {item.status === "error" && <div className="mt-2 text-xs font-semibold text-amber-800">{item.error}</div>}
                               </div>
                               <button type="button" className="text-xs font-semibold text-slate-500 opacity-80 hover:opacity-100" onClick={() => removeUploadedFile(item.id)} title="Remove file">
                                 Remove
@@ -2137,14 +2341,14 @@ export default function CreateResources() {
                     Step 3
                     <span className={`text-[10px] ${preview ? "text-violet-600" : "text-slate-500"}`}>Preview and export</span>
                   </div>
-                  <div className="mt-3 text-lg font-extrabold tracking-tight text-slate-900">Preview before you save or export</div>
+                  <div className="mt-3 text-lg font-extrabold tracking-tight text-slate-900">{outputKind === "scheme" ? "Preview before you export" : "Preview before you save or export"}</div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
                 <button type="button" className={btn} onClick={() => { setPrompt(""); setAiErr(null); setAiQuotaNotice(null); setPreview(null); setSaveStatus(null); setSavedResourceLocation(null); }}>
                   Clear
                 </button>
-                  <button type="button" className={btnPrimary} onClick={runGenerate} disabled={aiBusy || !prompt.trim()}>
+                  <button type="button" className={btnPrimary} onClick={runGenerate} disabled={aiBusy || !prompt.trim() || filesStillProcessing || unreadableFiles.length > 0}>
                     {aiBusy ? "Generating..." : `Generate ${labelForOutput(outputKind)}`}
                   </button>
                 </div>
@@ -2156,6 +2360,9 @@ export default function CreateResources() {
                 </div>
               )}
 
+              {filesStillProcessing && <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">Elume is reading your uploaded source. Generation will be available when processing is complete.</div>}
+              {unreadableFiles.length > 0 && <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Remove or replace unreadable uploaded sources before generating. Elume will not silently ignore them.</div>}
+
               {aiQuotaNotice && (
                 <div className="mt-3 text-sm font-semibold text-slate-500">{aiQuotaNotice}</div>
               )}
@@ -2164,7 +2371,9 @@ export default function CreateResources() {
 
               {!preview && (
                 <div className="mt-4 rounded-[28px] border border-slate-200 bg-white/80 p-5 text-sm leading-relaxed text-slate-600 shadow-sm">
-                  Generate a draft to preview it here. The intent is simple: Irish post-primary context first, selected class and folder next, optional manual sources after that, then save the finished resource to the right class location.
+                  {outputKind === "scheme"
+                    ? "Generate a full-year draft to preview it here. Confirm the topics, timetable and calendar first, then download the finished scheme as DOCX or PDF."
+                    : "Generate a draft to preview it here. The intent is simple: Irish post-primary context first, selected class and folder next, optional manual sources after that, then save the finished resource to the right class location."}
                 </div>
               )}
 
@@ -2187,9 +2396,11 @@ export default function CreateResources() {
                       <button type="button" className={btn} onClick={() => navigator.clipboard.writeText(preview.content).catch(() => {})}>
                         Copy
                       </button>
-                      <button type="button" className={btnPrimary} onClick={savePreview}>
-                        Save
-                      </button>
+                      {preview.kind !== "scheme" && (
+                        <button type="button" className={btnPrimary} onClick={savePreview}>
+                          Save
+                        </button>
+                      )}
                       <button type="button" className={exportBtn} onClick={exportPreviewPdfFile} disabled={exporting !== null}>
                         {exporting === "pdf" ? "Exporting PDF..." : "Export PDF"}
                       </button>
@@ -2271,7 +2482,7 @@ export default function CreateResources() {
                     </div>
                   )}
 
-                  {preview.kind === "lesson_plan" && preview.document ? (
+                  {preview.kind === "lesson_plan" && preview.document && isStructuredLessonPlanDocument(preview.document) ? (
                     <StructuredLessonPlanPreview
                       document={preview.document}
                       footer={`${preview.teacherDisplayNameShort || teacherNameShort}${
@@ -2284,6 +2495,8 @@ export default function CreateResources() {
                             : "Elume logo"
                       }`}
                     />
+                  ) : preview.kind === "scheme" && preview.document && isStructuredAnnualPlanDocument(preview.document) ? (
+                    <StructuredAnnualPlanPreview document={preview.document} footer={`${preview.teacherDisplayNameShort || teacherNameShort}${preview.schoolName || teacherSchoolName ? `${META_SEPARATOR}${preview.schoolName || teacherSchoolName}` : ""}${META_SEPARATOR}Elume`} />
                   ) : (
                     <RenderDoc
                       text={preview.content}
@@ -2316,6 +2529,16 @@ export default function CreateResources() {
                           ? "School logo"
                           : "Elume logo"
                     }`}
+                  </div>
+                </div>
+              )}
+
+              {history.length > 0 && (
+                <div className="mt-4 rounded-[24px] border border-slate-200 bg-white/90 p-4 shadow-sm">
+                  <div className="text-sm font-extrabold text-slate-900">Saved Create Resources drafts</div>
+                  <div className="mt-1 text-xs text-slate-500">Reopen a saved structured plan with its confirmed annual planning inputs.</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {history.slice(0, 8).map((item) => <button key={item.id} type="button" className={btn} onClick={() => reopenHistoryItem(item)}>{item.title}</button>)}
                   </div>
                 </div>
               )}

@@ -274,6 +274,7 @@ _LESSON_FLOW_ALIASES = {
     "assessment_check": "check_for_understanding",
 }
 _WHOLE_MINUTES = re.compile(r"\s*([1-9][0-9]*)\s*(?:minutes?|mins?)?\s*", re.IGNORECASE)
+_MINUTE_RANGE = re.compile(r"\s*(\d+)\s*[-–]\s*(\d+)\s*(?:minutes?|mins?)?\s*", re.IGNORECASE)
 
 
 def _move_aliases(value: dict[str, Any], aliases: dict[str, str]) -> dict[str, Any]:
@@ -374,10 +375,22 @@ def _validate_requested_lesson_duration(content: LessonPlanContent, expected_dur
         raise ValueError("lesson plan duration mismatch")
 
     minute_values = []
+    previous_end: int | None = None
     for item in content.lesson_flow:
-        if not re.fullmatch(r"[1-9][0-9]*", item.minutes):
+        if re.fullmatch(r"[1-9][0-9]*", item.minutes):
+            minute_values.append(int(item.minutes))
+            previous_end = None
+            continue
+        range_match = _MINUTE_RANGE.fullmatch(item.minutes)
+        if not range_match:
             raise ValueError("invalid lesson flow minutes for requested duration")
-        minute_values.append(int(item.minutes))
+        start, end = (int(range_match.group(1)), int(range_match.group(2)))
+        if end <= start or (previous_end is not None and start != previous_end):
+            raise ValueError("invalid lesson flow minutes for requested duration")
+        duration = end - start
+        item.minutes = str(duration)
+        minute_values.append(duration)
+        previous_end = end
     if sum(minute_values) != expected_duration_minutes:
         raise ValueError("lesson flow duration total mismatch")
 

@@ -103,6 +103,8 @@ from ai_usage import AI_FEATURES, allowance_available, allowance_message, allowa
 from ai_privacy import append_report_comment_sign_off, cat4_facts_for_ai, report_comment_ai_input, restore_report_comment_student_name
 from structured_documents import ValidationError as StructuredDocumentValidationError, normalise_create_resources_result, structured_lesson_plan_validation_summary, validate_structured_lesson_plan_document
 from lesson_plan_docx import render_structured_lesson_plan_docx
+from annual_plan_documents import ValidationError as AnnualPlanValidationError, normalise as normalise_annual_plan_result, validate_document as validate_structured_annual_plan_document
+from annual_plan_docx import render_structured_annual_plan_docx
 from db import Base, SessionLocal, engine
 from stripe_webhook_inbox import (
     InboxError as WebhookInboxError,
@@ -2319,11 +2321,16 @@ def export_docx(payload: ExportDocxRequest):
 
     if payload.document is not None:
         try:
-            document = validate_structured_lesson_plan_document(payload.document)
-            data = render_structured_lesson_plan_docx(document, teacher=teacher, meta=payload.meta or {})
+            if payload.document.get("resource_type") == "annual_plan":
+                document = validate_structured_annual_plan_document(payload.document)
+                data = render_structured_annual_plan_docx(document, teacher=teacher, meta=payload.meta or {})
+            else:
+                document = validate_structured_lesson_plan_document(payload.document)
+                data = render_structured_lesson_plan_docx(document, teacher=teacher, meta=payload.meta or {})
             title = document.title
-        except (ValueError, StructuredDocumentValidationError) as exc:
-            raise HTTPException(status_code=422, detail="This structured Lesson Plan cannot be exported. Please regenerate it and try again.") from exc
+        except (ValueError, StructuredDocumentValidationError, AnnualPlanValidationError) as exc:
+            label = "annual plan" if isinstance(payload.document, dict) and payload.document.get("resource_type") == "annual_plan" else "structured Lesson Plan"
+            raise HTTPException(status_code=422, detail=f"This {label} cannot be exported. Please regenerate it and try again.") from exc
     else:
         data = _docx_from_markdownish(title, content, teacher=teacher, meta=payload.meta or {})
 
@@ -2347,12 +2354,17 @@ def export_pdf(payload: ExportDocxRequest):
 
     if payload.document is not None:
         try:
-            document = validate_structured_lesson_plan_document(payload.document)
-            docx_data = render_structured_lesson_plan_docx(document, teacher=teacher, meta=payload.meta or {})
+            if payload.document.get("resource_type") == "annual_plan":
+                document = validate_structured_annual_plan_document(payload.document)
+                docx_data = render_structured_annual_plan_docx(document, teacher=teacher, meta=payload.meta or {})
+            else:
+                document = validate_structured_lesson_plan_document(payload.document)
+                docx_data = render_structured_lesson_plan_docx(document, teacher=teacher, meta=payload.meta or {})
             data = _convert_structured_lesson_plan_docx_to_pdf(docx_data)
             title = document.title
-        except (ValueError, StructuredDocumentValidationError) as exc:
-            raise HTTPException(status_code=422, detail="This structured Lesson Plan cannot be exported. Please regenerate it and try again.") from exc
+        except (ValueError, StructuredDocumentValidationError, AnnualPlanValidationError) as exc:
+            label = "annual plan" if isinstance(payload.document, dict) and payload.document.get("resource_type") == "annual_plan" else "structured Lesson Plan"
+            raise HTTPException(status_code=422, detail=f"This {label} cannot be exported. Please regenerate it and try again.") from exc
     else:
         data = _pdf_from_markdownish(title, content, teacher=teacher, meta=payload.meta or {})
 
@@ -16334,6 +16346,7 @@ class AICreateResourcesManualFile(BaseModel):
     filename: str | None = None
     mime_type: str | None = None
     size_bytes: int | None = None
+    purpose: str | None = None
 
 class AICreateResourcesScope(BaseModel):
     mode: Literal["general", "single", "group"]
@@ -16365,6 +16378,7 @@ class AICreateResourcesRequest(BaseModel):
     output_intent: str | None = None
     audience: str | None = None
     timezone: str = "Europe/Dublin"
+    annual_plan: dict[str, Any] | None = None
 
     class Config:
         extra = "allow"
@@ -16451,6 +16465,150 @@ def _ai_create_resources_source_bundle(payload: AICreateResourcesRequest) -> str
 
     return "\n".join(chunks)
 
+
+_CREATE_RESOURCE_IMAGE_TYPES = {"image/jpeg", "image/png"}
+_CREATE_RESOURCE_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+_CREATE_RESOURCE_MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+_CREATE_RESOURCE_MAX_PDF_PAGES = 30
+
+
+def _create_resource_image_count(sources: list[AICreateResourcesManualFile]) -> int:
+    return sum(
+        1
+        for source in sources
+        if (source.mime_type or "").lower() in _CREATE_RESOURCE_IMAGE_TYPES
+        or str(source.filename or "").lower().endswith((".jpg", ".jpeg", ".png"))
+    )
+
+
+def _create_resource_upload_kind(filename: str, mime_type: str, data: bytes) -> str:
+    suffix = Path(filename or "").suffix.lower()
+    if suffix in {".jpg", ".jpeg"} and data.startswith(b"\xff\xd8\xff"):
+        return "image"
+    if suffix == ".png" and data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image"
+    if suffix == ".pdf" and data.startswith(b"%PDF"):
+        return "pdf"
+    if suffix in {".docx", ".pptx"} and data.startswith(b"PK\x03\x04"):
+        return suffix[1:]
+    # Legacy Office files are OLE compound documents. They are converted with
+    # the same bounded LibreOffice path used elsewhere in Elume; accepting the
+    # filename alone would make a fake .doc appear successfully read.
+    if suffix in {".doc", ".ppt"} and data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return suffix[1:]
+    if suffix == ".txt" and (mime_type.startswith("text/") or not mime_type):
+        return "text"
+    raise HTTPException(status_code=400, detail="Use a valid PDF, Word, PowerPoint, text file, JPG or PNG.")
+
+
+def _extract_legacy_office_source(filename: str, raw: bytes) -> str:
+    """Convert one legacy DOC/PPT source transiently, then use the bounded PDF reader."""
+    upload = UploadFile(filename=filename, file=BytesIO(raw))
+    with tempfile.TemporaryDirectory(prefix="elume-create-source-") as directory:
+        pdf_path = Path(directory) / "source.pdf"
+        _convert_office_upload_to_pdf(upload, pdf_path)
+        reader = PdfReader(str(pdf_path))
+        if len(reader.pages) > _CREATE_RESOURCE_MAX_PDF_PAGES:
+            raise HTTPException(status_code=400, detail=f"Converted files are limited to {_CREATE_RESOURCE_MAX_PDF_PAGES} pages for source extraction.")
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+
+
+def _extract_scanned_pdf_with_vision(raw: bytes) -> str:
+    """Bounded scanned-PDF OCR using the configured vision provider.
+
+    Rendering is deliberately limited to eight modest-resolution pages: a PDF
+    upload must never fan out into unbounded image processing.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=422, detail="This scanned PDF has no embedded text and image extraction is unavailable here. Type the dates/topics or configure vision extraction.")
+    try:
+        import fitz  # PyMuPDF
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="This scanned PDF needs the optional PyMuPDF renderer for vision extraction. Upload a text PDF or enter the content manually.") from exc
+    try:
+        document = fitz.open(stream=raw, filetype="pdf")
+        if document.page_count > _CREATE_RESOURCE_MAX_PDF_PAGES:
+            raise HTTPException(status_code=400, detail=f"PDFs are limited to {_CREATE_RESOURCE_MAX_PDF_PAGES} pages for source extraction.")
+        from openai import OpenAI
+        pages = []
+        for page_number in range(min(document.page_count, 8)):
+            pixmap = document.load_page(page_number).get_pixmap(matrix=fitz.Matrix(1.25, 1.25), alpha=False)
+            pages.append(base64.b64encode(pixmap.tobytes("jpeg")).decode("ascii"))
+        content = [{"type": "text", "text": "Transcribe readable educational text and dates exactly from these scanned PDF pages. If a page is unreadable, say UNREADABLE for that page."}]
+        content.extend({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}} for encoded in pages)
+        response = OpenAI(api_key=api_key).chat.completions.create(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), messages=[{"role": "user", "content": content}], temperature=0, max_tokens=3600)
+        return (response.choices[0].message.content or "").strip()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Scanned PDF source extraction failed: %s", exc)
+        raise HTTPException(status_code=422, detail="Elume could not read this scanned PDF. Try a clearer scan or enter the content manually.") from exc
+
+
+@app.post("/ai/create-resources/extract-source")
+async def extract_create_resource_source(
+    file: UploadFile = File(...),
+    purpose: str = Form("supporting"),
+    user: models.UserModel = Depends(get_current_user),
+):
+    """Extract a bounded, teacher-selected source before Create Resources generation.
+
+    Sources are transient: only returned extracted text is sent back to the
+    authenticated browser; no upload is retained by this endpoint.
+    """
+    if purpose not in {"topics", "calendar", "supporting"}:
+        raise HTTPException(status_code=400, detail="Choose Topics, School calendar or Supporting material.")
+    raw = await file.read()
+    filename = _safe_uploaded_basename(file.filename, "source")
+    kind = _create_resource_upload_kind(filename, (file.content_type or "").lower(), raw)
+    limit = _CREATE_RESOURCE_MAX_IMAGE_BYTES if kind == "image" else _CREATE_RESOURCE_MAX_DOCUMENT_BYTES
+    if not raw or len(raw) > limit:
+        raise HTTPException(status_code=400, detail="This file is empty or exceeds the safe processing limit.")
+    try:
+        if kind == "text":
+            text_value = raw.decode("utf-8", errors="replace")
+        elif kind == "pdf":
+            reader = PdfReader(BytesIO(raw))
+            if len(reader.pages) > _CREATE_RESOURCE_MAX_PDF_PAGES:
+                raise HTTPException(status_code=400, detail=f"PDFs are limited to {_CREATE_RESOURCE_MAX_PDF_PAGES} pages for source extraction.")
+            text_value = "\n".join((page.extract_text() or "") for page in reader.pages)
+            if not text_value.strip():
+                text_value = _extract_scanned_pdf_with_vision(raw)
+        elif kind == "docx":
+            from docx import Document
+            text_value = "\n".join(paragraph.text for paragraph in Document(BytesIO(raw)).paragraphs)
+        elif kind == "pptx":
+            with zipfile.ZipFile(BytesIO(raw)) as archive:
+                slides = sorted(name for name in archive.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml"))
+                text_value = "\n".join(" ".join(node.text or "" for node in ET.fromstring(archive.read(name)).iter() if node.tag.endswith("}t")) for name in slides[:40])
+        elif kind in {"doc", "ppt"}:
+            text_value = _extract_legacy_office_source(filename, raw)
+        else:
+            # A photograph is only reported as read after actual vision extraction succeeds.
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise HTTPException(status_code=422, detail="Image text extraction is unavailable here. Upload a text-based PDF or type the content instead.")
+            from openai import OpenAI
+            encoded = base64.b64encode(raw).decode("ascii")
+            mime = "image/png" if filename.lower().endswith(".png") else "image/jpeg"
+            response = OpenAI(api_key=api_key).chat.completions.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=[{"role": "user", "content": [{"type": "text", "text": "Transcribe the readable educational text and dates exactly. If unreadable, say UNREADABLE."}, {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}]}],
+                temperature=0,
+                max_tokens=1800,
+            )
+            text_value = (response.choices[0].message.content or "").strip()
+        text_value = re.sub(r"\s+\n", "\n", text_value or "").strip()
+        if not text_value or text_value.upper() == "UNREADABLE":
+            raise HTTPException(status_code=422, detail="Elume could not read this source. Review it, try a clearer file, or enter the content manually.")
+        return {"filename": filename, "purpose": purpose, "kind": kind, "status": "ready", "text": text_value[:24000]}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Create Resources source extraction failed for %s", filename)
+        raise HTTPException(status_code=422, detail="Elume could not read this source. Review it, try a clearer file, or enter the content manually.")
+
 @app.post("/ai/create-resources", response_model=AICreateResourcesResponse)
 def ai_create_resources(
     payload: AICreateResourcesRequest,
@@ -16460,6 +16618,9 @@ def ai_create_resources(
     p = (payload.prompt or "").strip()
     if not p:
         raise HTTPException(status_code=400, detail="prompt is required")
+    image_count = _create_resource_image_count(payload.manual_file_sources)
+    if image_count > 12:
+        raise HTTPException(status_code=400, detail="Upload PDFs, documents or photos. Maximum 12 images per plan.")
     feature = resource_feature(payload.kind)
     _enforce_ai_feature_limit(db, user, feature)
 
@@ -16515,7 +16676,11 @@ def ai_create_resources(
         + lesson_plan_duration_rule
         + "Do not include markdown, formatting instructions, colours, fonts, tables, or presentation decisions."
         if (payload.kind or "").strip().lower() == "lesson_plan"
-        else "JSON must have exactly these keys: title, content. content should be plain text with clear headings and bullet points where useful. Do not include any extra keys."
+        else (
+            "Return ONLY valid JSON with exactly one key: document. document must contain title, subject, level, class_context, academic_year, planning_basis, calendar_constraints, course_map, teaching_assessment_rhythm, practical_project_programme, checkpoints_and_buffers, planning_sources, assumptions_and_adjustment_rules, and optional first_lesson. Each course_map item must contain dates, start_date (ISO YYYY-MM-DD), end_date (ISO YYYY-MM-DD), topic, learning_focus, lessons (positive whole number), minutes (positive whole number), and optional practical_or_assessment. Do not add unsupported fields."
+            if (payload.kind or "").strip().lower() == "scheme" and payload.annual_plan
+            else "JSON must have exactly these keys: title, content. content should be plain text with clear headings and bullet points where useful. Do not include any extra keys."
+        )
     )
 
     system = (
@@ -16589,23 +16754,39 @@ def ai_create_resources(
         "- If lesson_plan, include precise definitions, realistic misconceptions, and exam-safe content where the subject and level make them useful.\n"
         "- If lesson_plan, if usable source content exists, preserve its topic framing, vocabulary, named facts, and sequence where possible.\n"
         "- If lesson_plan, keep the tone practical, school-ready, and concise.\n"
+        "- If scheme with annual planning input, produce a full academic-year plan, not a short unit. Account for every confirmed topic in course_map. Use only supplied dates, closure constraints and calculated capacity as facts. If content cannot fit, state the shortfall in assumptions_and_adjustment_rules; never invent extra teaching weeks. Label suggested pacing as suggested.\n"
         "\n"
         "SOURCE EXCERPTS (allowed):\n"
         f"{sources_txt if sources_txt else '[No sources selected]'}\n"
+        "\n"
+        f"ANNUAL PLANNING INPUT (teacher-confirmed):\n{json.dumps(payload.annual_plan, ensure_ascii=False) if payload.annual_plan else '[Not applicable]'}\n"
         "\n"
         "Write the best possible resource for the teacher."
     )
 
     model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    resp = client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.3,
-        max_tokens=AI_FEATURES[feature]["max_tokens"],
-    )
+    try:
+        resp = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.3,
+            max_tokens=AI_FEATURES[feature]["max_tokens"],
+        )
+    except Exception as exc:
+        provider_error = type(exc).__name__
+        logger.warning("Create Resources AI provider request failed: %s", provider_error)
+        if provider_error in {"AuthenticationError", "PermissionDeniedError"}:
+            detail = "The AI service could not authenticate this request. Please try again later or contact Elume support."
+        elif provider_error in {"APIConnectionError", "APITimeoutError"}:
+            detail = "Elume could not reach the AI service right now. Please try again shortly."
+        elif provider_error == "RateLimitError":
+            detail = "The AI service is temporarily busy. Please try again later."
+        else:
+            detail = "The AI service did not return a usable response. Please try again later."
+        raise HTTPException(status_code=502, detail=detail) from exc
 
     content = (resp.choices[0].message.content or "").strip()
 
@@ -16620,13 +16801,17 @@ def ai_create_resources(
         raise HTTPException(status_code=500, detail=f"Could not parse AI JSON: {e}")
 
     try:
-        result = normalise_create_resources_result(
-            payload.kind,
-            data,
-            f"{template} - {p}"[:80],
-            expected_duration_minutes=requested_lesson_duration,
+        result = (
+            normalise_annual_plan_result(data, f"{template} - {p}"[:80], payload.annual_plan)
+            if (payload.kind or "").strip().lower() == "scheme" and payload.annual_plan
+            else normalise_create_resources_result(
+                payload.kind,
+                data,
+                f"{template} - {p}"[:80],
+                expected_duration_minutes=requested_lesson_duration,
+            )
         )
-    except (ValueError, StructuredDocumentValidationError) as exc:
+    except (ValueError, StructuredDocumentValidationError, AnnualPlanValidationError) as exc:
         if (payload.kind or "").strip().lower() == "lesson_plan":
             logger.warning("Structured Lesson Plan validation failed: %s", structured_lesson_plan_validation_summary(exc))
             raise HTTPException(status_code=500, detail="Elume could not validate this Lesson Plan. Please try again.") from exc

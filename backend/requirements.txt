@@ -24,4 +24,5 @@ stripe==8.10.0
 psycopg2-binary==2.9.11
 python-dotenv
 email-validator
-pypdf
+pypdfPyMuPDF==1.24.14
+tzdata==2026.4

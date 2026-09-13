@@ -176,6 +176,30 @@ def _add_panel(doc, title: str, text: str, *, fill: str, title_colour: str = EME
     _keep_row_together(table.rows[0])
 
 
+def _add_next_steps_panels(doc, homework: dict[str, Any], stopping_point: dict[str, Any]) -> None:
+    """Keep the two short final lesson-plan panels together without wasting a page."""
+    table = doc.add_table(rows=1, cols=2)
+    table.autofit = False
+    for index, (block, fill, colour) in enumerate(((homework, LIGHT_SLATE, SLATE), (stopping_point, CYAN, TEAL))):
+        cell = table.cell(0, index)
+        cell.width = __import__("docx").shared.Inches(3.35)
+        _set_cell_shading(cell, fill)
+        _set_cell_margins(cell, top=110, start=140, bottom=110, end=140)
+        title_paragraph = cell.paragraphs[0]
+        title_paragraph.paragraph_format.space_after = __import__("docx").shared.Pt(3)
+        title_run = title_paragraph.add_run(block["title"])
+        title_run.bold = True
+        title_run.font.name = "Arial"
+        title_run.font.size = __import__("docx").shared.Pt(9.5)
+        title_run.font.color.rgb = __import__("docx").shared.RGBColor.from_string(colour)
+        body = cell.add_paragraph()
+        body.paragraph_format.space_after = 0
+        body_run = body.add_run(block.get("text") or "")
+        body_run.font.name = "Arial"
+        body_run.font.size = __import__("docx").shared.Pt(9.5)
+    _keep_row_together(table.rows[0])
+
+
 def _add_definitions_table(doc, definitions: list[dict[str, str]]) -> None:
     _section_heading(doc, "Key definitions")
     table = doc.add_table(rows=1, cols=2)
@@ -294,7 +318,11 @@ def render_structured_lesson_plan_docx(document: StructuredLessonPlanDocument, *
             value_run.font.color.rgb = RGBColor.from_string(SLATE)
         _keep_row_together(table.rows[0])
 
-    for block in document.blocks:
+    skip_next = False
+    for index, block in enumerate(document.blocks):
+        if skip_next:
+            skip_next = False
+            continue
         block_type = block["type"]
         if block_type == "info_panel" and block.get("label") == "Primary learning outcome":
             _add_panel(doc, "PRIMARY LEARNING OUTCOME", block.get("text") or document.primary_outcome, fill=LIGHT_EMERALD)
@@ -315,7 +343,12 @@ def render_structured_lesson_plan_docx(document: StructuredLessonPlanDocument, *
         elif block_type == "teacher_note":
             _add_panel(doc, block["title"], block["text"], fill=LIGHT_VIOLET, title_colour=VIOLET)
         elif block_type == "homework":
-            _add_panel(doc, block["title"], block["text"], fill=LIGHT_SLATE, title_colour=SLATE)
+            next_block = document.blocks[index + 1] if index + 1 < len(document.blocks) else None
+            if next_block and next_block.get("type") == "callout" and "stopping point" in str(next_block.get("title") or "").casefold():
+                _add_next_steps_panels(doc, block, next_block)
+                skip_next = True
+            else:
+                _add_panel(doc, block["title"], block["text"], fill=LIGHT_SLATE, title_colour=SLATE)
         elif block_type == "callout":
             fill = LIGHT_AMBER if block.get("tone") == "warning" else CYAN
             title_colour = "A16207" if block.get("tone") == "warning" else TEAL
