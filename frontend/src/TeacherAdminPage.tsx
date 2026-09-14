@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import AdminPinInput from "./Components/AdminPinInput";
 import { useNavigate } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "./api";
 import { toPng } from "html-to-image";
@@ -1699,7 +1700,7 @@ export default function TeacherAdminPage() {
                   <div className="w-full max-w-xs">
                     <label className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
                       Admin PIN
-                      <input
+                      <AdminPinInput
                         className={`${input} mt-2`}
                         value={state.adminPin}
                         onChange={(e) => updateAdminPin(e.target.value)}
@@ -1708,6 +1709,7 @@ export default function TeacherAdminPage() {
                         }}
                         placeholder="2026"
                         inputMode="numeric"
+                        aria-label="Teacher Admin PIN"
                       />
                     </label>
                   </div>

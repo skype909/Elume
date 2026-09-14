@@ -17,6 +17,7 @@ import { classColourBackgroundClass } from "./classAppearance";
 import { resolveClassPageColourKey } from "./classAppearanceViews";
 import { formatDublinDateCardParts } from "./dashboardDateFormat";
 import { calendarEventDestination } from "./calendarNavigation";
+import AdminPinInput from "./Components/AdminPinInput";
 
 function getEmailFromToken(): string | null {
   const t = localStorage.getItem("elume_token");
@@ -129,13 +130,8 @@ export function ClassAdminPinGate({
           </div>
         ) : null}
 
-        <input
+        <AdminPinInput
           id="class-admin-pin"
-          type="password"
-          name="class-admin-pin"
-          autoComplete="off"
-          spellCheck={false}
-          autoCapitalize="off"
           inputMode="numeric"
           autoFocus
           value={draft}

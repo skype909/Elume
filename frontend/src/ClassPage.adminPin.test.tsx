@@ -32,6 +32,9 @@ test("renders the Class Admin gate with a masked numeric Teacher Admin PIN and a
   const pin = screen.getByLabelText("Teacher Admin PIN");
   expect(pin).toHaveAttribute("type", "password");
   expect(pin).toHaveAttribute("inputmode", "numeric");
+  expect(pin).toHaveAttribute("name", "teacher-admin-pin");
+  expect(pin).toHaveAttribute("autocomplete", "off");
+  expect(pin).not.toHaveAttribute("name", "password");
 
   const help = screen.getByRole("button", { name: "What is the Teacher Admin PIN?" });
   expect(help).toHaveAttribute("aria-expanded", "false");
@@ -39,6 +42,20 @@ test("renders the Class Admin gate with a masked numeric Teacher Admin PIN and a
   expect(screen.getByText(/Dashboard → Teacher Admin/)).toBeInTheDocument();
   expect(screen.getByText(/different from the Class PIN used by students/)).toBeInTheDocument();
   expect(help).toHaveAttribute("aria-expanded", "true");
+});
+
+test("keeps paste, editing and Enter submission within the Admin PIN gate", () => {
+  const onSubmit = jest.fn();
+  render(<GateHarness onSubmit={onSubmit} />);
+
+  const pin = screen.getByLabelText("Teacher Admin PIN");
+  fireEvent.paste(pin, { clipboardData: { getData: () => "2468" } });
+  fireEvent.change(pin, { target: { value: "2468" } });
+  fireEvent.keyDown(pin, { key: "Backspace" });
+  fireEvent.change(pin, { target: { value: "2468" } });
+  fireEvent.keyDown(pin, { key: "Enter" });
+
+  expect(onSubmit).toHaveBeenCalledTimes(1);
 });
 
 test("retains incorrect-PIN feedback and submits the entered Teacher Admin PIN", () => {
