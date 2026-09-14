@@ -84,8 +84,15 @@ describe("teacher collaboration full screen", () => {
     await createTeacherSession();
 
     expect(screen.getByRole("button", { name: "Full Screen" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Students 0" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Joined participants and room assignments")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pen" })).toBeVisible();
     expect(mockBoardMounts).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Students 0" }));
+    expect(screen.getByText("Joined participants and room assignments")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Close Students" }));
+    expect(screen.queryByText("Joined participants and room assignments")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Full Screen" }));
 
@@ -94,6 +101,7 @@ describe("teacher collaboration full screen", () => {
     expect(screen.getByRole("button", { name: "Pen" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Highlighter" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Eraser" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Students 0" })).toBeVisible();
     expect(screen.getByTestId("teacher-collab-board")).toHaveAttribute("data-height", expect.not.stringMatching(/^760$/));
     expect(mockBoardMounts).toBe(1);
 

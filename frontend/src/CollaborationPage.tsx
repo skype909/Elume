@@ -16,7 +16,7 @@ import { userFacingError } from "./userFacingError";
 import { TeacherToolPalette } from "./TeacherToolPalette";
 import { TeacherHighlighterSettings } from "./TeacherHighlighterSettings";
 import { ColourSwatch, StrokeSizeButton } from "./BoardControlOptions";
-import { Maximize2, Minimize2 } from "lucide-react";
+import { Maximize2, Minimize2, UsersRound, X } from "lucide-react";
 
 const API_BASE = "/api";
 
@@ -174,6 +174,7 @@ function SectionCard({
     children,
     className,
     bodyClassName,
+    id,
 }: {
     title: string;
     hint?: string;
@@ -181,9 +182,10 @@ function SectionCard({
     children: React.ReactNode;
     className?: string;
     bodyClassName?: string;
+    id?: string;
 }) {
     return (
-        <div className={cls("rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl", className)}>
+        <div id={id} className={cls("rounded-[32px] border border-white/70 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl", className)}>
             <div className="flex items-start justify-between gap-4">
                 <div>
                     <div className="text-xl font-black tracking-tight text-slate-900">{title}</div>
@@ -243,6 +245,7 @@ export default function CollaborationPage() {
     const [templateRequestId, setTemplateRequestId] = useState<number | undefined>(undefined);
     const [isTeacherFullscreen, setIsTeacherFullscreen] = useState(false);
     const [teacherFullscreenHeight, setTeacherFullscreenHeight] = useState(760);
+    const [studentsDrawerOpen, setStudentsDrawerOpen] = useState(false);
 
 
     const pollRef = useRef<number | null>(null);
@@ -1157,8 +1160,8 @@ export default function CollaborationPage() {
                     <div
                         ref={teacherWorkspaceRef}
                         className={cls(
-                            "grid grid-cols-1 gap-5",
-                            !isTeacherFullscreen && "xl:grid-cols-[236px_minmax(0,1fr)_320px]",
+                            "relative grid grid-cols-1 gap-5",
+                            !isTeacherFullscreen && "xl:grid-cols-[236px_minmax(0,1fr)]",
                             isTeacherFullscreen && "fixed inset-0 z-[60] grid-cols-[236px_minmax(0,1fr)] gap-4 overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50 p-4 xl:grid-cols-[236px_minmax(0,1fr)]"
                         )}
                         data-teacher-focus-mode={isTeacherFullscreen ? "active" : "inactive"}
@@ -1280,6 +1283,18 @@ export default function CollaborationPage() {
                                             >
                                                 {isTeacherFullscreen ? <Minimize2 size={16} aria-hidden="true" /> : <Maximize2 size={16} aria-hidden="true" />}
                                                 {isTeacherFullscreen ? "Exit Full Screen" : "Full Screen"}
+                                            </button>
+                                        )}
+                                        {hasSession && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setStudentsDrawerOpen((open) => !open)}
+                                                aria-expanded={studentsDrawerOpen}
+                                                aria-controls="collaboration-students-drawer"
+                                                className="inline-flex items-center gap-2 rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 px-4 py-2 text-xs font-black text-cyan-800 shadow-sm transition hover:-translate-y-0.5 hover:border-cyan-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-100"
+                                            >
+                                                <UsersRound size={16} aria-hidden="true" />
+                                                Students {status?.joined_count ?? participants.length}
                                             </button>
                                         )}
                                         <button
@@ -1636,13 +1651,21 @@ export default function CollaborationPage() {
                             </SectionCard>
                         </div>
 
-                        {!isTeacherFullscreen && <SectionCard
+                        {studentsDrawerOpen && <SectionCard
+                            id="collaboration-students-drawer"
+                            className="absolute right-0 top-0 z-50 max-h-[calc(100dvh-2rem)] w-full max-w-[320px] overflow-y-auto border-cyan-100 bg-white/95 shadow-[0_24px_70px_rgba(15,23,42,0.22)]"
                             title="Students"
                             hint="Joined participants and room assignments"
                             right={
-                                <div className="rounded-2xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-black uppercase tracking-[0.18em] text-cyan-700">
-                                    Sidebar
-                                </div>
+                                <button
+                                    id="collaboration-students-drawer-close"
+                                    type="button"
+                                    onClick={() => setStudentsDrawerOpen(false)}
+                                    aria-label="Close Students"
+                                    className="grid h-10 w-10 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-100"
+                                >
+                                    <X size={18} aria-hidden="true" />
+                                </button>
                             }
                         >
                             <div className="mb-4 rounded-[28px] border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">

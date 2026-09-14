@@ -86,7 +86,7 @@ export default function StudentCollabRoomPage() {
   const [penSize, setPenSize] = useState<1 | 2 | 3>(1);
   const [highlighterColor, setHighlighterColor] = useState<(typeof STUDENT_HIGHLIGHTER_COLOURS)[number]["value"]>("yellow");
   const [roomMembers, setRoomMembers] = useState<ParticipantListItem[]>([]);
-  const [membersExpanded, setMembersExpanded] = useState(true);
+  const [membersExpanded, setMembersExpanded] = useState(false);
 
   async function fetchStatus() {
     const res = await fetch(`${API_BASE}/collab/${sessionCode}/status`);
@@ -482,22 +482,23 @@ export default function StudentCollabRoomPage() {
         </div>
 
         <div className="relative">
-          <div className="absolute right-3 top-3 z-10 w-52 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-lg backdrop-blur-xl max-md:top-2">
+          <div className={`absolute right-3 top-3 z-20 rounded-[24px] border border-white/70 bg-white/80 shadow-lg backdrop-blur-xl max-md:top-2 ${membersExpanded ? "w-52 p-3" : "p-1.5"}`}>
             <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
-                Room members
-              </div>
+              {membersExpanded && <div className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Room members</div>}
               <button
                 type="button"
                 onClick={() => setMembersExpanded((prev) => !prev)}
-                className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-black text-slate-600"
+                aria-expanded={membersExpanded}
+                aria-controls="student-room-members"
+                className="inline-flex items-center gap-1.5 rounded-2xl border border-cyan-200 bg-white px-3 py-2 text-[11px] font-black text-cyan-800 shadow-sm hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-100"
               >
-                {membersExpanded ? "Hide" : "Show"}
+                <UsersRound size={14} aria-hidden="true" />
+                {membersExpanded ? "Close" : `Room members · ${roomMembers.length}`}
               </button>
             </div>
 
             {membersExpanded && (
-              <div className="mt-3 space-y-2">
+              <div id="student-room-members" className="mt-3 space-y-2">
                 {roomMembers.length ? (
                   roomMembers.map((member) => (
                     <div key={member.id} className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-sm font-semibold text-slate-800">

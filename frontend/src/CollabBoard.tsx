@@ -2,6 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toPng } from "html-to-image";
 import InlineNotice from "./Components/InlineNotice";
 import { userFacingError } from "./userFacingError";
+import {
+    calculateBoardFitScale,
+    clampManualBoardScale,
+    logicalBoardPointFromClient,
+} from "./collabBoardViewport";
 
 let pdfJsLoaderPromise: Promise<any> | null = null;
 
@@ -131,6 +136,7 @@ type Props = {
     initialSnapshot?: BoardSnapshot | null;
     templateBackground?: TemplateBackground | null;
     templateRequestId?: number;
+    showZoomControls?: boolean;
 };
 
 type Interaction =
@@ -175,13 +181,17 @@ function getWsBase() {
 
 function getPointFromEvent(
     e: PointerEvent | React.PointerEvent,
-    el: HTMLDivElement
+    el: HTMLDivElement,
+    boardWidth: number,
+    boardHeight: number
 ): StrokePoint {
-    const rect = el.getBoundingClientRect();
-    return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-    };
+    return logicalBoardPointFromClient({
+        clientX: e.clientX,
+        clientY: e.clientY,
+        rect: el.getBoundingClientRect(),
+        boardWidth,
+        boardHeight,
+    });
 }
 
 function clampSize(n: number, min = 20) {
@@ -343,6 +353,7 @@ export default function CollabBoard({
     initialSnapshot,
     templateBackground,
     templateRequestId,
+    showZoomControls,
 }: Props) {
     const viewportRef = useRef<HTMLDivElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -373,6 +384,9 @@ export default function CollabBoard({
     const [pdfCanvasSize, setPdfCanvasSize] = useState({ w: 0, h: 0 });
     const [clipRect, setClipRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
     const [snipMode, setSnipMode] = useState(false);
+    const [fitMode, setFitMode] = useState(true);
+    const [manualScale, setManualScale] = useState(1);
+    const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
 
     const strokesRef = useRef<Stroke[]>([]);
     const liveStrokeRef = useRef<Stroke | null>(null);
@@ -420,6 +434,16 @@ export default function CollabBoard({
     const resolvedBoardHeight = boardHeight ?? height;
     const isPannableViewport = viewportMode === "pan";
     const usesVirtualBoardViewport = isPannableViewport || boardWidth !== undefined || boardHeight !== undefined;
+    const fitScale = viewportSize.width > 0 && viewportSize.height > 0
+        ? calculateBoardFitScale({
+            viewportWidth: viewportSize.width,
+            viewportHeight: viewportSize.height,
+            boardWidth: resolvedBoardWidth,
+            boardHeight: resolvedBoardHeight,
+        })
+        : 1;
+    const boardScale = usesVirtualBoardViewport ? (fitMode ? fitScale : manualScale) : 1;
+    const canShowZoomControls = showZoomControls ?? (usesVirtualBoardViewport && !readOnly);
     const backgroundObjects = useMemo(
         () => objects.filter((obj) => obj.type === "image" && (isTemplateBackground(obj) || obj.id !== selectedObjectId)),
         [objects, selectedObjectId]
@@ -428,6 +452,28 @@ export default function CollabBoard({
         () => objects.filter((obj) => !isTemplateBackground(obj) && (obj.type !== "image" || obj.id === selectedObjectId)),
         [objects, selectedObjectId]
     );
+
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        if (!viewport || !usesVirtualBoardViewport) return;
+
+        const updateViewportSize = () => {
+            setViewportSize({ width: viewport.clientWidth, height: viewport.clientHeight });
+        };
+        updateViewportSize();
+        const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateViewportSize);
+        observer?.observe(viewport);
+        window.addEventListener("resize", updateViewportSize);
+        return () => {
+            observer?.disconnect();
+            window.removeEventListener("resize", updateViewportSize);
+        };
+    }, [usesVirtualBoardViewport]);
+
+    function setZoomBy(delta: number) {
+        setManualScale(clampManualBoardScale(boardScale + delta));
+        setFitMode(false);
+    }
 
     function resolveFileUrl(fileUrl: string): string {
         if (!fileUrl) return fileUrl;
@@ -706,8 +752,7 @@ export default function CollabBoard({
         const ctx = preview.getContext("2d");
         if (!ctx) return;
 
-        const rect = container.getBoundingClientRect();
-        ctx.clearRect(0, 0, rect.width, rect.height);
+        ctx.clearRect(0, 0, resolvedBoardWidth, resolvedBoardHeight);
 
         ctx.save();
         ctx.strokeStyle = "#0f172a";
@@ -750,8 +795,7 @@ export default function CollabBoard({
         const ctx = preview.getContext("2d");
         if (!ctx) return;
 
-        const rect = container.getBoundingClientRect();
-        ctx.clearRect(0, 0, rect.width, rect.height);
+        ctx.clearRect(0, 0, resolvedBoardWidth, resolvedBoardHeight);
 
         if (liveStrokeRef.current) {
             drawStroke(ctx, liveStrokeRef.current);
@@ -770,7 +814,7 @@ export default function CollabBoard({
             ctx.stroke();
             ctx.restore();
         }
-    }, [cursor, eraserSize, tool]);
+    }, [cursor, eraserSize, resolvedBoardHeight, resolvedBoardWidth, tool]);
 
     function commitLiveStroke() {
         if (!liveStrokeRef.current) return;
@@ -962,6 +1006,12 @@ export default function CollabBoard({
             cacheBust: true,
             pixelRatio: 2,
             backgroundColor: "#ffffff",
+            width: resolvedBoardWidth,
+            height: resolvedBoardHeight,
+            style: {
+                transform: "none",
+                transformOrigin: "top left",
+            },
         });
 
         const link = document.createElement("a");
@@ -1650,7 +1700,7 @@ export default function CollabBoard({
 
         activePointerIdRef.current = e.pointerId;
 
-        const pt = getPointFromEvent(e, container);
+        const pt = getPointFromEvent(e, container, resolvedBoardWidth, resolvedBoardHeight);
 
 
         setCursor(tool === "eraser" ? { x: pt.x, y: pt.y, size: eraserSize } : null);
@@ -1718,7 +1768,7 @@ export default function CollabBoard({
             return;
         }
 
-        const pt = getPointFromEvent(e, container);
+        const pt = getPointFromEvent(e, container, resolvedBoardWidth, resolvedBoardHeight);
 
 
         if (tool === "eraser") {
@@ -1880,7 +1930,7 @@ export default function CollabBoard({
 
         const container = containerRef.current;
         if (!container) return;
-        const pt = getPointFromEvent(e, container);
+        const pt = getPointFromEvent(e, container, resolvedBoardWidth, resolvedBoardHeight);
 
         activePointerIdRef.current = e.pointerId;
         container.setPointerCapture?.(e.pointerId);
@@ -1910,7 +1960,7 @@ export default function CollabBoard({
         const container = containerRef.current;
         if (!container) return;
 
-        const pt = getPointFromEvent(e, container);
+        const pt = getPointFromEvent(e, container, resolvedBoardWidth, resolvedBoardHeight);
 
         activePointerIdRef.current = e.pointerId;
         container.setPointerCapture?.(e.pointerId);
@@ -2211,10 +2261,40 @@ export default function CollabBoard({
                     />
                 </div>
             ) : null}
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
                 <div className="text-sm font-black text-slate-900">{boardLabel}</div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                    {canShowZoomControls && (
+                        <div className="inline-flex items-center gap-1 rounded-2xl border border-cyan-200 bg-cyan-50/70 p-1 shadow-sm" aria-label="Board zoom controls">
+                            <button
+                                type="button"
+                                onClick={() => setZoomBy(-0.1)}
+                                aria-label="Zoom out"
+                                className="grid h-9 w-9 place-items-center rounded-xl bg-white text-lg font-black text-slate-700 shadow-sm hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-100"
+                            >
+                                −
+                            </button>
+                            <span className="min-w-12 text-center text-xs font-black tabular-nums text-cyan-800" aria-live="polite">
+                                {Math.round(boardScale * 100)}%
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setZoomBy(0.1)}
+                                aria-label="Zoom in"
+                                className="grid h-9 w-9 place-items-center rounded-xl bg-white text-lg font-black text-slate-700 shadow-sm hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-100"
+                            >
+                                +
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setFitMode(true)}
+                                className={`rounded-xl px-3 py-2 text-xs font-black transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-100 ${fitMode ? "bg-cyan-600 text-white shadow-sm" : "bg-white text-cyan-800 hover:bg-cyan-50"}`}
+                            >
+                                Fit
+                            </button>
+                        </div>
+                    )}
                     {editable && (
                         <div className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600 md:inline-flex">
                             Paste image: Ctrl+V / Cmd+V
@@ -2269,19 +2349,28 @@ export default function CollabBoard({
                 onPointerCancel={isPannableViewport ? onBoardViewportPointerEnd : undefined}
             >
                 <div
-                    ref={containerRef}
-                    className="relative touch-none select-none"
-                    style={{
-                        height: usesVirtualBoardViewport ? resolvedBoardHeight : height,
-                        width: usesVirtualBoardViewport ? resolvedBoardWidth : "100%",
-                        touchAction: "none",
-                    }}
-                    onPointerDown={handlePointerDown}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
-                    onPointerCancel={handlePointerCancel}
-                    onPointerLeave={handlePointerLeave}
+                    className={usesVirtualBoardViewport ? "relative" : "contents"}
+                    style={usesVirtualBoardViewport ? {
+                        width: resolvedBoardWidth * boardScale,
+                        height: resolvedBoardHeight * boardScale,
+                    } : undefined}
                 >
+                    <div
+                        ref={containerRef}
+                        className="relative touch-none select-none"
+                        style={{
+                            height: usesVirtualBoardViewport ? resolvedBoardHeight : height,
+                            width: usesVirtualBoardViewport ? resolvedBoardWidth : "100%",
+                            touchAction: "none",
+                            transform: usesVirtualBoardViewport ? `scale(${boardScale})` : undefined,
+                            transformOrigin: usesVirtualBoardViewport ? "top left" : undefined,
+                        }}
+                        onPointerDown={handlePointerDown}
+                        onPointerMove={handlePointerMove}
+                        onPointerUp={handlePointerUp}
+                        onPointerCancel={handlePointerCancel}
+                        onPointerLeave={handlePointerLeave}
+                    >
 
                     <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:26px_26px]" />
 
@@ -2290,6 +2379,7 @@ export default function CollabBoard({
                     <canvas ref={previewCanvasRef} className="pointer-events-none absolute inset-0" />
 
                     <div className="absolute inset-0">{foregroundObjects.map((obj) => renderObject(obj))}</div>
+                    </div>
                 </div>
             </div>
 
