@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Eraser, Hand, Highlighter, PenLine, StickyNote, UsersRound } from "lucide-react";
+import { Eraser, Hand, Highlighter, PenLine, StickyNote, Undo2, UsersRound } from "lucide-react";
 import CollabBoard from "./CollabBoard";
 import elumeLogo from "./assets/ELogo2.png";
 import { selectStudentDrawingTool, studentBoardTool, type StudentDrawingTool } from "./collaborationToolControls";
@@ -87,6 +87,13 @@ export default function StudentCollabRoomPage() {
   const [highlighterColor, setHighlighterColor] = useState<(typeof STUDENT_HIGHLIGHTER_COLOURS)[number]["value"]>("yellow");
   const [roomMembers, setRoomMembers] = useState<ParticipantListItem[]>([]);
   const [membersExpanded, setMembersExpanded] = useState(false);
+  const [studentUndo, setStudentUndo] = useState<(() => void) | null>(null);
+  const [canStudentUndo, setCanStudentUndo] = useState(false);
+
+  const handleParticipantUndoReady = useCallback((undo: () => void, canUndo: boolean) => {
+    setStudentUndo(() => undo);
+    setCanStudentUndo(canUndo);
+  }, []);
 
   async function fetchStatus() {
     const res = await fetch(`${API_BASE}/collab/${sessionCode}/status`);
@@ -423,6 +430,18 @@ export default function StudentCollabRoomPage() {
               </button>
               <button
                 type="button"
+                onClick={() => studentUndo?.()}
+                disabled={!canStudentUndo}
+                className={`inline-flex min-h-11 items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-black shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
+                  canStudentUndo
+                    ? "border border-slate-200 bg-white text-slate-800 hover:bg-violet-50"
+                    : "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
+                }`}
+              >
+                <Undo2 className="h-4 w-4" aria-hidden="true" /> Undo
+              </button>
+              <button
+                type="button"
                 onClick={() => setViewportMode((prev) => (prev === "pan" ? "fixed" : "pan"))}
                 role="switch"
                 aria-checked={viewportMode === "pan"}
@@ -529,6 +548,7 @@ export default function StudentCollabRoomPage() {
             viewportMode={viewportMode}
             boardWidth={1600}
             boardHeight={1200}
+            onParticipantUndoReady={handleParticipantUndoReady}
           />
         </div>
       </div>

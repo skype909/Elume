@@ -28,6 +28,8 @@ test("Room Members starts compact and opens over the student board", async () =>
   render(<StudentCollabRoomPage />);
   await waitFor(() => expect(screen.getByTestId("student-collab-board")).toBeVisible());
 
+  expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
+
   const membersButton = screen.getByRole("button", { name: "Room members · 1" });
   expect(membersButton).toHaveAttribute("aria-expanded", "false");
   expect(document.querySelector("#student-room-members")).toBeNull();

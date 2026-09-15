@@ -1,5 +1,6 @@
 import {
   findTopObjectAtPoint,
+  canDeleteStickyNote,
   isTemplateBackground,
   replaceTemplateBackground,
   shouldApplyReplayedBoardMutation,
@@ -80,4 +81,13 @@ test("saved teacher board replay is applied after reopening while live self echo
   expect(shouldApplyReplayedBoardMutation(true, "teacher", "teacher", false)).toBe(true);
   expect(shouldApplyReplayedBoardMutation(true, "teacher", "teacher", true)).toBe(true);
   expect(shouldApplyReplayedBoardMutation(false, "student", "teacher", false)).toBe(true);
+});
+
+test("students can delete only their own sticky notes while teachers retain board moderation", () => {
+  const ownSticky: BoardObject = { id: "aoife-note", type: "sticky", x: 0, y: 0, w: 120, h: 90, createdBy: "aoife", updatedAt: 1 };
+  const otherSticky = { ...ownSticky, id: "jack-note", createdBy: "jack" };
+
+  expect(canDeleteStickyNote(ownSticky, "aoife")).toBe(true);
+  expect(canDeleteStickyNote(otherSticky, "aoife")).toBe(false);
+  expect(canDeleteStickyNote(otherSticky, "teacher")).toBe(true);
 });

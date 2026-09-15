@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from collab_state import board_event_matches_round, clean_events, decode_events, events_from_snapshot, snapshot_from_events
+from collab_state import board_event_matches_round, clean_events, decode_events, events_from_snapshot, participant_owns_board_item, snapshot_from_events
 
 
 class CollaborationStateTests(unittest.TestCase):
@@ -47,6 +47,23 @@ class CollaborationStateTests(unittest.TestCase):
             {"type": "object-delete", "id": "remove"},
         ])
         self.assertEqual(snapshot["objects"], [{"id": "keep", "text": "updated"}])
+
+    def test_stroke_delete_is_preserved_when_room_history_is_replayed(self):
+        snapshot = snapshot_from_events([
+            {"type": "stroke", "stroke": {"id": "aoife-stroke", "createdBy": "aoife", "points": []}},
+            {"type": "stroke", "stroke": {"id": "jack-stroke", "createdBy": "jack", "points": []}},
+            {"type": "stroke-delete", "id": "aoife-stroke"},
+        ])
+        self.assertEqual(snapshot["strokes"], [{"id": "jack-stroke", "createdBy": "jack", "points": []}])
+
+    def test_participant_delete_ownership_does_not_cross_students(self):
+        events = [
+            {"type": "stroke", "stroke": {"id": "aoife-stroke", "createdBy": "aoife", "points": []}},
+            {"type": "object-create", "object": {"id": "jack-sticky", "type": "sticky", "createdBy": "jack"}},
+        ]
+        self.assertTrue(participant_owns_board_item(events, "stroke", "aoife-stroke", "aoife"))
+        self.assertFalse(participant_owns_board_item(events, "stroke", "aoife-stroke", "jack"))
+        self.assertFalse(participant_owns_board_item(events, "object", "jack-sticky", "aoife"))
 
     def test_round_two_template_excludes_round_one_and_student_events(self):
         # Round 1 is authoritative only until New Board advances the session to round 2.

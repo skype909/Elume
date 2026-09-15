@@ -47,11 +47,19 @@ def decode_events(value: str | None) -> list[dict]:
 
 def snapshot_from_events(events: list[dict]) -> dict:
     objects: dict[str, dict] = {}
-    strokes: list[dict] = []
+    strokes: dict[str, dict] = {}
+    anonymous_strokes: list[dict] = []
     for event in events:
         kind = event.get("type")
         if kind == "stroke" and isinstance(event.get("stroke"), dict):
-            strokes.append(deepcopy(event["stroke"]))
+            stroke = event["stroke"]
+            stroke_id = stroke.get("id")
+            if isinstance(stroke_id, str):
+                strokes[stroke_id] = deepcopy(stroke)
+            else:
+                anonymous_strokes.append(deepcopy(stroke))
+        elif kind == "stroke-delete" and isinstance(event.get("id"), str):
+            strokes.pop(event["id"], None)
         elif kind in {"object-create", "object-update"} and isinstance(event.get("object"), dict):
             obj = event["object"]
             object_id = obj.get("id")
@@ -59,4 +67,15 @@ def snapshot_from_events(events: list[dict]) -> dict:
                 objects[object_id] = deepcopy(obj)
         elif kind == "object-delete" and isinstance(event.get("id"), str):
             objects.pop(event["id"], None)
-    return {"strokes": strokes, "objects": list(objects.values())}
+    return {"strokes": [*anonymous_strokes, *strokes.values()], "objects": list(objects.values())}
+
+
+def participant_owns_board_item(events: list[dict], kind: str, item_id: str, participant_id: str) -> bool:
+    """Student delete messages may only target the participant's own live work."""
+    snapshot = snapshot_from_events(events)
+    collection = snapshot["strokes"] if kind == "stroke" else snapshot["objects"]
+    return any(
+        item.get("id") == item_id and item.get("createdBy") == participant_id
+        for item in collection
+        if isinstance(item, dict)
+    )

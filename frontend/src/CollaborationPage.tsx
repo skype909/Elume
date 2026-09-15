@@ -1265,12 +1265,12 @@ export default function CollaborationPage() {
                             </div>
                         </div>
 
-                        <div className={cls("space-y-5", isTeacherFullscreen && "min-h-0")}>
+                        <div className={cls("min-w-0 space-y-5", isTeacherFullscreen && "min-h-0")}>
                             <SectionCard
                                 title={sessionTitle}
                                 hint="Teacher board stage"
-                                className={cls(isTeacherFullscreen && "flex h-full min-h-0 flex-col rounded-[28px] p-4")}
-                                bodyClassName={cls(isTeacherFullscreen && "min-h-0 flex-1")}
+                                className={cls("min-w-0", isTeacherFullscreen && "flex h-full min-h-0 flex-col rounded-[28px] p-4")}
+                                bodyClassName={cls("min-w-0", isTeacherFullscreen && "min-h-0 flex-1")}
                                 right={
                                     <div className="flex flex-wrap items-center gap-2">
                                         {hasSession && effectiveSessionState !== "review" && (

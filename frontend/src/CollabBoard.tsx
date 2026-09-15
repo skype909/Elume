@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
+import { X } from "lucide-react";
 import InlineNotice from "./Components/InlineNotice";
 import { userFacingError } from "./userFacingError";
 import {
@@ -78,6 +79,7 @@ export type BoardSnapshot = {
 
 type SocketPayload = (
     | { type: "stroke"; stroke: Stroke }
+    | { type: "stroke-delete"; id: string }
     | { type: "stroke-progress"; stroke: Stroke }
     | { type: "cursor"; x: number; y: number; size: number }
     | { type: "clear-preview" }
@@ -123,6 +125,7 @@ type Props = {
     eraserSize: number;
     height?: number;
     onUndoReady?: (undoFn: () => void) => void;
+    onParticipantUndoReady?: (undoFn: () => void, canUndo: boolean) => void;
     onExportReady?: (exportFn: () => Promise<void>) => void;
     readOnly?: boolean;
     classId?: string;
@@ -262,6 +265,10 @@ function canEdit(createdBy: string, currentUser: string) {
     return currentUser === "teacher" || createdBy === currentUser;
 }
 
+export function canDeleteStickyNote(obj: BoardObject, currentUser: string) {
+    return obj.type === "sticky" && !isTemplateBackground(obj) && canEdit(obj.createdBy, currentUser);
+}
+
 function objectContainsPoint(obj: BoardObject, pt: StrokePoint) {
     return (
         pt.x >= obj.x &&
@@ -340,6 +347,7 @@ export default function CollabBoard({
     eraserSize,
     height = 720,
     onUndoReady,
+    onParticipantUndoReady,
     onExportReady,
     readOnly = false,
     classId,
@@ -387,8 +395,11 @@ export default function CollabBoard({
     const [fitMode, setFitMode] = useState(true);
     const [manualScale, setManualScale] = useState(1);
     const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+    const [canParticipantUndo, setCanParticipantUndo] = useState(false);
 
     const strokesRef = useRef<Stroke[]>([]);
+    const objectsRef = useRef<BoardObject[]>([]);
+    const participantUndoActionsRef = useRef<Array<{ type: "stroke" | "sticky"; id: string }>>([]);
     const liveStrokeRef = useRef<Stroke | null>(null);
     const interactionRef = useRef<Interaction>({ mode: "idle" });
     const historyRef = useRef<BoardSnapshot[]>([]);
@@ -426,6 +437,10 @@ export default function CollabBoard({
         scrollLeft: 0,
         scrollTop: 0,
     });
+
+    useEffect(() => {
+        objectsRef.current = objects;
+    }, [objects]);
 
 
     const boardLabel = useMemo(() => `${sessionCode} / ${roomKey}`, [sessionCode, roomKey]);
@@ -603,6 +618,20 @@ export default function CollabBoard({
         sendWsMessage({ type: "object-delete", id });
     }
 
+    function broadcastStrokeDelete(id: string) {
+        sendWsMessage({ type: "stroke-delete", id });
+    }
+
+    function recordParticipantUndoAction(action: { type: "stroke" | "sticky"; id: string }) {
+        participantUndoActionsRef.current.push(action);
+        setCanParticipantUndo(true);
+    }
+
+    function removeParticipantUndoAction(id: string) {
+        participantUndoActionsRef.current = participantUndoActionsRef.current.filter((action) => action.id !== id);
+        setCanParticipantUndo(participantUndoActionsRef.current.length > 0);
+    }
+
     function broadcastSnapshotSync(snapshot: BoardSnapshot) {
         sendWsMessage({
             type: "snapshot-sync",
@@ -695,6 +724,27 @@ export default function CollabBoard({
 
         restoreSnapshot(previous);
         broadcastSnapshotSync(previous);
+    }
+
+    function undoParticipantLastAction() {
+        if (!hasOpenSocket()) return;
+        const action = participantUndoActionsRef.current.pop();
+        setCanParticipantUndo(participantUndoActionsRef.current.length > 0);
+        if (!action) return;
+
+        if (action.type === "stroke") {
+            const stroke = strokesRef.current.find((item) => item.id === action.id && item.createdBy === participantId);
+            if (!stroke) return;
+            strokesRef.current = strokesRef.current.filter((item) => item.id !== action.id);
+            redrawCommitted();
+            broadcastStrokeDelete(action.id);
+            return;
+        }
+
+        const sticky = objectsRef.current.find((item) => item.id === action.id && item.type === "sticky" && item.createdBy === participantId);
+        if (!sticky) return;
+        setObjects((previous) => previous.filter((item) => item.id !== action.id));
+        broadcastObjectDelete(action.id);
     }
 
 
@@ -827,13 +877,15 @@ export default function CollabBoard({
 
         pushHistorySnapshot();
 
-        strokesRef.current.push(liveStrokeRef.current);
-        remotePreviewStrokesRef.current.delete(liveStrokeRef.current.id);
+        const completedStroke = liveStrokeRef.current;
+        strokesRef.current.push(completedStroke);
+        recordParticipantUndoAction({ type: "stroke", id: completedStroke.id });
+        remotePreviewStrokesRef.current.delete(completedStroke.id);
         redrawCommitted();
 
         sendWsMessage({
             type: "stroke",
-            stroke: liveStrokeRef.current,
+            stroke: completedStroke,
         });
 
         liveStrokeRef.current = null;
@@ -1430,6 +1482,15 @@ export default function CollabBoard({
                     return;
                 }
 
+                if (data.type === "stroke-delete" && data.id) {
+                    strokesRef.current = strokesRef.current.filter((stroke) => stroke.id !== data.id);
+                    remotePreviewStrokesRef.current.delete(data.id);
+                    removeParticipantUndoAction(data.id);
+                    redrawCommittedRef.current();
+                    clearPreviewRef.current();
+                    return;
+                }
+
                 if (data.type === "stroke-progress" && data.stroke) {
                     const incoming = data.stroke;
                     if (incoming.createdBy === participantId) return;
@@ -1515,6 +1576,11 @@ export default function CollabBoard({
     }, [onUndoReady]);
 
     useEffect(() => {
+        if (!onParticipantUndoReady) return;
+        onParticipantUndoReady(undoParticipantLastAction, canParticipantUndo);
+    }, [canParticipantUndo, onParticipantUndoReady]);
+
+    useEffect(() => {
         if (!onExportReady) return;
         onExportReady(exportBoardAsPng);
     }, [onExportReady, sessionCode, roomKey]);
@@ -1546,6 +1612,17 @@ export default function CollabBoard({
 
         const nextObjects = replaceTemplateBackground(objects, templateBackground ?? null);
         appliedTemplateRequestRef.current = templateRequestId;
+        // A newly selected activity should always open as the complete board,
+        // even if the teacher previously zoomed while preparing another one.
+        setFitMode(true);
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => {
+                const viewport = viewportRef.current;
+                if (viewport) {
+                    setViewportSize({ width: viewport.clientWidth, height: viewport.clientHeight });
+                }
+            });
+        });
         setObjects(nextObjects);
         setSelectedObjectId(null);
         if (hasOpenSocket()) {
@@ -1736,6 +1813,7 @@ export default function CollabBoard({
         if (tool === "sticky") {
             pushHistorySnapshot();
             setObjects((prev) => [...prev, obj]);
+            recordParticipantUndoAction({ type: "sticky", id: obj.id });
             setSelectedObjectId(obj.id);
             broadcastObjectCreate(obj);
             interactionRef.current = { mode: "idle" };
@@ -1992,6 +2070,16 @@ export default function CollabBoard({
         updateObjectLocalAndBroadcast(nextObject);
     }
 
+    function deleteStickyNote(e: React.PointerEvent<HTMLButtonElement> | React.MouseEvent<HTMLButtonElement>, obj: BoardObject) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!canDeleteStickyNote(obj, participantId) || !hasOpenSocket()) return;
+        setObjects((previous) => previous.filter((item) => item.id !== obj.id));
+        removeParticipantUndoAction(obj.id);
+        if (selectedObjectId === obj.id) setSelectedObjectId(null);
+        broadcastObjectDelete(obj.id);
+    }
+
     function renderObject(obj: BoardObject) {
         const isSelected = selectedObjectId === obj.id;
         const editable = canEdit(obj.createdBy, participantId);
@@ -2014,6 +2102,18 @@ export default function CollabBoard({
                                 startMoveObject(e, obj);
                             }}
                         />
+
+                        {editable && (
+                            <button
+                                type="button"
+                                aria-label="Delete sticky note"
+                                onPointerDown={(e) => deleteStickyNote(e, obj)}
+                                onClick={(e) => e.stopPropagation()}
+                                className="absolute right-1 top-1 z-20 grid h-8 w-8 place-items-center rounded-full border border-amber-300 bg-white/90 text-slate-600 shadow-sm transition hover:bg-rose-50 hover:text-rose-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-rose-200"
+                            >
+                                <X className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                        )}
 
                         <textarea
                             value={obj.text || ""}
@@ -2341,7 +2441,7 @@ export default function CollabBoard({
 
             <div
                 ref={viewportRef}
-                className={usesVirtualBoardViewport ? "overflow-auto bg-slate-50/60" : ""}
+                className={usesVirtualBoardViewport ? "overflow-auto bg-slate-50/60 p-3" : ""}
                 style={{ height }}
                 onPointerDown={isPannableViewport ? onBoardViewportPointerDown : undefined}
                 onPointerMove={isPannableViewport ? onBoardViewportPointerMove : undefined}

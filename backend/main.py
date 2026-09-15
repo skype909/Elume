@@ -26,7 +26,7 @@ from xml.etree import ElementTree as ET
 import stripe
 
 from copy import deepcopy
-from collab_state import board_event_matches_round as _board_event_matches_round, clean_events as _clean_collab_events, decode_events as _decode_collab_events, events_from_snapshot as _events_from_snapshot, snapshot_from_events as _snapshot_from_collab_events
+from collab_state import board_event_matches_round as _board_event_matches_round, clean_events as _clean_collab_events, decode_events as _decode_collab_events, events_from_snapshot as _events_from_snapshot, participant_owns_board_item as _participant_owns_board_item, snapshot_from_events as _snapshot_from_collab_events
 
 import json
 from collections import Counter, defaultdict
@@ -10082,6 +10082,7 @@ async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
 
             if msg_type in {
                 "stroke",
+                "stroke-delete",
                 "object-create",
                 "object-update",
                 "object-delete",
@@ -10096,6 +10097,14 @@ async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
                     continue
                 data["board_round"] = current_round
 
+            if participant_anon_id and msg_type in {"stroke-delete", "object-delete"}:
+                target_kind = "stroke" if msg_type == "stroke-delete" else "object"
+                target_id = data.get("id")
+                if not isinstance(target_id, str) or not _participant_owns_board_item(
+                    _get_collab_history(session_code, room_key), target_kind, target_id, participant_anon_id
+                ):
+                    continue
+
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
                 continue
@@ -10105,6 +10114,7 @@ async def collab_ws(websocket: WebSocket, session_code: str, room_key: str):
 
             if msg_type in {
                 "stroke",
+                "stroke-delete",
                 "object-create",
                 "object-update",
                 "object-delete",
