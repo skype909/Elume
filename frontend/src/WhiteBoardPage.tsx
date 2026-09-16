@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { apiFetch, apiFetchBlob } from "./api";
+import { ApiError, apiFetch, apiFetchBlob } from "./api";
 import InlineNotice from "./Components/InlineNotice";
 import {
   EXAM_LIBRARY_CYCLES,
@@ -12,6 +12,7 @@ import {
   normalizeExamLibrarySubject,
 } from "./examLibrary";
 import { userFacingError } from "./userFacingError";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 import {
   WhiteboardActionBar,
   WhiteboardBoardActions,
@@ -41,6 +42,22 @@ const AUDIO_MIME_TYPES = new Set([
   "audio/ogg",
   "application/ogg",
 ]);
+// Nginx rejects request bodies at 100M before the API receives them. Leave a
+// small margin for multipart form data by requiring the file itself to be
+// smaller than that documented server limit.
+const MAX_AUDIO_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+type SavedClassVideo = {
+  id?: string;
+  url: string;
+  title?: string;
+  category?: string;
+  addedAt?: number;
+};
+
+function savedClassVideosKey(classId: number) {
+  return `elume:videos:class:${classId}`;
+}
 
 function resolveFileUrl(u: string) {
   if (!u) return "";
@@ -62,6 +79,25 @@ function getFileExtension(name: string) {
 
 function isSupportedAudioFile(file: File) {
   return AUDIO_EXTENSIONS.has(getFileExtension(file.name)) && AUDIO_MIME_TYPES.has((file.type || "").toLowerCase());
+}
+
+function audioUploadMessage(error: unknown, t: (key: string) => string) {
+  if (error instanceof ApiError && error.status === 413) {
+    const detail = error.response && typeof error.response === "object" && "detail" in error.response
+      ? (error.response as { detail?: unknown }).detail
+      : null;
+    if (detail === "Storage limit reached. Delete some files before uploading another one.") {
+      return t("whiteboard.audioStorageLimit");
+    }
+    return t("whiteboard.audioUploadLimit");
+  }
+  if (error instanceof ApiError && (error.status === 408 || error.status === 504)) {
+    return t("whiteboard.audioUploadNetwork");
+  }
+  if (error instanceof TypeError) {
+    return t("whiteboard.audioUploadNetwork");
+  }
+  return userFacingError(error, "We couldn’t upload that audio file just now. Please try again.");
 }
 
 function getYouTubeEmbedUrl(rawUrl: string): string | null {
@@ -864,6 +900,7 @@ function formatDec(n: number): string {
 }
 
 export default function WhiteBoardPage() {
+  const { t } = useUiLanguage();
   const navigate = useNavigate();
   const location = useLocation();
   const { id } = useParams();
@@ -1085,6 +1122,9 @@ export default function WhiteBoardPage() {
   const [youtubeUrlError, setYoutubeUrlError] = useState<string | null>(null);
   const [youtubeEmbedUrl, setYoutubeEmbedUrl] = useState<string | null>(null);
   const [showVideoPanel, setShowVideoPanel] = useState(false);
+  const [savedClassVideos, setSavedClassVideos] = useState<SavedClassVideo[]>([]);
+  const [savedClassVideosLoading, setSavedClassVideosLoading] = useState(false);
+  const [savedClassVideosError, setSavedClassVideosError] = useState<string | null>(null);
 
   // Insert PDF as image controls
   const [pdfInsertScale, setPdfInsertScale] = useState(1.0);
@@ -1157,6 +1197,7 @@ export default function WhiteBoardPage() {
   const [snipMode, setSnipMode] = useState(false);
 
   const [classLabel, setClassLabel] = useState<string>("");
+  const [classAccess, setClassAccess] = useState<"loading" | "granted" | "denied">("loading");
 
 
   // Grid / XY modals + state
@@ -1221,7 +1262,11 @@ export default function WhiteBoardPage() {
   }
 
   useEffect(() => {
-    if (!classId) return;
+    if (!classId) {
+      setClassAccess("denied");
+      return;
+    }
+    setClassAccess("loading");
 
     apiFetch(`${API_BASE}/classes/${classId}`)
       .then((data) => {
@@ -1238,11 +1283,13 @@ export default function WhiteBoardPage() {
         setClassLabel(label);
         setPreferredExamSubject(preferred);
         setExamLibrarySubject(preferred);
+        setClassAccess("granted");
       })
       .catch(() => {
         setClassLabel("");
         setPreferredExamSubject("Maths");
         setExamLibrarySubject("Maths");
+        setClassAccess("denied");
       });
   }, [classId]);
 
@@ -3368,6 +3415,10 @@ export default function WhiteBoardPage() {
       setAudioLibraryError("Audio accepts MP3, WAV, M4A, AAC, and OGG files with a matching audio type.");
       return;
     }
+    if (file.size >= MAX_AUDIO_UPLOAD_BYTES) {
+      setAudioLibraryError(t("whiteboard.audioTooLarge"));
+      return;
+    }
     try {
       setAudioUploadBusy(true);
       setAudioLibraryError(null);
@@ -3388,7 +3439,7 @@ export default function WhiteBoardPage() {
       setAudioUploadFile(null);
       await loadAudioLibrary();
     } catch (e: unknown) {
-      setAudioLibraryError(userFacingError(e, "We couldn’t upload that audio file just now. Please try again."));
+      setAudioLibraryError(audioUploadMessage(e, t));
     } finally {
       setAudioUploadBusy(false);
     }
@@ -3417,12 +3468,57 @@ export default function WhiteBoardPage() {
     setAudioPlaybackRate(rate);
   }
 
-  function openYoutubePanel() {
-    const embedUrl = getYouTubeEmbedUrl(youtubeUrlDraft);
+  function loadSavedClassVideos() {
+    if (!Number.isFinite(classId) || classId <= 0 || classAccess !== "granted") {
+      setSavedClassVideos([]);
+      setSavedClassVideosError(null);
+      return;
+    }
+    setSavedClassVideosLoading(true);
+    setSavedClassVideosError(null);
+    try {
+      const raw = localStorage.getItem(savedClassVideosKey(classId));
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(parsed)) throw new Error("Saved video list is invalid");
+      setSavedClassVideos(parsed
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        .filter((item) => typeof item.url === "string" && item.url.trim().length > 0)
+        .map((item) => ({
+          id: typeof item.id === "string" ? item.id : undefined,
+          url: String(item.url),
+          title: typeof item.title === "string" ? item.title : undefined,
+          category: typeof item.category === "string" ? item.category : undefined,
+          addedAt: typeof item.addedAt === "number" ? item.addedAt : undefined,
+        }))
+        .sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)));
+    } catch {
+      setSavedClassVideos([]);
+      setSavedClassVideosError(t("whiteboard.savedVideosLoadError"));
+    } finally {
+      setSavedClassVideosLoading(false);
+    }
+  }
+
+  function openVideoPicker() {
+    setYoutubeUrlError(null);
+    setShowVideoModal(true);
+  }
+
+  useEffect(() => {
+    if (showVideoModal && classAccess === "granted") loadSavedClassVideos();
+    // A successful authenticated class lookup is required before this legacy
+    // browser-local list is read. It prevents a guessed class ID from exposing
+    // another account's locally cached links through the picker.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showVideoModal, classAccess]);
+
+  function openYoutubePanel(url = youtubeUrlDraft) {
+    const embedUrl = getYouTubeEmbedUrl(url);
     if (!embedUrl) {
       setYoutubeUrlError("Paste a valid YouTube link from youtube.com or youtu.be.");
       return;
     }
+    setYoutubeUrlDraft(url);
     setYoutubeEmbedUrl(embedUrl);
     setYoutubeUrlError(null);
     setShowVideoModal(false);
@@ -4331,10 +4427,7 @@ export default function WhiteBoardPage() {
             }}
             onFormulaBooklet={openFormulaBooklet}
             onAudio={openAudioLibrary}
-            onVideo={() => {
-              setYoutubeUrlError(null);
-              setShowVideoModal(true);
-            }}
+            onVideo={openVideoPicker}
             onNewBoard={() => setShowNewBoardModal(true)}
             onBack={() => requestLeave(`/class/${classId}`)}
             onSave={() => setShowSaveModal(true)}
@@ -4980,10 +5073,56 @@ export default function WhiteBoardPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-xl font-semibold text-slate-900">Play a YouTube video</div>
-                    <div className="mt-1 text-sm text-slate-600">Paste a YouTube link and keep writing alongside it.</div>
+                    <div className="mt-1 text-sm text-slate-600">{t("whiteboard.videoPickerHelp")}</div>
                   </div>
                   <button type="button" className={pill} onClick={() => setShowVideoModal(false)}>Close</button>
                 </div>
+                <section className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4" aria-labelledby="whiteboard-saved-videos">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h2 id="whiteboard-saved-videos" className="font-semibold text-slate-900">{t("whiteboard.savedVideos")}</h2>
+                      <p className="mt-1 text-sm text-slate-600">{t("whiteboard.savedVideosHelp")}</p>
+                    </div>
+                    <button type="button" className={pill} onClick={loadSavedClassVideos} disabled={savedClassVideosLoading}>Retry</button>
+                  </div>
+                  {!Number.isFinite(classId) || classId <= 0 ? (
+                    <p className="mt-3 text-sm text-slate-600">{t("whiteboard.noClassVideoContext")}</p>
+                  ) : classAccess === "loading" ? (
+                    <p className="mt-3 text-sm text-slate-600">{t("whiteboard.checkingClassAccess")}</p>
+                  ) : classAccess === "denied" ? (
+                    <p className="mt-3 text-sm text-slate-600">{t("whiteboard.classVideoAccessRequired")}</p>
+                  ) : savedClassVideosError ? (
+                    <InlineNotice className="mt-3" variant="error" message={savedClassVideosError} actionLabel="Retry" onAction={loadSavedClassVideos} />
+                  ) : savedClassVideosLoading ? (
+                    <p className="mt-3 text-sm text-slate-600">Loading saved videos…</p>
+                  ) : savedClassVideos.length === 0 ? (
+                    <p className="mt-3 text-sm text-slate-600">{t("whiteboard.noSavedVideos")}</p>
+                  ) : (
+                    <ul className="mt-3 max-h-52 space-y-2 overflow-y-auto" aria-label="Saved class videos">
+                      {savedClassVideos.map((video, index) => {
+                        const title = video.title?.trim() || "Untitled video";
+                        const supported = Boolean(getYouTubeEmbedUrl(video.url));
+                        return (
+                          <li key={`${video.id || video.url}-${index}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-slate-900">{title}</div>
+                              <div className="truncate text-xs text-slate-600">{video.category?.trim() || "YouTube"}</div>
+                              {!supported && <div className="mt-1 text-xs text-amber-800">{t("whiteboard.unsupportedSavedVideo")}</div>}
+                            </div>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-xl border-2 border-emerald-700 bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={!supported}
+                              onClick={() => openYoutubePanel(video.url)}
+                            >
+                              {t("whiteboard.selectVideo")}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </section>
                 <label className="mt-5 block text-sm font-semibold text-slate-700" htmlFor="whiteboard-youtube-url">
                   YouTube link
                 </label>

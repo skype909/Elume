@@ -17,6 +17,27 @@ jest.mock("./api", () => ({
   apiFetchBlob: jest.fn(),
 }));
 
+jest.mock("./i18n/UiLanguageContext", () => ({
+  useUiLanguage: () => ({
+    t: (key: string) => ({
+      "whiteboard.savedVideos": "Saved class videos",
+      "whiteboard.savedVideosHelp": "Videos saved in this browser for the current class.",
+      "whiteboard.videoPickerHelp": "Choose a video saved for this class or paste a YouTube link.",
+      "whiteboard.noSavedVideos": "No videos have been saved for this class in this browser yet.",
+      "whiteboard.noClassVideoContext": "Saved class videos are available when the Whiteboard is opened from a class. You can still paste a YouTube link below.",
+      "whiteboard.checkingClassAccess": "Checking access to this class before showing saved videos…",
+      "whiteboard.classVideoAccessRequired": "Saved class videos cannot be shown because this account does not have access to this class. You can still paste a YouTube link below.",
+      "whiteboard.savedVideosLoadError": "We couldn’t load saved class videos from this browser. Try again.",
+      "whiteboard.unsupportedSavedVideo": "This saved link is not a supported YouTube video. Update it in Videos before opening it here.",
+      "whiteboard.selectVideo": "Select",
+      "whiteboard.audioTooLarge": "The full audio upload request must stay below 100 MiB. Choose a file comfortably below this, and remember that your remaining Elume storage can also limit uploads.",
+      "whiteboard.audioUploadLimit": "This audio upload was rejected before Elume could process it. The full upload request must stay below 100 MiB; other network limits may also apply.",
+      "whiteboard.audioStorageLimit": "This audio file could not be uploaded because your Elume storage limit has been reached. Delete some files before trying again.",
+      "whiteboard.audioUploadNetwork": "The audio upload did not complete. Check your connection and try again; larger files can take longer to upload.",
+    }[key] || key),
+  }),
+}));
+
 const mockedApiFetch = apiFetch as jest.MockedFunction<typeof apiFetch>;
 
 function renderWhiteboard() {
@@ -94,6 +115,63 @@ describe("WhiteBoardPage production workspace integration", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back to Class" }));
     expect(screen.getByText("Leave whiteboard?")).toBeInTheDocument();
+  });
+
+  test("opens a saved class video in the existing player without changing the board", async () => {
+    localStorage.setItem("elume:videos:class:1", JSON.stringify([
+      { id: "dQw4w9WgXcQ", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Wave demonstration", category: "Waves", addedAt: 1 },
+      { id: "broken", url: "https://example.test/video", title: "Old link", category: "Archive", addedAt: 2 },
+    ]));
+    renderWhiteboard();
+
+    fireEvent.click(await screen.findByRole("button", { name: /start new whiteboard/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    const workspace = screen.getByRole("region", { name: "Whiteboard canvas workspace" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    expect(await screen.findByText("Saved class videos")).toBeInTheDocument();
+    expect(screen.getByText("Wave demonstration")).toBeInTheDocument();
+    expect(screen.getByText(/not a supported YouTube video/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Wave demonstration").closest("li")!.querySelector("button")!);
+
+    await waitFor(() => expect(screen.getByTitle("YouTube video for class")).toHaveAttribute(
+      "src", "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?rel=0&modestbranding=1"
+    ));
+    expect(workspace).toBeInTheDocument();
+  });
+
+  test("does not read browser-local saved videos when class access is denied", async () => {
+    localStorage.setItem("elume:videos:class:1", JSON.stringify([
+      { id: "dQw4w9WgXcQ", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Another account's cached video", addedAt: 1 },
+    ]));
+    mockedApiFetch.mockImplementation(async (url: string) => {
+      if (url === "/api/classes/1") throw new Error("not found");
+      return [];
+    });
+    renderWhiteboard();
+
+    fireEvent.click(await screen.findByRole("button", { name: /start new whiteboard/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+
+    expect(await screen.findByText(/does not have access to this class/i)).toBeInTheDocument();
+    expect(screen.queryByText("Another account's cached video")).not.toBeInTheDocument();
+  });
+
+  test("explains the verified audio request limit before starting an upload", async () => {
+    renderWhiteboard();
+    fireEvent.click(await screen.findByRole("button", { name: /start new whiteboard/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    fireEvent.click(screen.getByRole("button", { name: "Audio" }));
+
+    const input = document.querySelector<HTMLInputElement>('input[accept*="audio/mpeg"]')!;
+    const file = new File(["audio"], "lesson.mp3", { type: "audio/mpeg" });
+    Object.defineProperty(file, "size", { configurable: true, value: 100 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+
+    expect(await screen.findByText(/full audio upload request must stay below 100 MiB/i)).toBeInTheDocument();
+    expect(mockedApiFetch).not.toHaveBeenCalledWith("/api/notes/upload", expect.anything());
   });
 
   test("resets the real extension guard when another normal-height board is opened", async () => {

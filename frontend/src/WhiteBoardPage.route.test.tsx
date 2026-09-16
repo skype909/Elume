@@ -22,6 +22,7 @@ jest.mock("react-router-dom", () => ({
 }), { virtual: true });
 
 jest.mock("./api", () => ({ apiFetch: jest.fn(), apiFetchBlob: jest.fn() }));
+jest.mock("./i18n/UiLanguageContext", () => ({ useUiLanguage: () => ({ t: (key: string) => key }) }));
 const mockedApiFetch = apiFetch as jest.MockedFunction<typeof apiFetch>;
 
 function ProductionWhiteboardRouteHarness() {
