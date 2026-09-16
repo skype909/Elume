@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
 import elumeLogo from "./assets/ELogo2.png";
@@ -17,6 +17,8 @@ export default function RegisterPage() {
   const navigate = useNavigate();
   const { t } = useUiLanguage();
   const [role, setRole] = useState<"teacher" | null>(null);
+  const teacherChoiceRef = useRef<HTMLButtonElement>(null);
+  const firstNameRef = useRef<HTMLInputElement>(null);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [schoolName, setSchoolName] = useState("");
@@ -26,6 +28,14 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (role) {
+      firstNameRef.current?.focus();
+    } else {
+      teacherChoiceRef.current?.focus();
+    }
+  }, [role]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -102,6 +112,7 @@ export default function RegisterPage() {
 
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
             <button
+              ref={teacherChoiceRef}
               type="button"
               onClick={() => setRole("teacher")}
               className="min-h-[132px] rounded-3xl border-2 border-emerald-200 bg-emerald-50 p-5 text-left shadow-sm transition hover:border-emerald-400 hover:bg-emerald-100 focus:outline-none focus:ring-4 focus:ring-emerald-200"
@@ -336,6 +347,7 @@ export default function RegisterPage() {
                         {t("register.firstName")}
                       </span>
                       <input
+                        ref={firstNameRef}
                         className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                         value={firstName}
                         onChange={(e) => setFirstName(e.target.value)}

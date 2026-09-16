@@ -58,10 +58,11 @@ test("teacher choice reveals registration and can be changed", () => {
 
   fireEvent.click(screen.getByRole("button", { name: /I am a teacher/ }));
   expect(screen.getByText("Create teacher account")).toBeInTheDocument();
-  expect(screen.getByLabelText("First name")).toBeInTheDocument();
+  expect(screen.getByLabelText("First name")).toHaveFocus();
 
   fireEvent.click(screen.getByRole("button", { name: "Change role" }));
   expect(screen.getByRole("heading", { name: "Welcome to Elume" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /I am a teacher/ })).toHaveFocus();
 });
 
 test("student choice goes straight to Student Hub without calling registration", () => {
