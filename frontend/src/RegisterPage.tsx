@@ -16,6 +16,7 @@ function passwordPolicyError(password: string, t: (key: string) => string) {
 export default function RegisterPage() {
   const navigate = useNavigate();
   const { t } = useUiLanguage();
+  const [role, setRole] = useState<"teacher" | null>(null);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [schoolName, setSchoolName] = useState("");
@@ -80,6 +81,51 @@ export default function RegisterPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (!role) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50 px-4 py-10">
+        <div className="absolute right-4 top-4 z-20"><LanguageSwitch /></div>
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -left-24 top-[-60px] h-80 w-80 rounded-full bg-cyan-300/30 blur-3xl" />
+          <div className="absolute right-[-80px] top-24 h-96 w-96 rounded-full bg-violet-300/25 blur-3xl" />
+          <div className="absolute bottom-[-80px] left-[10%] h-80 w-80 rounded-full bg-emerald-300/25 blur-3xl" />
+        </div>
+
+        <main className="relative z-10 w-full max-w-xl rounded-[32px] border border-white/70 bg-white/85 p-6 text-center shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-10">
+          <img src={elumeLogo} alt="Elume" className="mx-auto h-20 w-20 object-contain" />
+          <h1 className="mt-5 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
+            {t("register.welcome")}
+          </h1>
+          <p className="mt-3 text-lg text-slate-600">{t("register.rolePrompt")}</p>
+
+          <div className="mt-8 grid gap-4 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setRole("teacher")}
+              className="min-h-[132px] rounded-3xl border-2 border-emerald-200 bg-emerald-50 p-5 text-left shadow-sm transition hover:border-emerald-400 hover:bg-emerald-100 focus:outline-none focus:ring-4 focus:ring-emerald-200"
+            >
+              <span className="block text-lg font-black text-emerald-950">{t("register.teacherChoice")}</span>
+              <span className="mt-2 block text-sm leading-6 text-emerald-900">{t("register.teacherChoiceHelp")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/student")}
+              className="min-h-[132px] rounded-3xl border-2 border-cyan-200 bg-cyan-50 p-5 text-left shadow-sm transition hover:border-cyan-400 hover:bg-cyan-100 focus:outline-none focus:ring-4 focus:ring-cyan-200"
+            >
+              <span className="block text-lg font-black text-cyan-950">{t("register.studentChoice")}</span>
+              <span className="mt-2 block text-sm leading-6 text-cyan-900">{t("register.studentChoiceHelp")}</span>
+            </button>
+          </div>
+
+          <p className="mt-7 text-sm text-slate-600">
+            {t("register.alreadyAccount")}{" "}
+            <Link to="/" className="font-semibold text-emerald-700 hover:underline">{t("login.signIn")}</Link>
+          </p>
+        </main>
+      </div>
+    );
   }
 
   return (
@@ -224,6 +270,13 @@ export default function RegisterPage() {
               <div className="rounded-[32px] border border-white/70 bg-white/80 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-7">
                 <div className="mb-5 flex items-center justify-between">
                   <div>
+                    <button
+                      type="button"
+                      onClick={() => setRole(null)}
+                      className="mb-3 text-sm font-semibold text-emerald-700 hover:underline focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2"
+                    >
+                      {t("register.changeChoice")}
+                    </button>
                     <div className="text-2xl font-black tracking-tight text-slate-900">
                       {t("register.title")}
                     </div>

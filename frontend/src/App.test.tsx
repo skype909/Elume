@@ -167,6 +167,7 @@ describe("public Gaeilge account flow", () => {
     router.__setLocation({ pathname: "/register" });
     renderApp();
 
+    fireEvent.click(await screen.findByRole("button", { name: /I am a teacher/ }));
     expect(await screen.findByText("Early Adopter Pricing")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Gaeilge" }));
 
