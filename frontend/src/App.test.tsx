@@ -125,13 +125,66 @@ describe("platform access navigation", () => {
 });
 
 describe("account billing navigation", () => {
-  test("keeps Subscription & billing discoverable from the teacher dashboard", async () => {
+  test("moves Subscription & billing from the dashboard into Teacher Admin", async () => {
     setApiResponses([]);
     renderApp();
 
-    const controls = await screen.findAllByRole("button", { name: "Subscription & billing" });
-    fireEvent.click(controls[0]);
+    expect(screen.queryByRole("button", { name: /billing/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Admin" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Calendar" })).toHaveLength(2);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Admin" })[0]);
+    expect(await screen.findByText("Teacher Admin")).toBeInTheDocument();
+    const billingControl = await screen.findByRole("button", { name: "Manage subscription & billing" });
+    fireEvent.click(billingControl);
     await waitFor(() => expect(router.__getLocation().pathname).toBe("/billing"));
+  });
+
+  test("keeps personal billing discoverable for school members with a personal subscription", async () => {
+    router.__setLocation({ pathname: "/admin" });
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === "/classes") return Promise.resolve([]);
+      if (path === "/teacher-admin/state") return Promise.resolve({ state: null });
+      if (path === "/auth/me") return Promise.resolve({ role: "teacher" });
+      if (path === "/billing/me") {
+        return Promise.resolve({
+          subscription_status: "school_funded",
+          school_funded: true,
+          portal_management_available: true,
+          has_stripe_customer: true,
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    renderApp();
+
+    expect(await screen.findByText(/manage your personal subscription separately/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage personal billing" })).toBeInTheDocument();
+  });
+
+  test("explains school-managed access without offering personal billing controls", async () => {
+    router.__setLocation({ pathname: "/admin" });
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === "/classes") return Promise.resolve([]);
+      if (path === "/teacher-admin/state") return Promise.resolve({ state: null });
+      if (path === "/auth/me") return Promise.resolve({ role: "teacher" });
+      if (path === "/billing/me") {
+        return Promise.resolve({
+          subscription_status: "school_funded",
+          school_funded: true,
+          portal_management_available: false,
+          has_stripe_customer: false,
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    renderApp();
+
+    expect(await screen.findByText(/access is managed by your school/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Manage personal billing" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View billing details" })).toBeInTheDocument();
   });
 });
 

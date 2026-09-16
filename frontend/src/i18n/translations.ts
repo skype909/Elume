@@ -33,6 +33,13 @@ const english: Record<string, string> = {
   "nav.dashboard": "Dashboard",
   "nav.admin": "Admin",
   "nav.calendar": "Calendar",
+  "teacherAdmin.billing.label": "Subscription & billing",
+  "teacherAdmin.billing.individual": "Manage your plan, payments or cancel your subscription.",
+  "teacherAdmin.billing.schoolManaged": "Your Elume access is managed by your school. Personal billing is not required while your school membership is active.",
+  "teacherAdmin.billing.schoolAndPersonal": "Your Elume access is managed by your school. You can still manage your personal subscription separately.",
+  "teacherAdmin.billing.manage": "Manage subscription & billing",
+  "teacherAdmin.billing.managePersonal": "Manage personal billing",
+  "teacherAdmin.billing.viewDetails": "View billing details",
   "nav.schoolAdmin": "School Admin",
   "nav.platformAdmin": "Platform Admin",
   "nav.schoolResources": "School Resources",
@@ -403,6 +410,13 @@ const english: Record<string, string> = {
 };
 
 const gaeilge: Partial<Record<keyof typeof english, string>> = {
+  "teacherAdmin.billing.label": "Síntiús agus billeáil",
+  "teacherAdmin.billing.individual": "Bainistigh do phlean, íocaíochtaí nó cealaigh do shíntiús.",
+  "teacherAdmin.billing.schoolManaged": "Is í do scoil a bhainistíonn do rochtain Elume. Ní theastaíonn billeáil phearsanta fad is atá do bhallraíocht scoile gníomhach.",
+  "teacherAdmin.billing.schoolAndPersonal": "Is í do scoil a bhainistíonn do rochtain Elume. Is féidir leat do shíntiús pearsanta a bhainistiú ar leithligh fós.",
+  "teacherAdmin.billing.manage": "Bainistigh síntiús agus billeáil",
+  "teacherAdmin.billing.managePersonal": "Bainistigh billeáil phearsanta",
+  "teacherAdmin.billing.viewDetails": "Féach sonraí billeála",
   "language.english": "Béarla",
   "language.gaeilge": "Gaeilge",
   "public.aiTools": "Uirlisí faoi chumhacht IS do mhúinteoirí an lae inniu",

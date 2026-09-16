@@ -11,6 +11,7 @@ import {
   resolveClassColourKey,
 } from "./classAppearance";
 import { shouldShowClassFirstEmptyState, type ServerClassLoadStatus } from "./classOnboarding";
+import { useUiLanguage } from "./i18n/UiLanguageContext";
 
 type DayKey = "Mon" | "Tue" | "Wed" | "Thu" | "Fri";
 type SlotKind = "period" | "break" | "lunch";
@@ -104,6 +105,8 @@ type BillingStatus = {
   payment_failed_at?: string | null;
   payment_recovery_deadline_at?: string | null;
   has_stripe_customer: boolean;
+  personal_subscription_status?: string | null;
+  portal_management_available?: boolean;
   trial_started_at: string | null;
   trial_ends_at: string | null;
   trial_active: boolean;
@@ -603,6 +606,7 @@ function updateSetupDay(
 
 export default function TeacherAdminPage() {
   const navigate = useNavigate();
+  const { t } = useUiLanguage();
   const email = getEmailFromToken();
   const isSuperAdmin = email === "admin@elume.ie";
   const normalizedEmail = (email || "").trim().toLowerCase();
@@ -649,7 +653,6 @@ export default function TeacherAdminPage() {
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
-  const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [adminSectionOpen, setAdminSectionOpen] = useState(false);
   const [logoBusy, setLogoBusy] = useState(false);
@@ -767,26 +770,6 @@ export default function TeacherAdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state: next }),
       }).catch(() => {});
-    }
-  }
-
-  async function startCheckout(plan: "monthly" | "annual") {
-    setBillingBusy(true);
-    setBillingError(null);
-
-    try {
-      const data = await apiFetch("/billing/create-checkout-session", {
-        method: "POST",
-        body: JSON.stringify({ plan }),
-      });
-
-      const checkoutUrl = String((data as any)?.checkout_url || "").trim();
-      if (!checkoutUrl) throw new Error("No Stripe checkout URL was returned.");
-
-      window.location.assign(checkoutUrl);
-    } catch (e: any) {
-      setBillingError(e?.message || "Could not start Stripe checkout.");
-      setBillingBusy(false);
     }
   }
 
@@ -1197,6 +1180,18 @@ export default function TeacherAdminPage() {
   const hasServerClasses = classesLoadStatus === "ready" && classes.length > 0;
   const hasConfirmedNoClasses = shouldShowClassFirstEmptyState(classesLoadStatus, classes.length);
   const billingUi = billingStatusMessage(billing);
+  const schoolFundedBilling = Boolean(billing?.school_funded || billing?.subscription_status === "school_funded");
+  const canManagePersonalBilling = Boolean(billing?.portal_management_available);
+  const billingSummary = schoolFundedBilling
+    ? canManagePersonalBilling
+      ? t("teacherAdmin.billing.schoolAndPersonal")
+      : t("teacherAdmin.billing.schoolManaged")
+    : t("teacherAdmin.billing.individual");
+  const billingAction = canManagePersonalBilling
+    ? t("teacherAdmin.billing.managePersonal")
+    : schoolFundedBilling
+      ? t("teacherAdmin.billing.viewDetails")
+      : t("teacherAdmin.billing.manage");
   const teacherDisplayShort = useMemo(() => {
     const title = (state.profile.title || "").trim();
     const surname = (state.profile.surname || "").trim();
@@ -1307,6 +1302,39 @@ export default function TeacherAdminPage() {
               )}
             </div>
           </div>
+
+          <section className="mt-4 rounded-[28px] border border-white/70 bg-white/82 p-4 shadow-[0_16px_40px_rgba(15,23,42,0.06)] backdrop-blur print-hide" aria-labelledby="teacher-admin-billing">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="max-w-2xl">
+                <div className="text-sm font-black uppercase tracking-[0.16em] text-emerald-700">
+                  {t("teacherAdmin.billing.label")}
+                </div>
+                <h2 id="teacher-admin-billing" className="mt-1 text-lg font-extrabold tracking-tight text-slate-900">
+                  {billingUi.title}
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  {billingSummary}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  {billingUi.note}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className={btnPrimary}
+                onClick={() => navigate("/billing")}
+              >
+                {billingAction}
+              </button>
+            </div>
+
+            {billingError ? (
+              <div className="mt-3 rounded-2xl border-2 border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+                {billingError}
+              </div>
+            ) : null}
+          </section>
 
           <section className="mt-4 rounded-[24px] border border-emerald-100 bg-gradient-to-r from-emerald-50 via-teal-50 to-cyan-50 p-4 print-hide" aria-labelledby="teacher-admin-getting-started">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1618,50 +1646,6 @@ export default function TeacherAdminPage() {
                   <span className="font-semibold"> Timetable settings</span>.
                 </div>
               )}
-
-              <div className="mt-4 rounded-[28px] border border-white/70 bg-white/82 p-4 shadow-[0_16px_40px_rgba(15,23,42,0.06)] backdrop-blur">
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <div className="text-sm font-black uppercase tracking-[0.16em] text-emerald-700">
-                      Billing
-                    </div>
-                    <div className="mt-1 text-lg font-extrabold tracking-tight text-slate-900">
-                      {billingUi.title}
-                    </div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      {billingUi.body}
-                    </div>
-                    <div className="mt-2 text-xs leading-5 text-slate-500">
-                      {billingUi.note}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-3">
-                    {billing?.has_stripe_customer && (
-                      <button
-                        type="button"
-                        className={btn}
-                        onClick={() => navigate("/billing")}
-                      >
-                        Subscription &amp; billing
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className={btnPrimary}
-                      onClick={() => navigate("/onboarding/billing")}
-                    >
-                      View plans
-                    </button>
-                  </div>
-                </div>
-
-                {billingError ? (
-                  <div className="mt-3 rounded-2xl border-2 border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
-                    {billingError}
-                  </div>
-                ) : null}
-              </div>
 
               <div className="mt-4 rounded-[28px] border border-white/70 bg-white/82 p-4 shadow-[0_16px_40px_rgba(15,23,42,0.06)] backdrop-blur">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
