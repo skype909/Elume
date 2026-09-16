@@ -790,25 +790,6 @@ export default function TeacherAdminPage() {
     }
   }
 
-  async function openBillingPortal() {
-    setBillingBusy(true);
-    setBillingError(null);
-
-    try {
-      const data = await apiFetch("/billing/create-portal-session", {
-        method: "POST",
-      });
-
-      const portalUrl = String((data as any)?.portal_url || "").trim();
-      if (!portalUrl) throw new Error("No billing portal URL was returned.");
-
-      window.location.assign(portalUrl);
-    } catch (e: any) {
-      setBillingError(e?.message || "Could not open billing portal.");
-      setBillingBusy(false);
-    }
-  }
-
   async function exportUsersCsv() {
     try {
       const blob = await apiFetchBlob("/admin/users/export.csv", { method: "GET" });
@@ -1660,10 +1641,9 @@ export default function TeacherAdminPage() {
                       <button
                         type="button"
                         className={btn}
-                        onClick={openBillingPortal}
-                        disabled={billingBusy}
+                        onClick={() => navigate("/billing")}
                       >
-                        {billingBusy ? "Redirecting..." : "Manage plan"}
+                        Subscription &amp; billing
                       </button>
                     )}
                     <button

@@ -633,6 +633,55 @@ def _is_school_funded_user(db: Session, user: models.UserModel) -> bool:
     )
 
 
+def _personal_billing_management_state(db: Session, user: models.UserModel) -> dict[str, Any]:
+    """Return the existing personal Stripe subscription state without changing entitlement.
+
+    Stripe's durable webhook inbox already stores the cancellation-at-period-end
+    flag. Reading that projection keeps the billing page accurate without a
+    schema change or a fresh Stripe API request on every application load.
+    """
+    subscription_id = (getattr(user, "stripe_subscription_id", None) or "").strip()
+    customer_id = (getattr(user, "stripe_customer_id", None) or "").strip()
+    status = (getattr(user, "subscription_status", None) or "inactive").strip().lower()
+    scheduled = False
+    effective_at = None
+
+    if subscription_id:
+        event = (
+            db.query(models.StripeWebhookEventModel)
+            .filter(
+                models.StripeWebhookEventModel.resolved_user_id == user.id,
+                models.StripeWebhookEventModel.stripe_subscription_id == subscription_id,
+                models.StripeWebhookEventModel.processing_state == "processed",
+                models.StripeWebhookEventModel.event_type.in_({
+                    "customer.subscription.created",
+                    "customer.subscription.updated",
+                    "customer.subscription.deleted",
+                }),
+            )
+            .order_by(
+                models.StripeWebhookEventModel.stripe_created_at.desc(),
+                models.StripeWebhookEventModel.id.desc(),
+            )
+            .first()
+        )
+        data = getattr(event, "event_data", None) or {}
+        if isinstance(data, dict):
+            scheduled = bool(data.get("cancel_at_period_end"))
+            if scheduled:
+                effective_at = _webhook_datetime(data.get("current_period_end")) or getattr(user, "current_period_end", None)
+
+    cancellable_statuses = {"active", "trialing", "past_due", "unpaid", "paused"}
+    portal_available = bool(customer_id and subscription_id and status in cancellable_statuses)
+    return {
+        "personal_subscription_status": status if subscription_id else None,
+        "portal_management_available": portal_available,
+        "cancellation_available": portal_available and not scheduled,
+        "cancellation_scheduled": scheduled,
+        "cancellation_effective_at": effective_at,
+    }
+
+
 def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, Any]:
     _refresh_ai_daily_limit(user)
     _reset_ai_prompt_counter_if_needed(user)
@@ -640,6 +689,7 @@ def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, An
     school = getattr(user, "school", None)
     decision = decide_entitlement(user, school, grants, now=_utcnow())
     access = {"access_allowed": decision.allowed, "access_reason": decision.code, "access_until": decision.access_until}
+    management = _personal_billing_management_state(db, user)
     if _is_school_funded_user(db, user):
         return {
             "subscription_status": "school_funded",
@@ -651,6 +701,7 @@ def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, An
             "payment_failed_at": user.payment_failed_at,
             "payment_recovery_deadline_at": user.payment_recovery_deadline_at,
             "has_stripe_customer": bool(user.stripe_customer_id),
+            **management,
             "billing_onboarding_required": False,
             "school_funded": True,
             "trial_started_at": user.trial_started_at,
@@ -672,6 +723,7 @@ def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, An
         "payment_failed_at": getattr(user, "payment_failed_at", None),
         "payment_recovery_deadline_at": getattr(user, "payment_recovery_deadline_at", None),
         "has_stripe_customer": bool(user.stripe_customer_id),
+        **management,
         "billing_onboarding_required": bool(user.billing_onboarding_required),
         "school_funded": False,
         "trial_started_at": user.trial_started_at,
@@ -686,6 +738,16 @@ def _billing_status_payload(db: Session, user: models.UserModel) -> dict[str, An
 def _require_individual_billing_account(db: Session, user: models.UserModel) -> None:
     if _is_school_funded_user(db, user):
         raise HTTPException(status_code=403, detail="This account is funded through its active school membership")
+
+
+def _require_portal_management_account(db: Session, user: models.UserModel) -> None:
+    """A school-funded user may still manage an already-linked personal plan.
+
+    This narrower check is used only for Stripe's portal. Checkout and trial
+    creation retain the existing school-access restriction.
+    """
+    if _is_school_funded_user(db, user) and not (user.stripe_customer_id or "").strip():
+        raise HTTPException(status_code=403, detail="Your access is managed by your school")
 
 
 def _is_missing_stripe_customer_error(exc: Exception) -> bool:
@@ -4422,9 +4484,9 @@ def create_portal_session(
     db: Session = Depends(get_db),
     user: models.UserModel = Depends(get_authenticated_user),
 ):
-    _require_individual_billing_account(db, user)
+    _require_portal_management_account(db, user)
     if not STRIPE_SECRET_KEY:
-        raise HTTPException(status_code=500, detail="Stripe is not configured")
+        raise HTTPException(status_code=503, detail="Billing management is temporarily unavailable. Please try again later.")
     if not (user.stripe_customer_id or "").strip():
         raise HTTPException(status_code=400, detail="No Stripe customer found for this account")
 
@@ -4437,12 +4499,13 @@ def create_portal_session(
             )
         session = stripe.billing_portal.Session.create(
             customer=valid_customer_id,
-            return_url=f"{APP_BASE_URL.rstrip('/')}/#/",
+            return_url=f"{APP_BASE_URL.rstrip('/')}/#/billing",
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create billing portal session: {e}")
+    except Exception:
+        logger.exception("Stripe billing portal session creation failed for user_id=%s", user.id)
+        raise HTTPException(status_code=502, detail="Could not open secure billing management. Please try again.")
 
     return {"portal_url": session.url}
 

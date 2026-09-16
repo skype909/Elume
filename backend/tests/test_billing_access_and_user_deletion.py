@@ -41,15 +41,21 @@ class _Query:
     def all(self):
         return list(self.values)
 
+    def order_by(self, *_):
+        return self
+
 
 class _BillingDB:
-    def __init__(self, grants=()):
+    def __init__(self, grants=(), events=()):
         self.grants = list(grants)
+        self.events = list(events)
         self.commits = 0
 
     def query(self, entity):
         if entity is models.UserAccessGrantModel:
             return _Query(self.grants)
+        if entity is models.StripeWebhookEventModel:
+            return _Query(self.events)
         return _Query()
 
     def commit(self):
@@ -85,8 +91,8 @@ def _user(**overrides):
 
 
 class BillingAccessPayloadTests(unittest.TestCase):
-    def _payload(self, account, grants=()):
-        db = _BillingDB(grants)
+    def _payload(self, account, grants=(), events=()):
+        db = _BillingDB(grants, events)
         with mock.patch.object(main, "_reset_ai_prompt_counter_if_needed"):
             payload = main.billing_me(db, account)
         self.assertEqual(db.commits, 1)
@@ -141,6 +147,56 @@ class BillingAccessPayloadTests(unittest.TestCase):
         ):
             payload = self._payload(_user(), [grant])
             self.assertFalse(payload["access_allowed"])
+
+    def test_scheduled_cancellation_is_separate_from_completed_cancellation(self):
+        period_end = datetime.utcnow() + timedelta(days=14)
+        event = SimpleNamespace(event_data={
+            "cancel_at_period_end": True,
+            "current_period_end": period_end.isoformat(),
+        })
+        scheduled = self._payload(
+            _user(
+                subscription_status="active",
+                stripe_customer_id="cus_personal",
+                stripe_subscription_id="sub_personal",
+                current_period_end=period_end,
+            ),
+            events=[event],
+        )
+        self.assertTrue(scheduled["portal_management_available"])
+        self.assertFalse(scheduled["cancellation_available"])
+        self.assertTrue(scheduled["cancellation_scheduled"])
+        self.assertEqual(scheduled["cancellation_effective_at"], period_end)
+
+        cancelled = self._payload(
+            _user(
+                subscription_status="canceled",
+                stripe_customer_id="cus_personal",
+                stripe_subscription_id="sub_personal",
+            )
+        )
+        self.assertFalse(cancelled["portal_management_available"])
+        self.assertFalse(cancelled["cancellation_available"])
+        self.assertFalse(cancelled["cancellation_scheduled"])
+
+    def test_school_only_and_school_plus_personal_billing_are_distinguished(self):
+        school_only = _user(school_id=4)
+        mixed = _user(
+            school_id=4,
+            subscription_status="active",
+            stripe_customer_id="cus_personal",
+            stripe_subscription_id="sub_personal",
+        )
+        with mock.patch.object(main, "_is_school_funded_user", return_value=True):
+            school_only_state = main._personal_billing_management_state(_BillingDB(), school_only)
+            mixed_state = main._personal_billing_management_state(_BillingDB(), mixed)
+            self.assertFalse(school_only_state["portal_management_available"])
+            self.assertTrue(mixed_state["portal_management_available"])
+            self.assertTrue(mixed_state["cancellation_available"])
+            with self.assertRaises(main.HTTPException) as denied:
+                main._require_portal_management_account(_BillingDB(), school_only)
+            self.assertEqual(denied.exception.status_code, 403)
+            main._require_portal_management_account(_BillingDB(), mixed)
 
 
 @unittest.skipUnless(RUN, "set ELUME_RUN_POSTGRES_BOOTSTRAP_TESTS=1 for local PostgreSQL tests")

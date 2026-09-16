@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
 import ELogo2 from "./assets/ELogo2.png";
 
@@ -11,6 +11,11 @@ type BillingStatus = {
   subscription_expired?: boolean;
   requires_billing_redirect?: boolean;
   has_stripe_customer: boolean;
+  personal_subscription_status?: string | null;
+  portal_management_available?: boolean;
+  cancellation_available?: boolean;
+  cancellation_scheduled?: boolean;
+  cancellation_effective_at?: string | null;
   billing_onboarding_required: boolean;
   trial_started_at: string | null;
   trial_ends_at: string | null;
@@ -31,6 +36,8 @@ function daysLeft(value: string | null) {
 
 export default function BillingOnboardingPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isAccountBillingPage = location.pathname === "/billing";
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -39,6 +46,21 @@ export default function BillingOnboardingPage() {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [hasScrolledToEnd, setHasScrolledToEnd] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const loadStatus = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = (await apiFetch("/billing/me")) as BillingStatus;
+      setBilling(data);
+      setError(null);
+      return data;
+    } catch (err: any) {
+      setError(err?.message || "Could not load billing status.");
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let pollTimer: number | null = null;
@@ -51,7 +73,7 @@ export default function BillingOnboardingPage() {
         setBilling(data);
         setError(null);
 
-        if (data?.access_allowed === true) {
+        if (data?.access_allowed === true && !isAccountBillingPage) {
           navigate("/", { replace: true });
           return;
         }
@@ -86,12 +108,17 @@ export default function BillingOnboardingPage() {
       cancelled = true;
       if (pollTimer) window.clearTimeout(pollTimer);
     };
-  }, [navigate]);
+  }, [isAccountBillingPage, navigate]);
 
   const status = useMemo(() => (billing?.subscription_status || "inactive").toLowerCase(), [billing]);
   const isTrial = (status === "trialing" || !!billing?.trial_active) && !billing?.billing_onboarding_required;
   const isPaid = status === "active" || isTrial;
   const isPendingActivation = status === "pending" && !!billing?.has_stripe_customer;
+  const isSchoolFunded = Boolean(billing?.school_funded);
+  const canManageBilling = Boolean(billing?.portal_management_available);
+  const canCancelSubscription = Boolean(billing?.cancellation_available);
+  const cancellationScheduled = Boolean(billing?.cancellation_scheduled);
+  const cancellationEffectiveAt = billing?.cancellation_effective_at ?? null;
   const trialDaysLeft = daysLeft(billing?.trial_ends_at || null);
   const isExpired = Boolean(billing?.subscription_expired);
   const subscriptionExpiresAt = billing?.subscription_expires_at ?? null;
@@ -136,6 +163,12 @@ export default function BillingOnboardingPage() {
     }
   }
 
+  const pageTitle = isAccountBillingPage
+    ? "Subscription & billing"
+    : isExpired
+      ? "Renew your Elume subscription"
+      : "Complete your Elume setup";
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 px-4 py-10">
       <div className="mx-auto max-w-4xl rounded-[36px] border border-white/70 bg-white/90 p-6 shadow-[0_30px_90px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-8">
@@ -146,13 +179,15 @@ export default function BillingOnboardingPage() {
             </div>
             <div>
               <div className="text-[11px] font-black uppercase tracking-[0.2em] text-emerald-700">
-                Welcome to Elume
+                {isAccountBillingPage ? "Your Elume account" : "Welcome to Elume"}
               </div>
               <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-900">
-                {isExpired ? "Renew your Elume subscription" : "Complete your Elume setup"}
+                {pageTitle}
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                {isExpired
+                {isAccountBillingPage
+                  ? "Review your personal subscription, update payment details, or cancel securely in Stripe."
+                  : isExpired
                   ? "Your subscription has expired. Renew now to restore full access to your account."
                   : "Choose a monthly or annual plan, enter your card details securely in Stripe, and start with a 14-day free trial. No charge is taken today."}
               </p>
@@ -172,7 +207,16 @@ export default function BillingOnboardingPage() {
           </div>
         ) : (
           <>
-            {(isPaid || isTrial) && (
+            {isSchoolFunded && (
+              <div className="mt-6 rounded-[28px] border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-cyan-50 px-5 py-4">
+                <div className="text-sm font-bold text-slate-900">Access managed by your school</div>
+                <div className="mt-2 text-sm leading-6 text-slate-600">
+                  Your Elume access is currently funded through your school membership. Managing a personal subscription does not change your school membership.
+                </div>
+              </div>
+            )}
+
+            {(isPaid || isTrial) && !isSchoolFunded && (
               <div className="mt-6 rounded-[28px] border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 px-5 py-4">
                 <div className="text-sm font-bold text-slate-900">
                   {isTrial
@@ -192,16 +236,60 @@ export default function BillingOnboardingPage() {
                   >
                     Continue to Dashboard
                   </button>
-                  {billing?.has_stripe_customer && (
+                  {canManageBilling && (
                     <button
                       type="button"
                       onClick={openPortal}
                       disabled={busy}
                       className="rounded-full border-2 border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
                     >
-                      Manage plan
+                      Manage billing
                     </button>
                   )}
+                </div>
+              </div>
+            )}
+
+            {canManageBilling && (
+              <div className="mt-6 rounded-[28px] border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-cyan-50 px-5 py-4">
+                <div className="text-sm font-bold text-slate-900">
+                  {cancellationScheduled ? "Cancellation scheduled" : "Personal subscription"}
+                </div>
+                <div className="mt-2 text-sm leading-6 text-slate-600">
+                  {cancellationScheduled
+                    ? cancellationEffectiveAt
+                      ? `Your subscription is scheduled to end on ${new Date(cancellationEffectiveAt).toLocaleDateString("en-IE")}. You can review it in Stripe.`
+                      : "Your subscription is scheduled to end. You can review it in Stripe."
+                    : "To cancel or update your personal subscription, continue securely to Stripe. Stripe will show the available options and any outstanding invoice separately."}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={openPortal}
+                    disabled={busy}
+                    className="rounded-full border-2 border-violet-600 bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60"
+                  >
+                    {busy ? "Opening Stripe..." : canCancelSubscription ? "Cancel subscription" : "Manage billing"}
+                  </button>
+                  {canCancelSubscription && (
+                    <button
+                      type="button"
+                      onClick={openPortal}
+                      disabled={busy}
+                      className="rounded-full border-2 border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      Manage billing
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {status === "canceled" && !canManageBilling && (
+              <div className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50 px-5 py-4">
+                <div className="text-sm font-bold text-slate-900">Subscription cancelled</div>
+                <div className="mt-2 text-sm leading-6 text-slate-600">
+                  This personal subscription is no longer active. If you need access again, choose a plan below.
                 </div>
               </div>
             )}
@@ -215,7 +303,7 @@ export default function BillingOnboardingPage() {
               </div>
             )}
 
-            {!isPaid && !isTrial && !isPendingActivation && (
+            {!isSchoolFunded && !isPaid && !isTrial && !isPendingActivation && (
               <div className="mt-6 space-y-5">
                 <div className="rounded-[28px] border border-slate-200 bg-slate-50 px-5 py-4">
                   <div className="text-sm font-bold text-slate-900">How billing works</div>
@@ -223,7 +311,7 @@ export default function BillingOnboardingPage() {
                     <p>Your Elume plan starts with a 14-day free trial.</p>
                     <p>Stripe collects your card details today, but no charge is taken today.</p>
                     <p>Your first payment is taken automatically 14 days after your trial starts unless you cancel first.</p>
-                    <p>You can cancel before the first charge date from Teacher Admin.</p>
+                    <p>You can manage or cancel a personal subscription from Subscription &amp; billing.</p>
                   </div>
                 </div>
 
@@ -284,8 +372,16 @@ export default function BillingOnboardingPage() {
             )}
 
             {error && (
-              <div className="mt-4 rounded-[24px] border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-                {error}
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                <span>{error}</span>
+                <button
+                  type="button"
+                  onClick={() => void loadStatus()}
+                  disabled={loading || busy}
+                  className="rounded-full border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 disabled:opacity-60"
+                >
+                  Retry
+                </button>
               </div>
             )}
           </>
@@ -329,7 +425,7 @@ export default function BillingOnboardingPage() {
               <p className="mt-3">Your Elume subscription includes a 14-day free trial from the date your setup is completed.</p>
               <p className="mt-3">Stripe will ask for your card details today to set up the subscription, but no charge is taken today.</p>
               <p className="mt-3">Unless you cancel first, the first payment will be taken automatically 14 days after your trial starts.</p>
-              <p className="mt-3">You can cancel before the first charge date from Teacher Admin using the billing controls.</p>
+              <p className="mt-3">You can manage or cancel a personal subscription from Subscription &amp; billing using the secure Stripe billing portal.</p>
               <p className="mt-3">If your subscription ends, your workspace may be removed after 30 days. Please export important materials before then.</p>
               <p className="mt-3">By continuing, you confirm that you have read this billing summary and want Elume to begin your free trial with the selected subscription plan.</p>
               <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">

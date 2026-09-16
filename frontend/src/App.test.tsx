@@ -124,6 +124,17 @@ describe("platform access navigation", () => {
   });
 });
 
+describe("account billing navigation", () => {
+  test("keeps Subscription & billing discoverable from the teacher dashboard", async () => {
+    setApiResponses([]);
+    renderApp();
+
+    const controls = await screen.findAllByRole("button", { name: "Subscription & billing" });
+    fireEvent.click(controls[0]);
+    await waitFor(() => expect(router.__getLocation().pathname).toBe("/billing"));
+  });
+});
+
 describe("public Gaeilge account flow", () => {
   function setAnonymousPublicResponses() {
     localStorage.clear();

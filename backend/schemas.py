@@ -537,6 +537,13 @@ class BillingStatusOut(BaseModel):
     payment_failed_at: Optional[datetime] = None
     payment_recovery_deadline_at: Optional[datetime] = None
     has_stripe_customer: bool = False
+    # These are a read-only projection of the linked personal subscription.
+    # They deliberately do not change a school's access entitlement.
+    personal_subscription_status: Optional[str] = None
+    portal_management_available: bool = False
+    cancellation_available: bool = False
+    cancellation_scheduled: bool = False
+    cancellation_effective_at: Optional[datetime] = None
     billing_onboarding_required: bool = False
     school_funded: bool = False
     trial_started_at: Optional[datetime] = None

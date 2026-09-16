@@ -1348,6 +1348,14 @@ export function Dashboard({
               <button
                 className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur transition-all hover:bg-slate-100"
                 type="button"
+                onClick={() => navigate("/billing")}
+              >
+                Subscription &amp; billing
+              </button>
+
+              <button
+                className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur transition-all hover:bg-slate-100"
+                type="button"
                 onClick={() => navigate("/calendar")}
               >
                 <UiText translationKey="nav.calendar" />
@@ -1382,6 +1390,10 @@ export function Dashboard({
             <div className="hidden md:flex flex-col gap-2 items-end">
               <button className={headerBtn} type="button" onClick={() => navigate("/admin")}>
                 <UiText translationKey="nav.admin" />
+              </button>
+
+              <button className={headerBtn} type="button" onClick={() => navigate("/billing")}>
+                Subscription &amp; billing
               </button>
 
               <button className={headerBtn} type="button" onClick={() => navigate("/calendar")}>
@@ -2260,6 +2272,7 @@ export default function App() {
   // Dashboard is the root route in App.tsx
   const isDashboard = location.pathname === "/";
   const isBillingRoute =
+    location.pathname === "/billing" ||
     location.pathname === "/onboarding/billing" ||
     location.pathname === "/billing/success" ||
     location.pathname === "/billing/cancel";
@@ -2443,6 +2456,7 @@ export default function App() {
         <Route path="/school-invite/:token" element={<SchoolInvitationPage />} />
         <Route path="/billing/success" element={<BillingSuccessPage />} />
         <Route path="/billing/cancel" element={<BillingCancelPage />} />
+        <Route path="/billing" element={<BillingOnboardingPage />} />
         <Route path="/onboarding/billing" element={<BillingOnboardingPage />} />
       </Routes>
 
