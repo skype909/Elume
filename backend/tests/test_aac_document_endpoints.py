@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os, shutil, sys, tempfile, unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from types import SimpleNamespace
 from pathlib import Path
@@ -27,8 +27,9 @@ class AacDocumentEndpointTests(unittest.TestCase):
         self.tmp = Path(tempfile.gettempdir()) / f"aac-endpoint-{uuid4().hex}"; self.tmp.mkdir()
         self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         Base.metadata.create_all(self.engine); self.Session = sessionmaker(bind=self.engine); self.db = self.Session()
-        self.owner = models.UserModel(email="pfitzgerald@preskilkenny.ie", password_hash="x", role="teacher", is_active=True, email_verified=True)
-        self.other = models.UserModel(email="other@example.test", password_hash="x", role="teacher", is_active=True, email_verified=True)
+        entitlement_end = datetime.utcnow() + timedelta(days=30)
+        self.owner = models.UserModel(email="pfitzgerald@preskilkenny.ie", password_hash="x", role="teacher", is_active=True, email_verified=True, subscription_status="active", subscription_expires_at=entitlement_end)
+        self.other = models.UserModel(email="other@example.test", password_hash="x", role="teacher", is_active=True, email_verified=True, subscription_status="active", subscription_expires_at=entitlement_end)
         self.db.add_all([self.owner, self.other]); self.db.flush()
         self.cls = models.ClassModel(owner_user_id=self.owner.id, name="Fictional Physics", subject="Physics", aac_planner_enabled=True)
         self.other_cls = models.ClassModel(owner_user_id=self.other.id, name="Other", subject="Physics", aac_planner_enabled=True)
@@ -107,14 +108,32 @@ class AacDocumentEndpointTests(unittest.TestCase):
         self.assertFalse(configured.json()["revision"]["plan"]["tracker_setup_pending"])
         self.assertEqual(configured.json()["title"], "New tracker")
 
-    def test_only_named_reviewers_can_discover_or_use_draft_pilot(self):
+    def test_entitled_nonpilot_teacher_can_discover_and_use_own_tracker_only(self):
         self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac").status_code, 200)
         main.app.dependency_overrides[main.get_current_user] = lambda: self.other
-        self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac").status_code, 403)
-        self.assertEqual(self.client.put(f"/classes/{self.cls.id}/aac/enabled", json={"enabled": True}).status_code, 403)
-        self.assertEqual(self.client.post(f"/classes/{self.cls.id}/aac/projects", json={"title": "No access", "subject": "Physics", "weekly_minutes": 30, "current_year_stage": "fifth_year"}).status_code, 403)
+        self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac").status_code, 404)
+        fresh_class = models.ClassModel(owner_user_id=self.other.id, name="Fresh AAC", subject="Art", aac_planner_enabled=False)
+        self.db.add(fresh_class); self.db.commit()
+        self.assertEqual(self.client.put(f"/classes/{fresh_class.id}/aac/enabled", json={"enabled": True}).status_code, 200)
+        self.assertEqual(self.client.get(f"/classes/{fresh_class.id}/aac").json(), {"enabled": True, "project": None})
 
-    def test_pilot_rejects_provider_proposals_and_calendar_publication(self):
+    def test_ineligible_teacher_is_denied_but_active_school_teacher_is_allowed(self):
+        self.other.subscription_status = "inactive"
+        self.other.subscription_expires_at = None
+        self.db.commit()
+        main.app.dependency_overrides[main.get_current_user] = lambda: self.other
+        denied = self.client.get(f"/classes/{self.other_cls.id}/aac")
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.json()["detail"]["code"], "entitlement_required")
+
+        school = models.SchoolModel(name="Fictional active school", slug="fictional-active-school", status="active", seat_limit=10)
+        self.db.add(school); self.db.flush()
+        self.other.school_id = school.id
+        self.db.commit()
+        allowed = self.client.get(f"/classes/{self.other_cls.id}/aac")
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+
+    def test_tracker_rejects_provider_proposals_and_calendar_publication(self):
         document = self.upload().json(); revision = self.db.query(models.AacPlanRevisionModel).filter_by(project_id=self.project.id, state="draft").one()
         with patch.object(main, "_enforce_ai_feature_limit") as enforce:
             proposal = self.client.post(f"/classes/{self.cls.id}/aac/proposals", json={"document_ids": [document["id"]], "planning_inputs": {}})
@@ -174,8 +193,8 @@ class AacDocumentEndpointTests(unittest.TestCase):
 
     def test_student_or_other_teacher_cannot_read_or_upload(self):
         main.app.dependency_overrides[main.get_current_user] = lambda: self.other
-        self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac/documents").status_code, 403)
-        self.assertEqual(self.upload().status_code, 403)
+        self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac/documents").status_code, 404)
+        self.assertEqual(self.upload().status_code, 404)
         main.app.dependency_overrides.pop(main.get_current_user)
         # QR/PIN sessions do not satisfy the teacher identity dependency.
         self.assertEqual(self.client.get(f"/classes/{self.cls.id}/aac/documents").status_code, 401)

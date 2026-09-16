@@ -54,9 +54,6 @@ class AacProgressTests(fixtures.AacDocumentEndpointTests):
         self.assertEqual(self.client.put(self.base + f"/students/{self.outsider.id}", json=self.payload()).status_code, 404)
         self.assertEqual(self.client.get(f"/classes/{self.other_cls.id}/aac/students").status_code, 404)
         main.app.dependency_overrides[main.get_current_user] = lambda: self.other
-        self.assertEqual(self.client.get(self.base + "/students").status_code, 403)
-        self.assertEqual(self.put().status_code, 403)
-        self.other.email = "dcampion@preskilkenny.ie"; self.db.commit()
         self.assertEqual(self.client.get(self.base + "/students").status_code, 404)
         self.assertEqual(self.put().status_code, 404)
         main.app.dependency_overrides.pop(main.get_current_user)

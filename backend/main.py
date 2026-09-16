@@ -6406,21 +6406,23 @@ def require_cat4_access(user: models.UserModel):
         raise HTTPException(status_code=403, detail="CAT4 Insights not enabled for this account")
 
 
-# This is deliberately separate from CAT4 and school/billing entitlement.  It is
-# a narrowly reviewed, draft-only AAC pilot rather than a general release.
-AAC_REVIEWER_EMAILS = frozenset({
-    "pfitzgerald@preskilkenny.ie",
-    "dcampion@preskilkenny.ie",
-})
-
-
-def user_has_aac_reviewer_access(user: models.UserModel) -> bool:
-    return (user.email or "").strip().casefold() in AAC_REVIEWER_EMAILS
-
-
-def require_aac_reviewer_access(user: models.UserModel) -> None:
-    if not user_has_aac_reviewer_access(user):
-        raise HTTPException(status_code=403, detail="AAC draft pilot is not enabled for this account")
+# AAC is available to entitled teaching accounts.  It deliberately evaluates
+# the established entitlement policy here as well as using the product
+# dependency, so a deployment configured with entitlement reporting cannot
+# accidentally make this teaching workspace available to unpaid accounts.
+def require_aac_tracker_access(db: Session, user: models.UserModel) -> None:
+    if getattr(user, "role", None) not in {
+        ROLE_TEACHER,
+        ROLE_SCHOOL_ADMIN,
+        ROLE_PLATFORM_ADMIN,
+    }:
+        raise HTTPException(status_code=403, detail="AAC Tracker is limited to teacher accounts")
+    grants = db.query(models.UserAccessGrantModel).filter(
+        models.UserAccessGrantModel.user_id == user.id
+    ).all()
+    decision = decide_entitlement(user, getattr(user, "school", None), grants, now=_utcnow())
+    if not decision.allowed:
+        raise HTTPException(status_code=403, detail={"code": "entitlement_required", "reason": decision.code})
 
 
 def _normalise_student_name(value: str) -> str:
@@ -13829,7 +13831,7 @@ def student_download_test(
 # -------------------------
 # AAC planner: teacher-private drafts and approved plans. Calendar rows are created only by approve.
 def _aac_project_or_404(class_id: int, db: Session, user: models.UserModel):
-    require_aac_reviewer_access(user)
+    require_aac_tracker_access(db, user)
     _assert_class_access(class_id, db, user)
     project = db.query(models.AacProjectModel).filter_by(class_id=class_id, owner_user_id=user.id).first()
     if not project:
@@ -13881,7 +13883,7 @@ def _aac_review_token(project: models.AacProjectModel, revision: models.AacPlanR
 
 @app.put("/classes/{class_id}/aac/enabled")
 def set_aac_planner_enabled(class_id: int, payload: schemas.AacEnablePayload, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    require_aac_reviewer_access(user)
+    require_aac_tracker_access(db, user)
     cls = _assert_class_access(class_id, db, user)
     cls.aac_planner_enabled = payload.enabled
     db.commit()
@@ -13890,7 +13892,7 @@ def set_aac_planner_enabled(class_id: int, payload: schemas.AacEnablePayload, db
 
 @app.get("/classes/{class_id}/aac")
 def get_aac_project(class_id: int, recalculate_dates: bool = False, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    require_aac_reviewer_access(user)
+    require_aac_tracker_access(db, user)
     cls = _assert_class_access(class_id, db, user)
     if not cls.aac_planner_enabled:
         return {"enabled": False, "project": None}
@@ -13900,7 +13902,7 @@ def get_aac_project(class_id: int, recalculate_dates: bool = False, db: Session 
 
 @app.post("/classes/{class_id}/aac/projects")
 def create_aac_project(class_id: int, payload: schemas.AacProjectCreate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    require_aac_reviewer_access(user)
+    require_aac_tracker_access(db, user)
     cls = _assert_class_access(class_id, db, user)
     if not cls.aac_planner_enabled:
         raise HTTPException(status_code=409, detail="Enable AAC Planner for this class first.")
@@ -13919,7 +13921,7 @@ def create_aac_project(class_id: int, payload: schemas.AacProjectCreate, db: Ses
 @app.post("/classes/{class_id}/aac/new-draft")
 def start_new_aac_draft(class_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
     """Persist a clean setup revision without changing retained tracker metadata."""
-    require_aac_reviewer_access(user)
+    require_aac_tracker_access(db, user)
     _assert_class_access(class_id, db, user)
     project = db.query(models.AacProjectModel).filter_by(
         class_id=class_id, owner_user_id=user.id
@@ -13954,7 +13956,7 @@ def start_new_aac_draft(class_id: int, db: Session = Depends(get_db), user: mode
 @app.put("/classes/{class_id}/aac/tracker-details")
 def save_aac_tracker_details(class_id: int, payload: schemas.AacTrackerSetup, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
     """Finish a clean tracker setup while retaining historical revision snapshots."""
-    require_aac_reviewer_access(user)
+    require_aac_tracker_access(db, user)
     _assert_class_access(class_id, db, user)
     if not payload.title.strip() or not payload.subject.strip():
         raise HTTPException(status_code=422, detail="Enter a tracker title and subject.")
@@ -13979,7 +13981,7 @@ def save_aac_tracker_details(class_id: int, payload: schemas.AacTrackerSetup, db
 
 @app.put("/classes/{class_id}/aac/revision")
 def save_aac_revision(class_id: int, payload: schemas.AacRevisionDraft, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    require_aac_reviewer_access(user)
+    require_aac_tracker_access(db, user)
     _assert_class_access(class_id, db, user)
     # Draft edits and approval share these row locks.  Proposal generation deliberately
     # obtains them only after its external AI request has completed.
@@ -14153,9 +14155,9 @@ def remove_aac_document(class_id: int, document_id: int, db: Session = Depends(g
 @app.post("/classes/{class_id}/aac/proposals")
 def create_aac_proposal(class_id: int, payload: schemas.AacProposalRequest, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
     project = _aac_project_or_404(class_id, db, user)
-    # The reviewer pilot uses deterministic source review plus manual drafting.
+    # AAC uses deterministic source review plus manual drafting.
     # Do not invoke a provider, quota path, or the local simulated provider.
-    raise HTTPException(status_code=409, detail="AAC reviewer pilot does not generate AI draft suggestions. Review extracted source dates and stages, then edit and save your draft.")
+    raise HTTPException(status_code=409, detail="AAC Tracker does not generate AI draft suggestions. Review extracted source dates and stages, then edit and save your draft.")
     documents = db.query(models.AacSourceDocumentModel).filter(models.AacSourceDocumentModel.project_id == project.id, models.AacSourceDocumentModel.owner_user_id == user.id, models.AacSourceDocumentModel.id.in_(payload.document_ids), models.AacSourceDocumentModel.extraction_state == "extracted").all()
     if len(documents) != len(set(payload.document_ids)) or not documents: raise HTTPException(status_code=422, detail="Choose only readable AAC documents from this project.")
     source_data = [{"id": row.id, "purpose": row.purpose, "sections": row.extracted_sections_json} for row in documents]
@@ -14190,8 +14192,8 @@ def create_aac_proposal(class_id: int, payload: schemas.AacProposalRequest, db: 
 
 @app.post("/classes/{class_id}/aac/approve")
 def approve_aac_plan(class_id: int, payload: schemas.AacApproveRequest, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
-    require_aac_reviewer_access(user)
-    raise HTTPException(status_code=409, detail="AAC reviewer pilot is draft-only. Approval and calendar publication are not enabled.")
+    require_aac_tracker_access(db, user)
+    raise HTTPException(status_code=409, detail="AAC Tracker currently saves drafts only. Approval and calendar publication are not enabled.")
     _assert_class_access(class_id, db, user)
     project = db.query(models.AacProjectModel).filter_by(class_id=class_id, owner_user_id=user.id).with_for_update().first()
     if not project: raise HTTPException(status_code=404, detail="AAC Planner is not set up for this class.")

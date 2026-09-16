@@ -22,9 +22,9 @@ class AacReviewerRoleTests(unittest.TestCase):
         token=main.jwt.encode({'sub':str(user.id)},main.JWT_SECRET,algorithm=main.JWT_ALG)
         self.f.client.headers['Authorization']='Bearer '+token
 
-    def test_named_reviewers_all_legitimate_roles_save_and_reload(self):
+    def test_entitled_staff_and_existing_reviewers_all_save_and_reload(self):
         version=0
-        for email in ['pfitzgerald@preskilkenny.ie','dcampion@preskilkenny.ie']:
+        for email in ['pfitzgerald@preskilkenny.ie','dcampion@preskilkenny.ie','ordinary.teacher@example.test']:
             for role in ['school_admin','teacher','platform_admin']:
                 with self.subTest(email=email,role=role):
                     self.f.owner.email=email; self.f.owner.role=role; self.f.db.commit()
@@ -39,15 +39,17 @@ class AacReviewerRoleTests(unittest.TestCase):
                     self.assertEqual(saved['note'],'Fictional reviewer note')
                     self.assertEqual(saved['stages']['research']['target'],'2027-03-12')
 
-    def test_nonreviewer_staff_cannot_read_or_write_even_owned_class(self):
+    def test_entitled_nonpilot_staff_can_read_and_write_their_owned_class(self):
+        version=0
         for role in ['teacher','school_admin','platform_admin']:
             with self.subTest(role=role):
                 self.f.owner.email='nonreviewer@example.test'; self.f.owner.role=role; self.f.db.commit()
                 self.login(self.f.owner)
-                self.assertEqual(self.f.client.get(self.f.base+'/students').status_code,403)
-                self.assertEqual(self.f.put().status_code,403)
+                self.assertEqual(self.f.client.get(self.f.base+'/students').status_code,200)
+                self.assertEqual(self.f.put(expected_version=version).status_code,200)
+                version += 1
 
-    def test_allowlisted_admin_cannot_read_or_write_another_owner_class(self):
+    def test_staff_cannot_read_or_write_another_owner_class(self):
         self.f.other.email='dcampion@preskilkenny.ie'
         for role in ['teacher','school_admin','platform_admin']:
             with self.subTest(role=role):

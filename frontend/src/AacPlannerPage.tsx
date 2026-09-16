@@ -104,7 +104,7 @@ const sourcePurpose: Record<string, string> = {
 const stableId = () =>
   globalThis.crypto?.randomUUID?.() ||
   `aac-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-const AAC_REVIEWER_PILOT_DRAFT_ONLY = true;
+const AAC_DRAFT_ONLY = true;
 const stageCardPalettes = [
   { card: "border-emerald-300 border-l-emerald-600 bg-emerald-50/70", badge: "bg-emerald-700 text-white" },
   { card: "border-cyan-300 border-l-cyan-600 bg-cyan-50/70", badge: "bg-cyan-700 text-white" },
@@ -1099,7 +1099,7 @@ export default function AacPlannerPage({
                 ))
               )}
             </div>
-            {!AAC_REVIEWER_PILOT_DRAFT_ONLY && <button disabled={busy || !selectedDocs.length} onClick={generate} className="mt-4 rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50">{busy ? "Working…" : "Generate draft suggestions"}</button>}
+            {!AAC_DRAFT_ONLY && <button disabled={busy || !selectedDocs.length} onClick={generate} className="mt-4 rounded-xl bg-violet-700 px-4 py-2 font-bold text-white disabled:opacity-50">{busy ? "Working…" : "Generate draft suggestions"}</button>}
           </section>
           <section className={`order-5 rounded-3xl bg-white p-6 shadow-sm ${setupStep === 4 ? "" : "hidden"}`}>
             <div className="flex items-center justify-between gap-3">
@@ -1294,7 +1294,7 @@ export default function AacPlannerPage({
             </article>
             <article className="rounded-3xl border border-amber-200 bg-amber-50 p-6">
               <h3 className="font-extrabold">Review and save</h3>
-              <p className="mt-2 text-sm text-amber-900">Reviewer pilot: save AAC trackers only. AI suggestions, approval and calendar publication are unavailable.</p>
+              <p className="mt-2 text-sm text-amber-900">Save AAC trackers only. AI suggestions, approval and calendar publication are unavailable.</p>
               {assumptions.length ? (
                 <ul className="mt-2 list-disc pl-5 text-sm">
                   {assumptions.map((item, index) => (
@@ -1313,8 +1313,8 @@ export default function AacPlannerPage({
                 />
               )}
               <p className="mt-4 text-sm text-amber-900">
-                {AAC_REVIEWER_PILOT_DRAFT_ONLY
-                  ? "This pilot does not publish stages to any calendar or share them with students."
+                {AAC_DRAFT_ONLY
+                  ? "AAC Tracker does not publish stages to any calendar or share them with students."
                   : "Approval publishes the saved stage milestones to your teacher class and all-events calendars. It does not share this plan with students."}
               </p>
               {project?.status === "approved" && !revision?.state.includes("draft") ? (
@@ -1328,9 +1328,9 @@ export default function AacPlannerPage({
                   {reviewStale && <p className="mt-3 text-sm text-red-800">Refresh the saved draft before approving again.</p>}
                   {blockingWarnings.length > 0 && <p className="mt-3 text-sm text-amber-900">Resolve the scheduling warnings shown above before approval.</p>}
                   <div className="mt-4 flex flex-wrap gap-3">
-                    {!AAC_REVIEWER_PILOT_DRAFT_ONLY && <button
+                    {!AAC_DRAFT_ONLY && <button
                       type="button"
-                      disabled={AAC_REVIEWER_PILOT_DRAFT_ONLY || !canApprove}
+                      disabled={AAC_DRAFT_ONLY || !canApprove}
                       onClick={approve}
                       className="rounded-xl bg-emerald-700 px-4 py-2 font-bold text-white disabled:opacity-50"
                     >
