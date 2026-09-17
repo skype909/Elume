@@ -37,6 +37,15 @@ export async function importLegacySavedVideos(classId: number): Promise<SavedVid
   }
   const result = await listSavedVideos(classId);
   const ids = new Set(result.map((v) => v.youtube_id));
-  if (legacy.every((item) => item?.id && ids.has(item.id))) localStorage.removeItem(key(classId));
+  // Remove only entries that the authorised server list confirms.  This
+  // retains failed or ambiguous imports, while ensuring a later deletion of
+  // an imported video cannot resurrect it from stale browser storage.
+  const remaining = legacy.filter((item) => !item?.id || !ids.has(item.id));
+  try {
+    if (remaining.length) localStorage.setItem(key(classId), JSON.stringify(remaining));
+    else localStorage.removeItem(key(classId));
+  } catch {
+    // Storage can be unavailable; the server result remains authoritative.
+  }
   return result;
 }
