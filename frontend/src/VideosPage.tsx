@@ -2,14 +2,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { BackToClassButton, ClassPageActionBar } from "./ClassPageActions";
+import { createSavedVideo, deleteSavedVideo, importLegacySavedVideos, type SavedVideo, updateSavedVideo } from "./savedVideos";
 
-type VideoItem = {
-  id: string;          // YouTube video id
-  url: string;         // original pasted url
-  title: string;       // user title
-  category: string;    // grouping
-  addedAt: number;
-};
+type VideoItem = SavedVideo;
 
 function extractYouTubeId(url: string): string | null {
   try {
@@ -90,29 +85,12 @@ export default function VideosPage() {
   // Player modal
   const [playing, setPlaying] = useState<VideoItem | null>(null);
 
-  // Load from localStorage
+  // One authorised import path is shared with Whiteboard.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (!raw) {
-        setItems([]);
-        return;
-      }
-      const parsed = JSON.parse(raw) as VideoItem[];
-      setItems(Array.isArray(parsed) ? parsed : []);
-    } catch {
-      setItems([]);
-    }
+    let cancelled = false;
+    void importLegacySavedVideos(classId).then((videos) => !cancelled && setItems(videos)).catch(() => !cancelled && setError("Could not load saved videos."));
+    return () => { cancelled = true; };
   }, [storageKey]);
-
-  // Save to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(items));
-    } catch {
-      // ignore
-    }
-  }, [items, storageKey]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, VideoItem[]>();
@@ -124,7 +102,7 @@ export default function VideosPage() {
     const cats = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
     return cats.map((cat) => ({
       category: cat,
-      videos: (map.get(cat) || []).sort((a, b) => b.addedAt - a.addedAt),
+      videos: (map.get(cat) || []).sort((a, b) => Date.parse(b.added_at) - Date.parse(a.added_at)),
     }));
   }, [items]);
 
@@ -149,7 +127,7 @@ export default function VideosPage() {
     setShowEdit(true);
   }
 
-  function addVideo() {
+  async function addVideo() {
     setError(null);
 
     const url = draftUrl.trim();
@@ -161,16 +139,12 @@ export default function VideosPage() {
     const title = (draftTitle.trim() || "Untitled Video").trim();
     const category = (draftCategory.trim() || "General").trim();
 
-    if (items.some((x) => x.id === ytId)) return setError("That video is already in your list.");
-
-    const newItem: VideoItem = { id: ytId, url, title, category, addedAt: Date.now() };
-
-    setItems((prev) => [newItem, ...prev]);
-    setShowAdd(false);
-    resetDraft();
+    if (items.some((x) => x.youtube_id === ytId)) return setError("That video is already in your list.");
+    try { const next = await createSavedVideo(classId, { youtube_id: ytId, url, title, category }); setItems((prev) => [next, ...prev]); setShowAdd(false); resetDraft(); }
+    catch (caught: any) { setError(caught?.message || "Could not save that video."); }
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     if (!editing) return;
 
     setError(null);
@@ -181,28 +155,19 @@ export default function VideosPage() {
     const ytId = extractYouTubeId(url);
     if (!ytId) return setError("That doesn’t look like a valid YouTube link.");
 
-    if (ytId !== editing.id && items.some((x) => x.id === ytId)) {
+    if (ytId !== editing.youtube_id && items.some((x) => x.youtube_id === ytId)) {
       return setError("That video is already in your list.");
     }
 
     const title = (draftTitle.trim() || "Untitled Video").trim();
     const category = (draftCategory.trim() || "General").trim();
 
-    setItems((prev) =>
-      prev.map((v) =>
-        v.id === editing.id ? { ...v, id: ytId, url, title, category } : v
-      )
-    );
-
-    // If the edited video is currently playing, update that reference too
-    setPlaying((p) => (p && p.id === editing.id ? { ...p, id: ytId, url, title, category } : p));
-
-    setShowEdit(false);
-    setEditing(null);
-    resetDraft();
+    try { const next = await updateSavedVideo(classId, editing.id, { youtube_id: ytId, url, title, category }); setItems((prev) => prev.map((v) => v.id === editing.id ? next : v)); setPlaying((p) => p && p.id === editing.id ? next : p); setShowEdit(false); setEditing(null); resetDraft(); }
+    catch (caught: any) { setError(caught?.message || "Could not save that video."); }
   }
 
-  function deleteVideo(videoId: string) {
+  async function deleteVideo(videoId: number) {
+    try { await deleteSavedVideo(classId, videoId); } catch (caught: any) { setError(caught?.message || "Could not remove that video."); return; }
     setItems((prev) => prev.filter((v) => v.id !== videoId));
     if (playing?.id === videoId) setPlaying(null);
     if (editing?.id === videoId) {
@@ -278,7 +243,7 @@ export default function VideosPage() {
                       >
                         <div className="relative">
                           <img
-                            src={thumbUrl(v.id)}
+                            src={thumbUrl(v.youtube_id)}
                             alt={v.title}
                             className="h-28 w-full object-cover sm:h-32"
                             loading="lazy"
@@ -480,7 +445,7 @@ export default function VideosPage() {
             <div className="mt-3 aspect-video w-full overflow-hidden rounded-xl border border-slate-200 bg-black">
               <iframe
                 title={playing.title}
-                src={embedUrl(playing.id)}
+                src={embedUrl(playing.youtube_id)}
                 className="h-full w-full"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen

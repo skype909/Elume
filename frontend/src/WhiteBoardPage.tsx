@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ApiError, apiFetch, apiFetchBlob } from "./api";
+import { importLegacySavedVideos } from "./savedVideos";
 import InlineNotice from "./Components/InlineNotice";
 import {
   EXAM_LIBRARY_CYCLES,
@@ -48,7 +49,8 @@ const AUDIO_MIME_TYPES = new Set([
 const MAX_AUDIO_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 type SavedClassVideo = {
-  id?: string;
+  id?: number;
+  youtube_id?: string;
   url: string;
   title?: string;
   category?: string;
@@ -3476,27 +3478,15 @@ export default function WhiteBoardPage() {
     }
     setSavedClassVideosLoading(true);
     setSavedClassVideosError(null);
-    try {
-      const raw = localStorage.getItem(savedClassVideosKey(classId));
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(parsed)) throw new Error("Saved video list is invalid");
-      setSavedClassVideos(parsed
-        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-        .filter((item) => typeof item.url === "string" && item.url.trim().length > 0)
-        .map((item) => ({
-          id: typeof item.id === "string" ? item.id : undefined,
-          url: String(item.url),
-          title: typeof item.title === "string" ? item.title : undefined,
-          category: typeof item.category === "string" ? item.category : undefined,
-          addedAt: typeof item.addedAt === "number" ? item.addedAt : undefined,
-        }))
-        .sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)));
-    } catch {
-      setSavedClassVideos([]);
-      setSavedClassVideosError(t("whiteboard.savedVideosLoadError"));
-    } finally {
-      setSavedClassVideosLoading(false);
-    }
+    const requestedClassId = classId;
+    void importLegacySavedVideos(classId)
+      .then((videos) => {
+        if (requestedClassId === classId && classAccess === "granted") setSavedClassVideos(videos);
+      })
+      .catch(() => {
+        if (requestedClassId === classId) setSavedClassVideosError(t("whiteboard.savedVideosLoadError"));
+      })
+      .finally(() => { if (requestedClassId === classId) setSavedClassVideosLoading(false); });
   }
 
   function openVideoPicker() {

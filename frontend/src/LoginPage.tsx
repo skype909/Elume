@@ -6,6 +6,7 @@ import SchoolBrand from "./Components/SchoolBrand";
 import { normalElumeLoginUrl, resolveSchoolBrandingSlug } from "./schoolBranding";
 import LanguageSwitch from "./Components/LanguageSwitch";
 import { useUiLanguage } from "./i18n/UiLanguageContext";
+import { ArrowRight, GraduationCap } from "lucide-react";
 import { Sparkles } from "lucide-react";
 
 type Props = { onLoggedIn: () => void };
@@ -48,6 +49,10 @@ function SocialIconLink({
     );
 }
 
+function StudentHubCard({ className = "" }: { className?: string }) {
+  return <div className={`rounded-[28px] border border-amber-300/80 bg-gradient-to-r from-[#FFF36A] to-[#FFD447] p-4 text-[#111827] shadow-[0_14px_40px_rgba(146,99,0,0.18)] sm:p-5 ${className}`}><div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#142D50]"><GraduationCap className="h-4 w-4" aria-hidden="true" />Student Hub</div><div className="mt-1 text-2xl font-black tracking-tight">Students start here</div><p className="mt-2 text-sm font-medium leading-6 text-[#142D50]">Enter your class code and PIN to join your class.</p><a href={`${window.location.origin}/#/student`} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#142D50] px-5 py-3 text-base font-black text-white focus-visible:ring-4 focus-visible:ring-[#142D50]/35"><span>Open Student Hub</span><ArrowRight className="h-5 w-5" aria-hidden="true" /></a></div>;
+}
+
 export default function LoginPage({ onLoggedIn }: Props) {
     const navigate = useNavigate();
     const { language, t } = useUiLanguage();
@@ -75,47 +80,6 @@ export default function LoginPage({ onLoggedIn }: Props) {
     const [gaeilgeDiscoveryHovered, setGaeilgeDiscoveryHovered] = useState(false);
     const [gaeilgeDiscoveryHoverDismissed, setGaeilgeDiscoveryHoverDismissed] = useState(false);
     const gaeilgeDiscoveryOpen = gaeilgeDiscoveryPinned || (gaeilgeDiscoveryHovered && !gaeilgeDiscoveryHoverDismissed);
-
-    function isLocalDev() {
-        const h = window.location.hostname;
-        return h === "localhost" || h === "127.0.0.1";
-    }
-
-    useEffect(() => {
-        let cancelled = false;
-
-        async function devAutoLogin() {
-            if (!isLocalDev() || invitationNotice || schoolSlug) return;
-
-            try {
-                const data = await apiFetch("/auth/dev-auto-login", {
-                    method: "POST",
-                });
-
-                if (cancelled) return;
-
-                const token = data?.access_token;
-                if (!token) throw new Error("No token returned from dev auto login");
-
-                localStorage.setItem("elume_token", token);
-
-                try {
-                    setToken(token);
-                } catch {}
-
-                onLoggedIn();
-                navigate("/", { replace: true });
-            } catch {
-                // silently fail so normal login form still works
-            }
-        }
-
-        devAutoLogin();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [onLoggedIn, navigate, invitationNotice, schoolSlug]);
 
     useEffect(() => {
         let cancelled = false;
@@ -519,6 +483,8 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                     </div>
                                 </div>
 
+                                <StudentHubCard className="mt-4" />
+
                                 <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 text-sm text-emerald-900">
                                     {t("public.mobileDescription")}
                                 </div>
@@ -710,52 +676,9 @@ export default function LoginPage({ onLoggedIn }: Props) {
                                     </button>
                                 </form>}
 
-                                <div className="mt-6 space-y-3">
-                                    <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-3 text-center shadow-sm">
-                                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                            {t("login.secureBilling")}
-                                        </div>
-                                        <div className="mt-1 text-sm text-slate-700">
-                                            {t("login.paymentsPoweredBy")}{" "}
-                                            <span className="font-black text-indigo-600">Stripe</span>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-3 gap-2 text-center text-xs text-slate-500">
-                                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                                            {t("login.secureAccess")}
-                                        </div>
-                                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                                            {t("login.teacherFirst")}
-                                        </div>
-                                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-                                            {t("login.schoolReadyBadge")}
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
 
-                            {/* Student Hub back under login */}
-                            <div className="mt-4 rounded-[28px] border border-white/70 bg-white/80 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-                                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-700">
-                                    {t("login.studentHub")}
-                                </div>
-
-                                <div className="mt-1 text-2xl font-black tracking-tight text-slate-900">
-                                    {t("login.studentsStart")}
-                                </div>
-
-                                <p className="mt-2 text-sm leading-6 text-slate-600">
-                                    {t("login.studentHubHelp")}
-                                </p>
-
-                                <a
-                                    href={`${window.location.origin}/#/student`}
-                                    className="mt-4 flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-cyan-500 via-teal-500 to-emerald-500 px-5 py-3.5 text-base font-black text-white shadow-lg transition duration-200 hover:scale-[1.01] hover:shadow-xl active:scale-[0.995]"
-                                >
-                                    {t("login.openStudentHub")}
-                                </a>
-                            </div>
+                            <StudentHubCard className="mt-4 hidden lg:block" />
 
                             {showForgotPasswordModal && (
                                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 px-4 backdrop-blur-sm">

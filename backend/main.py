@@ -2897,7 +2897,16 @@ def auth_me(user: models.UserModel = Depends(get_authenticated_user)):
         "school_name": getattr(school, "name", None),
         "school_slug": getattr(school, "slug", None),
         "school_logo_url": _school_logo_url(getattr(school, "logo_storage_key", None)),
+        "ui_language": getattr(user, "ui_language", "en") or "en",
+        "ui_language_updated_at": getattr(user, "ui_language_updated_at", None),
     }
+
+@app.put("/auth/preferences/ui-language")
+def update_ui_language_preference(payload: schemas.UiLanguagePreferenceUpdate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_authenticated_user)):
+    language = (payload.language or "").strip().lower()
+    if language not in {"en", "ga"}: raise HTTPException(status_code=422, detail="Unsupported interface language")
+    user.ui_language = language; user.ui_language_updated_at = datetime.utcnow(); db.commit()
+    return {"ui_language": language, "ui_language_updated_at": user.ui_language_updated_at}
 
 
 # Keep this deliberately limited to the non-interactive reviewer labels.
@@ -10228,6 +10237,36 @@ def _assert_class_access(class_id: int, db: Session, user: models.UserModel):
         raise HTTPException(status_code=404, detail="Class not found")
     return cls
 
+
+def _saved_video_data(payload):
+    data = {"youtube_id": payload.youtube_id.strip(), "url": payload.url.strip(), "title": payload.title.strip() or "Untitled Video", "category": payload.category.strip() or "General"}
+    if not data["youtube_id"] or not data["url"] or len(data["youtube_id"]) > 64 or len(data["url"]) > 4000 or len(data["title"]) > 500 or len(data["category"]) > 200: raise HTTPException(status_code=422, detail="Invalid video metadata")
+    return data
+@app.get("/classes/{class_id}/videos", response_model=List[schemas.SavedVideoOut])
+def list_saved_videos(class_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    _assert_class_access(class_id, db, user)
+    return db.query(models.SavedVideoModel).filter(models.SavedVideoModel.class_id == class_id).order_by(models.SavedVideoModel.added_at.desc(), models.SavedVideoModel.id.desc()).all()
+@app.post("/classes/{class_id}/videos", response_model=schemas.SavedVideoOut, status_code=201)
+def create_saved_video(class_id: int, payload: schemas.SavedVideoCreate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    _assert_class_access(class_id, db, user); data = _saved_video_data(payload)
+    video = models.SavedVideoModel(class_id=class_id, added_at=payload.added_at or datetime.utcnow(), updated_at=datetime.utcnow(), **data); db.add(video)
+    try: db.commit()
+    except IntegrityError: db.rollback(); raise HTTPException(status_code=409, detail="That video is already saved for this class")
+    db.refresh(video); return video
+@app.put("/classes/{class_id}/videos/{video_id}", response_model=schemas.SavedVideoOut)
+def update_saved_video(class_id: int, video_id: int, payload: schemas.SavedVideoUpdate, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    _assert_class_access(class_id, db, user); video = db.query(models.SavedVideoModel).filter(models.SavedVideoModel.id == video_id, models.SavedVideoModel.class_id == class_id).first()
+    if not video: raise HTTPException(status_code=404, detail="Video not found")
+    for name, value in _saved_video_data(payload).items(): setattr(video, name, value)
+    video.updated_at = datetime.utcnow()
+    try: db.commit()
+    except IntegrityError: db.rollback(); raise HTTPException(status_code=409, detail="That video is already saved for this class")
+    db.refresh(video); return video
+@app.delete("/classes/{class_id}/videos/{video_id}", status_code=204)
+def delete_saved_video(class_id: int, video_id: int, db: Session = Depends(get_db), user: models.UserModel = Depends(get_current_user)):
+    _assert_class_access(class_id, db, user); video = db.query(models.SavedVideoModel).filter(models.SavedVideoModel.id == video_id, models.SavedVideoModel.class_id == class_id).first()
+    if not video: raise HTTPException(status_code=404, detail="Video not found")
+    db.delete(video); db.commit(); return Response(status_code=204)
 
 def _quiz_out(q: models.SavedQuizModel) -> dict:
     origin_name = None

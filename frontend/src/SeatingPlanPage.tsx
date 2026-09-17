@@ -39,7 +39,7 @@ type StudentRow = {
 
 type TableConfig = {
     id: string; // stable id for table
-    seats: number; // 1..6
+    seats: number; // 0..6; a zero-seat desk remains in the layout
 };
 
 type SeatingLayout = {
@@ -85,6 +85,14 @@ function clamp(n: number, min: number, max: number) {
     return Math.max(min, Math.min(max, n));
 }
 
+export function resizeTableSeats(layout: SeatingLayout, assignment: Assignment | null, tableId: string, seats: number) {
+    const nextSeats = clamp(seats, 0, 6);
+    const nextLayout: SeatingLayout = { ...layout, tables: layout.tables.map((table) => table.id === tableId ? { ...table, seats: nextSeats } : table) };
+    const nextAssignment: Assignment = { ...(assignment || {}) };
+    nextAssignment[tableId] = (nextAssignment[tableId] || []).slice(0, nextSeats);
+    return { layout: nextLayout, assignment: nextAssignment, seats: nextSeats };
+}
+
 /**
  * Create a default table list for a given rows x tablesPerRow.
  * Default seats per table = 2.
@@ -121,8 +129,8 @@ function generateAssignment(
 
     // Prefer filling tables with seats >= 2 first; keep 1-seat tables last
     const tablesOrder = [...tables].sort((a, b) => {
-        const aScore = a.seats === 1 ? 999 : a.seats;
-        const bScore = b.seats === 1 ? 999 : b.seats;
+        const aScore = a.seats === 0 ? 1000 : a.seats === 1 ? 999 : a.seats;
+        const bScore = b.seats === 0 ? 1000 : b.seats === 1 ? 999 : b.seats;
         return aScore - bScore;
     });
 
@@ -136,7 +144,7 @@ function generateAssignment(
 
         // If cap === 1, only use it if we have no other capacity left later
         // (we’ll generally try to keep these empty)
-        if (cap === 1) continue;
+        if (cap <= 1) continue;
 
         const take = Math.min(cap, remaining.length);
         assignment[t.id] = remaining.slice(0, take);
@@ -248,6 +256,12 @@ export default function SeatingPlanPage() {
             if (!raw) return;
             const parsed = JSON.parse(raw) as SeatingPlanState;
             if (parsed && typeof parsed === "object") {
+                if (parsed.layout?.tables) {
+                    parsed.layout.tables = parsed.layout.tables.map((table) => ({
+                        ...table,
+                        seats: Number.isFinite(table.seats) ? clamp(table.seats, 0, 6) : 2,
+                    }));
+                }
                 setState(parsed);
             }
         } catch {
@@ -326,14 +340,9 @@ export default function SeatingPlanPage() {
         const layout = state.layout;
         if (!layout) return;
 
-        const nextSeats = clamp(seats, 1, 6);
-
-        const next: SeatingLayout = {
-            ...layout,
-            tables: layout.tables.map((t) => (t.id === tableId ? { ...t, seats: nextSeats } : t)),
-        };
-
-        setState((prev) => ({ ...prev, layout: next, updatedAt: new Date().toISOString() }));
+        const next = resizeTableSeats(layout, state.assignment, tableId, seats);
+        setSelectedSeat((current) => current?.tableId === tableId && current.seatIndex >= next.seats ? null : current);
+        setState((prev) => ({ ...prev, layout: next.layout, assignment: next.assignment, updatedAt: new Date().toISOString() }));
     }
 
     function regenerate() {
@@ -856,7 +865,7 @@ export default function SeatingPlanPage() {
                                                                 value={t.seats}
                                                                 onChange={(e) => setTableSeats(t.id, parseInt(e.target.value, 10))}
                                                             >
-                                                                {[1, 2, 3, 4, 5, 6].map((n) => (
+                                                                {[0, 1, 2, 3, 4, 5, 6].map((n) => (
                                                                     <option key={n} value={n}>
                                                                         {n}
                                                                     </option>

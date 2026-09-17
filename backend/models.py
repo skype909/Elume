@@ -83,6 +83,8 @@ class UserModel(Base):
     ai_prompt_count_date = Column(DateTime, nullable=True)
     storage_used_bytes = Column(Integer, nullable=False, default=0)
     storage_warning_sent_at = Column(DateTime, nullable=True)
+    ui_language = Column(String(16), nullable=False, default="en", server_default=text("'en'"))
+    ui_language_updated_at = Column(DateTime, nullable=True)
 
     classes = relationship("ClassModel", back_populates="owner")
     school = relationship("SchoolModel", back_populates="users")
@@ -375,6 +377,19 @@ class ClassModel(Base):
 
     posts = relationship("PostModel", back_populates="cls", cascade="all, delete-orphan")
     students = relationship("StudentModel", back_populates="cls", cascade="all, delete-orphan")
+
+
+class SavedVideoModel(Base):
+    __tablename__ = "saved_videos"
+    __table_args__ = (UniqueConstraint("class_id", "youtube_id", name="uq_saved_videos_class_youtube"), Index("ix_saved_videos_class_added", "class_id", "added_at"))
+    id = Column(Integer, primary_key=True, index=True)
+    class_id = Column(Integer, ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True)
+    youtube_id = Column(String(64), nullable=False)
+    url = Column(Text, nullable=False)
+    title = Column(String(500), nullable=False)
+    category = Column(String(200), nullable=False, default="General")
+    added_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class PostModel(Base):

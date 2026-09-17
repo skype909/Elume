@@ -118,10 +118,14 @@ describe("WhiteBoardPage production workspace integration", () => {
   });
 
   test("opens a saved class video in the existing player without changing the board", async () => {
-    localStorage.setItem("elume:videos:class:1", JSON.stringify([
-      { id: "dQw4w9WgXcQ", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Wave demonstration", category: "Waves", addedAt: 1 },
-      { id: "broken", url: "https://example.test/video", title: "Old link", category: "Archive", addedAt: 2 },
-    ]));
+    mockedApiFetch.mockImplementation(async (url: string) => {
+      if (url === "/api/classes/1") return { name: "6th Year", subject: "Maths" };
+      if (url === "/classes/1/videos") return [
+        { id: 1, youtube_id: "dQw4w9WgXcQ", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Wave demonstration", category: "Waves", added_at: "2026-01-01T00:00:00Z" },
+        { id: 2, youtube_id: "broken", url: "https://example.test/video", title: "Old link", category: "Archive", added_at: "2026-01-02T00:00:00Z" },
+      ];
+      return [];
+    });
     renderWhiteboard();
 
     fireEvent.click(await screen.findByRole("button", { name: /start new whiteboard/i }));

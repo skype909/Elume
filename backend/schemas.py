@@ -16,6 +16,32 @@ class CurrentUserOut(BaseModel):
     school_name: Optional[str] = None
     school_slug: Optional[str] = None
     school_logo_url: Optional[str] = None
+    ui_language: str = "en"
+    ui_language_updated_at: Optional[datetime] = None
+
+class UiLanguagePreferenceUpdate(BaseModel):
+    language: str
+
+class SavedVideoCreate(BaseModel):
+    youtube_id: str
+    url: str
+    title: str
+    category: str = "General"
+    added_at: Optional[datetime] = None
+class SavedVideoUpdate(BaseModel):
+    youtube_id: str
+    url: str
+    title: str
+    category: str = "General"
+class SavedVideoOut(BaseModel):
+    id: int
+    youtube_id: str
+    url: str
+    title: str
+    category: str
+    added_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UiTranslationOverrideUpdate(BaseModel):

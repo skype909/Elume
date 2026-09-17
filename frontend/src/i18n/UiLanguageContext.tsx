@@ -29,6 +29,13 @@ function storageKey(accountKey: string) {
   return `elume_ui_language_v1:${accountKey}`;
 }
 
+function preferenceStorageKey(accountKey: string) { return `elume_ui_language_v2:${accountKey}`; }
+type StoredPreference = { language: UiLanguage; updatedAt: number | null };
+function storedPreference(accountKey: string): StoredPreference {
+  try { const raw = localStorage.getItem(preferenceStorageKey(accountKey)); const parsed = raw && JSON.parse(raw); if (parsed && (parsed.language === "en" || parsed.language === "ga")) return { language: parsed.language, updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : null }; return { language: localStorage.getItem(storageKey(accountKey)) === "ga" ? "ga" : "en", updatedAt: null }; } catch { return { language: "en", updatedAt: null }; }
+}
+function hasStoredLanguage(accountKey: string) { try { return localStorage.getItem(storageKey(accountKey)) !== null || localStorage.getItem(preferenceStorageKey(accountKey)) !== null; } catch { return false; } }
+
 function storedLanguage(accountKey: string): UiLanguage {
   try {
     return localStorage.getItem(storageKey(accountKey)) === "ga" ? "ga" : "en";
@@ -39,7 +46,7 @@ function storedLanguage(accountKey: string): UiLanguage {
 
 export function UiLanguageProvider({ children }: { children: React.ReactNode }) {
   const [accountKey, setAccountKey] = useState(currentAccountKey);
-  const [preference, setPreference] = useState(() => ({ accountKey, language: storedLanguage(accountKey) }));
+  const [preference, setPreference] = useState(() => ({ accountKey, ...storedPreference(accountKey) }));
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [isGaeilgeReviewer, setIsGaeilgeReviewer] = useState(false);
   const activeAccountKeyRef = useRef(accountKey);
@@ -54,14 +61,28 @@ export function UiLanguageProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     if (preference.accountKey !== accountKey) {
-      setPreference({ accountKey, language: storedLanguage(accountKey) });
+      setPreference({ accountKey, ...storedPreference(accountKey) });
     }
   }, [accountKey, preference.accountKey]);
+
+  useEffect(() => {
+    if (accountKey === "anonymous" || preference.accountKey !== accountKey) return;
+    let cancelled = false;
+    void apiFetch("/auth/me").then((account) => {
+      if (cancelled || activeAccountKeyRef.current !== accountKey) return;
+      const language: UiLanguage = account?.ui_language === "ga" ? "ga" : "en";
+      const updatedAt = Date.parse(account?.ui_language_updated_at || "");
+      if (Number.isFinite(updatedAt)) setPreference((current) => current.accountKey === accountKey ? { accountKey, language, updatedAt } : current);
+      else if (hasStoredLanguage(accountKey)) void apiFetch("/auth/preferences/ui-language", { method: "PUT", body: { language: preference.language } }).then((saved) => !cancelled && setPreference({ accountKey, language: preference.language, updatedAt: Date.parse(saved?.ui_language_updated_at) || Date.now() })).catch(() => undefined);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [accountKey, preference.accountKey, preference.language]);
 
   useEffect(() => {
     if (preference.accountKey !== accountKey) return;
     try {
       localStorage.setItem(storageKey(accountKey), preference.language);
+      localStorage.setItem(preferenceStorageKey(accountKey), JSON.stringify({ language: preference.language, updatedAt: preference.updatedAt }));
     } catch {
       // Language choice remains available for this session if storage is unavailable.
     }
@@ -91,7 +112,7 @@ export function UiLanguageProvider({ children }: { children: React.ReactNode }) 
 
   const value = useMemo<UiLanguageContextValue>(() => ({
     language: preference.language,
-    setLanguage: (language) => setPreference({ accountKey, language }),
+    setLanguage: (language) => { setPreference({ accountKey, language, updatedAt: Date.now() }); if (accountKey !== "anonymous") void apiFetch("/auth/preferences/ui-language", { method: "PUT", body: { language } }).catch(() => undefined); },
     t: (key) => preference.language === "ga" ? overrides[key] ?? translate("ga", key) : translate("en", key),
     refreshAccount,
     isGaeilgeReviewer,
