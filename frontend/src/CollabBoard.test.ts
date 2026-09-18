@@ -4,6 +4,8 @@ import {
   isTemplateBackground,
   replaceTemplateBackground,
   shouldApplyReplayedBoardMutation,
+  shouldSuppressBoardContextMenu,
+  drawStroke,
   type BoardObject,
 } from "./CollabBoard";
 
@@ -90,4 +92,38 @@ test("students can delete only their own sticky notes while teachers retain boar
   expect(canDeleteStickyNote(ownSticky, "aoife")).toBe(true);
   expect(canDeleteStickyNote(otherSticky, "aoife")).toBe(false);
   expect(canDeleteStickyNote(otherSticky, "teacher")).toBe(true);
+});
+
+test("a one-point pen stroke is rendered as a visible round dot for replay and remote sync", () => {
+  const context = {
+    save: jest.fn(),
+    restore: jest.fn(),
+    beginPath: jest.fn(),
+    arc: jest.fn(),
+    fill: jest.fn(),
+    moveTo: jest.fn(),
+    lineTo: jest.fn(),
+    stroke: jest.fn(),
+  } as unknown as CanvasRenderingContext2D;
+
+  drawStroke(context, {
+    id: "tap",
+    tool: "pen",
+    color: "#0f172a",
+    size: 4,
+    points: [{ x: 12, y: 18 }],
+    createdBy: "student",
+  });
+
+  expect(context.arc).toHaveBeenCalledWith(12, 18, 2, 0, Math.PI * 2);
+  expect(context.fill).toHaveBeenCalledTimes(1);
+  expect(context.stroke).not.toHaveBeenCalled();
+});
+
+test("context menu suppression is limited to active board drawing interactions", () => {
+  expect(shouldSuppressBoardContextMenu("drawing")).toBe(true);
+  expect(shouldSuppressBoardContextMenu("erasing")).toBe(true);
+  expect(shouldSuppressBoardContextMenu("creating-object")).toBe(true);
+  expect(shouldSuppressBoardContextMenu("idle")).toBe(false);
+  expect(shouldSuppressBoardContextMenu("moving-object")).toBe(false);
 });

@@ -46,6 +46,11 @@ test("choosing any student drawing tool turns Move board off", () => {
   });
 });
 
+test("students have a dedicated straight Line tool using the existing drawing mode", () => {
+  expect(STUDENT_DRAWING_TOOLS).toContain("line");
+  expect(studentBoardTool("fixed", "line")).toBe("line");
+});
+
 test("active Move board retains the existing select-based movement contract", () => {
   expect(studentBoardTool("fixed", "pen")).toBe("pen");
   expect(studentBoardTool("pan", "pen")).toBe("select");

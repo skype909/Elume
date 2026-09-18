@@ -14,6 +14,7 @@ let pdfJsLoaderPromise: Promise<any> | null = null;
 type ToolKey =
     | "select"
     | "pen"
+    | "line"
     | "highlighter"
     | "eraser"
     | "rectangle"
@@ -98,6 +99,10 @@ export function shouldApplyReplayedBoardMutation(
     readOnly: boolean
 ) {
     return Boolean(replay) || readOnly || createdBy !== participantId;
+}
+
+export function shouldSuppressBoardContextMenu(mode: Interaction["mode"]) {
+    return mode === "drawing" || mode === "erasing" || mode === "creating-object";
 }
 
 type NoteItem = {
@@ -219,7 +224,7 @@ function normaliseRect(x: number, y: number, w: number, h: number) {
     return { x: nx, y: ny, w: nw, h: nh };
 }
 
-function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke) {
+export function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke) {
     if (!stroke.points.length) return;
 
     ctx.save();
@@ -228,6 +233,17 @@ function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke) {
     ctx.strokeStyle = stroke.color;
     ctx.lineWidth = stroke.size;
     ctx.globalAlpha = stroke.tool === "highlighter" ? 0.28 : 1;
+
+    if (stroke.points.length === 1) {
+        // Canvas stroke() has no visible output for a one-point path. A pen tap is
+        // intentional input on touch and stylus devices, so replay it as a round dot.
+        ctx.beginPath();
+        ctx.arc(stroke.points[0].x, stroke.points[0].y, Math.max(stroke.size / 2, 0.75), 0, Math.PI * 2);
+        ctx.fillStyle = stroke.color;
+        ctx.fill();
+        ctx.restore();
+        return;
+    }
 
     ctx.beginPath();
     ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
@@ -908,7 +924,13 @@ export default function CollabBoard({
 
     function extendStroke(pt: StrokePoint) {
         if (!liveStrokeRef.current) return;
-        liveStrokeRef.current.points.push(pt);
+        if (tool === "line") {
+            // Keep the preview and the committed result identical: a line has one
+            // fixed start point and its current endpoint, rather than sampled bends.
+            liveStrokeRef.current.points = [liveStrokeRef.current.points[0], pt];
+        } else {
+            liveStrokeRef.current.points.push(pt);
+        }
         const now = Date.now();
         if (now - liveStrokeBroadcastRef.current >= 50) {
             liveStrokeBroadcastRef.current = now;
@@ -1789,9 +1811,13 @@ export default function CollabBoard({
             return;
         }
 
-        if (!isConnected || !hasOpenSocket()) return;
+        if (!isConnected || !hasOpenSocket()) {
+            activePointerIdRef.current = null;
+            return;
+        }
 
-        if (tool === "pen" || tool === "highlighter") {
+        if (tool === "pen" || tool === "highlighter" || tool === "line") {
+            e.preventDefault();
             (e.currentTarget as HTMLDivElement).setPointerCapture?.(e.pointerId);
             interactionRef.current = { mode: "drawing" };
             beginStroke(pt);
@@ -1947,7 +1973,7 @@ export default function CollabBoard({
         } catch { }
 
         if (interactionRef.current.mode === "drawing") {
-            if (tool === "pen" || tool === "highlighter") {
+            if (tool === "pen" || tool === "highlighter" || tool === "line") {
                 commitLiveStroke();
             }
         }
@@ -1991,6 +2017,22 @@ export default function CollabBoard({
             containerRef.current?.releasePointerCapture?.(e.pointerId);
         } catch { }
         cancelActiveInteraction();
+    }
+
+    function handleLostPointerCapture(e: React.PointerEvent<HTMLDivElement>) {
+        if (activePointerIdRef.current !== e.pointerId) return;
+        // Pointer capture can be lost by an interrupted stylus/touch gesture. Reset
+        // the temporary stroke so subsequent input cannot be stuck in drawing mode.
+        cancelActiveInteraction();
+    }
+
+    function handleBoardContextMenu(e: React.MouseEvent<HTMLDivElement>) {
+        const activeMode = interactionRef.current.mode;
+        // Keep normal context menus everywhere else, including board object controls.
+        // Chromium can emit this after a pen long-press or barrel-button gesture.
+        if (shouldSuppressBoardContextMenu(activeMode)) {
+            e.preventDefault();
+        }
     }
 
 
@@ -2469,7 +2511,9 @@ export default function CollabBoard({
                         onPointerMove={handlePointerMove}
                         onPointerUp={handlePointerUp}
                         onPointerCancel={handlePointerCancel}
+                        onLostPointerCapture={handleLostPointerCapture}
                         onPointerLeave={handlePointerLeave}
+                        onContextMenu={handleBoardContextMenu}
                     >
 
                     <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(to_right,#94a3b8_1px,transparent_1px),linear-gradient(to_bottom,#94a3b8_1px,transparent_1px)] [background-size:26px_26px]" />

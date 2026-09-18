@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Eraser, Hand, Highlighter, PenLine, StickyNote, Undo2, UsersRound } from "lucide-react";
+import { Eraser, Hand, Highlighter, Minus, PenLine, StickyNote, Undo2, UsersRound } from "lucide-react";
 import CollabBoard from "./CollabBoard";
 import elumeLogo from "./assets/ELogo2.png";
 import { selectStudentDrawingTool, studentBoardTool, type StudentDrawingTool } from "./collaborationToolControls";
@@ -406,6 +406,18 @@ export default function StudentCollabRoomPage() {
               </button>
               <button
                 type="button"
+                onClick={() => selectStudentDrawingTool("line", setTool, setViewportMode)}
+                aria-pressed={tool === "line"}
+                className={`inline-flex min-h-11 items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-black shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+                  tool === "line"
+                    ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white ring-2 ring-emerald-200"
+                    : "border border-slate-200 bg-white text-slate-800 hover:bg-emerald-50"
+                }`}
+              >
+                <Minus className="h-4 w-4" aria-hidden="true" /> Line
+              </button>
+              <button
+                type="button"
                 onClick={() => selectStudentDrawingTool("eraser", setTool, setViewportMode)}
                 aria-pressed={tool === "eraser"}
                 className={`inline-flex min-h-11 items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-black shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
@@ -456,7 +468,7 @@ export default function StudentCollabRoomPage() {
                 <span className={`relative h-5 w-9 rounded-full ${viewportMode === "pan" ? "bg-white/80" : "bg-slate-300"}`} aria-hidden="true"><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-slate-700 transition-transform ${viewportMode === "pan" ? "translate-x-4" : "translate-x-0.5"}`} /></span>
               </button>
               {viewportMode === "pan" && <div className="w-full rounded-xl bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-800 md:hidden">Drag to move around. Switch off to draw.</div>}
-              {tool === "pen" && (
+              {(tool === "pen" || tool === "line") && (
                 <div className="ml-1 flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
                   <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Colour</span>
                   {STUDENT_PEN_COLOURS.map((option) => (
@@ -484,7 +496,7 @@ export default function StudentCollabRoomPage() {
                   ))}
                 </div>
               )}
-              {(tool === "pen" || tool === "highlighter") && <div className="ml-1 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
+              {(tool === "pen" || tool === "line" || tool === "highlighter") && <div className="ml-1 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
                 <span className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Stroke</span>
                 {([{ value: 1 }, { value: 2 }, { value: 3 }] as const).map(({ value }) => (
                   <StrokeSizeButton

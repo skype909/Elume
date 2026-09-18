@@ -26,7 +26,7 @@ export const TEACHER_TOOL_ACTIONS: ReadonlyArray<{ key: TeacherBoardTool; label:
   { key: "speech", label: "Speech bubble" },
 ];
 
-export const STUDENT_DRAWING_TOOLS = ["pen", "highlighter", "eraser", "sticky"] as const;
+export const STUDENT_DRAWING_TOOLS = ["pen", "line", "highlighter", "eraser", "sticky"] as const;
 export type StudentDrawingTool = (typeof STUDENT_DRAWING_TOOLS)[number];
 
 // Drawing tools always return the board to its existing fixed viewport mode.
